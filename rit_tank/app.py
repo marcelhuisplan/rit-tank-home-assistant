@@ -37,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '5.0.3'
+APP_VERSION = '5.0.4'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -2589,6 +2589,7 @@ def _pdf_escape(value: Any) -> bytes:
 class _SimplePdfPage:
     def __init__(self, title: str):
         self.commands: list[bytes] = []
+        self.images: set[str] = set()
         self.y = 806.0
         self.title = title
         self.text(title, 36, self.y, 15, bold=True)
@@ -2609,6 +2610,19 @@ class _SimplePdfPage:
             f'{gray:.3f} G {width:.2f} w {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S\n'.encode('ascii')
         )
 
+    def rect(self, x: float, y: float, width: float, height: float, gray: float = 0.94):
+        """Draw a filled, lightly shaded rectangle used for report cards."""
+        self.commands.append(
+            f'{gray:.3f} g {x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n'.encode('ascii')
+        )
+
+    def image(self, name: str, x: float, y: float, width: float, height: float):
+        """Place a registered PDF image XObject at the given position."""
+        self.images.add(name)
+        self.commands.append(
+            f'q {width:.2f} 0 0 {height:.2f} {x:.2f} {y:.2f} cm /{name} Do Q\n'.encode('ascii')
+        )
+
     def wrapped(self, value: Any, x: float, width: float, size: float = 8.5, bold: bool = False, leading: float | None = None, indent: float = 0):
         leading = leading or (size + 3)
         chars = max(18, int(width / max(3.7, size * 0.52)))
@@ -2625,14 +2639,22 @@ class _SimplePdfPage:
         return b''.join(self.commands)
 
 
-def _build_pdf(pages: list[_SimplePdfPage]) -> bytes:
-    """Minimal dependency-free PDF writer using core Helvetica fonts."""
+def _build_pdf(pages: list[_SimplePdfPage], images: dict[str, tuple[int, int, bytes]] | None = None) -> bytes:
+    """Minimal dependency-free PDF writer using core Helvetica fonts and JPEGs."""
     objects: dict[int, bytes] = {}
     objects[1] = b'<< /Type /Catalog /Pages 2 0 R >>'
     objects[3] = b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'
     objects[4] = b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>'
-    kids = []
+    image_ids: dict[str, int] = {}
     next_id = 5
+    for name, (width, height, data) in (images or {}).items():
+        image_ids[name] = next_id
+        objects[next_id] = (
+            f'<< /Type /XObject /Subtype /Image /Width {int(width)} /Height {int(height)} '
+            f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(data)} >>\n'
+        ).encode('ascii') + b'stream\n' + data + b'\nendstream'
+        next_id += 1
+    kids = []
     for page in pages:
         page_id = next_id
         content_id = next_id + 1
@@ -2640,9 +2662,15 @@ def _build_pdf(pages: list[_SimplePdfPage]) -> bytes:
         kids.append(f'{page_id} 0 R')
         stream = page.stream()
         objects[content_id] = b'<< /Length %d >>\nstream\n' % len(stream) + stream + b'endstream'
+        xobjects = ' '.join(
+            f'/{name} {image_ids[name]} 0 R'
+            for name in sorted(page.images)
+            if name in image_ids
+        )
+        xobject_resource = f' /XObject << {xobjects} >>' if xobjects else ''
         objects[page_id] = (
             f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] '
-            f'/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_id} 0 R >>'
+            f'/Resources << /Font << /F1 3 0 R /F2 4 0 R >>{xobject_resource} >> /Contents {content_id} 0 R >>'
         ).encode('ascii')
     objects[2] = f'<< /Type /Pages /Count {len(pages)} /Kids [{" ".join(kids)}] >>'.encode('ascii')
 
@@ -2667,57 +2695,148 @@ def business_pdf(period: str = 'month') -> tuple[bytes, str]:
     settings = get_settings()
     trips = business_trips_for_period(period)
     if period == 'all':
-        label='Alle geregistreerde ritten'; filename_label='alles'
+        label = 'Alle geregistreerde ritten'
+        filename_label = 'alles'
+        period_stops = [
+            parse_dt(stop.get('created_at'))
+            for trip in trips
+            for stop in (trip.get('stops') or [])
+            if stop.get('created_at')
+        ]
+        period_start = min(period_stops) if period_stops else None
+        period_end = max(period_stops) if period_stops else None
     else:
-        safe_period=period if period in {'day','week','month','year'} else 'month'
-        start,_=period_bounds(safe_period); label=period_label(safe_period,start); filename_label=safe_period
-    total_km=round(sum(float(t.get('km') or 0) for t in trips),1)
-    business_km=round(sum(float(t.get('business_km') or 0) for t in trips),1)
-    private_km=round(sum(float(t.get('private_km') or 0) for t in trips),1)
-    pages=[]
+        safe_period = period if period in {'day', 'week', 'month', 'year'} else 'month'
+        period_start, period_end_exclusive = period_bounds(safe_period)
+        label = period_label(safe_period, period_start)
+        filename_label = safe_period
+        period_end = period_end_exclusive - timedelta(days=1)
+    if period_start and period_end:
+        year_label = str(period_start.year) if period_start.year == period_end.year else f'{period_start.year}-{period_end.year}'
+        date_range = f'{period_start:%d-%m-%Y} - {period_end:%d-%m-%Y}'
+    else:
+        year_label = '-'
+        date_range = 'Geen geregistreerde datums'
+    total_km = round(sum(float(t.get('km') or 0) for t in trips), 1)
+    business_km = round(sum(float(t.get('business_km') or 0) for t in trips), 1)
+    private_km = round(sum(float(t.get('private_km') or 0) for t in trips), 1)
+    pages = []
+
+    company_name = str(settings.get('company_name') or 'Huisplan B.V.').strip() or 'Huisplan B.V.'
+    vehicle_bits = [x for x in [settings.get('vehicle_make'), settings.get('vehicle_model')] if x]
+    vehicle_name = ' '.join(vehicle_bits) or settings.get('vehicle_name') or '-'
+    used_period = ' - '.join(x for x in [settings.get('vehicle_period_from'), settings.get('vehicle_period_to')] if x) or '-'
+
+    pdf_images: dict[str, tuple[int, int, bytes]] = {}
+    captur_path = Path(__file__).with_name('captur-2014.jpg')
+    try:
+        if captur_path.exists():
+            pdf_images['ImCaptur'] = (1200, 800, captur_path.read_bytes())
+    except OSError:
+        pass
+
     def new_page():
-        page=_SimplePdfPage('Fiscale rittenregistratie'); pages.append(page); return page
-    page=new_page(); page.text(f'Rapportperiode: {label}',36,page.y,10,bold=True); page.y-=16
-    vehicle_bits=[x for x in [settings.get('vehicle_make'),settings.get('vehicle_model')] if x]
-    used_period=' - '.join(x for x in [settings.get('vehicle_period_from'),settings.get('vehicle_period_to')] if x) or '-'
-    for key,val in [('Bestuurder',settings.get('driver_name') or '-'),('Bedrijf',settings.get('company_name') or '-'),('Auto',' '.join(vehicle_bits) or settings.get('vehicle_name') or '-'),('Kenteken',settings.get('license_plate') or '-'),('Beschikkingsperiode',used_period),('Gegenereerd',now_local().strftime('%d-%m-%Y %H:%M'))]:
-        page.text(f'{key}:',36,page.y,8.5,bold=True); page.text(val,135,page.y,8.5); page.y-=12
-    page.y-=3; page.line(36,page.y,559,page.y,.5); page.y-=16
-    page.text(f'Totaal: {total_km:.1f} km',36,page.y,9.5,bold=True); page.text(f'Zakelijk: {business_km:.1f} km',190,page.y,9.5,bold=True); page.text(f'Prive: {private_km:.1f} km',370,page.y,9.5,bold=True); page.y-=18
-    page.wrapped('Rit & Tank legt datum, begin- en eindstand, vertrek- en aankomstlocatie, ritsoort, afwijkende route en prive-omrijkilometers vast. Controleer dit rapport voor gebruik in uw administratie.',36,523,7.5); page.y-=6
-    if not trips: page.text('Geen ritten in deze periode.',36,page.y,10)
-    day_counts={}
+        page = _SimplePdfPage('Fiscale rittenregistratie')
+        pages.append(page)
+        return page
+
+    page = new_page()
+    page.text(company_name.upper(), 36, page.y, 8.5, bold=True, gray=.35)
+    page.y -= 16
+    card_top = page.y
+    page.rect(36, card_top - 65, 335, 65, gray=.94)
+    page.text('KALENDERJAAR', 48, card_top - 17, 7.2, bold=True, gray=.42)
+    page.text(year_label, 48, card_top - 40, 16, bold=True)
+    page.text('RAPPORTPERIODE', 160, card_top - 17, 7.2, bold=True, gray=.42)
+    page.text(label, 160, card_top - 36, 10.2, bold=True)
+    page.text(date_range, 160, card_top - 52, 7.3, gray=.30)
+    if 'ImCaptur' in pdf_images:
+        page.rect(385, card_top - 105, 174, 105, gray=.96)
+        page.image('ImCaptur', 387, card_top - 103, 170, 102)
+    page.y = card_top - 122
+    metadata_rows = [
+        (('Bestuurder', settings.get('driver_name') or '-'), ('Auto', vehicle_name)),
+        (('Bedrijf', company_name), ('Kenteken', settings.get('license_plate') or '-')),
+        (('Beschikkingsperiode', used_period), ('Gegenereerd', now_local().strftime('%d-%m-%Y %H:%M'))),
+    ]
+    for (left_key, left_value), (right_key, right_value) in metadata_rows:
+        page.text(f'{left_key}:', 36, page.y, 8, bold=True)
+        page.text(left_value, 122, page.y, 8)
+        page.text(f'{right_key}:', 304, page.y, 8, bold=True)
+        page.text(right_value, 386, page.y, 8)
+        page.y -= 14
+    page.y -= 2
+    page.line(36, page.y, 559, page.y, .5)
+    page.y -= 16
+    page.text(f'Totaal: {total_km:.1f} km', 36, page.y, 9.5, bold=True)
+    page.text(f'Zakelijk: {business_km:.1f} km', 190, page.y, 9.5, bold=True)
+    page.text(f'Prive: {private_km:.1f} km', 370, page.y, 9.5, bold=True)
+    page.y -= 18
+    page.wrapped('Rit & Tank legt datum, begin- en eindstand, vertrek- en aankomstlocatie, ritsoort, afwijkende route en prive-omrijkilometers vast. Controleer dit rapport voor gebruik in uw administratie.', 36, 523, 7.5)
+    page.y -= 6
+    if not trips:
+        page.text('Geen ritten in deze periode.', 36, page.y, 10)
+    day_counts = {}
     for trip in trips:
-        stops=trip.get('stops') or []
-        if not stops: continue
-        dkey=parse_dt(stops[0].get('created_at')).strftime('%Y-%m-%d'); day_counts[dkey]=day_counts.get(dkey,0)+1; trip['day_trip_no']=day_counts[dkey]
-    for idx,trip in enumerate(trips,start=1):
-        stops=trip.get('stops') or []; estimated=118+20*max(1,len(stops))
-        if page.need(estimated): page=new_page()
-        start_dt=parse_dt(stops[0]['created_at']) if stops else parse_dt(trip.get('started_at'))
-        page.text(f'Rit {trip.get("day_trip_no",idx):02d} - {start_dt.strftime("%d-%m-%Y")}',36,page.y,10.5,bold=True); page.text(f'{float(trip.get("km") or 0):.1f} km',500,page.y,9,bold=True); page.y-=14
-        page.text(f'Ritsoort: {trip.get("trip_type_label") or "Zakelijk"}',48,page.y,8.5,bold=True); page.text(f'Beginstand: {float(trip.get("start_odometer") or 0):.0f} km',220,page.y,8.2); page.text(f'Eindstand: {float(trip.get("last_odometer") or 0):.0f} km',390,page.y,8.2); page.y-=12
-        page.text(f'Zakelijk: {float(trip.get("business_km") or 0):.1f} km',48,page.y,8); page.text(f'Prive: {float(trip.get("private_km") or 0):.1f} km',220,page.y,8); page.text(f'Prive omrij: {float(trip.get("private_detour_km") or 0):.1f} km',390,page.y,8); page.y-=12
-        purpose=trip.get('purpose') or '-'; client=trip.get('client') or ''
-        page.wrapped(f'Doel: {purpose}'+(f' | Klant/opdracht: {client}' if client else ''),48,500,8.2)
-        if trip.get('deviating_route'): page.wrapped(f'Afwijkende route: {trip.get("deviating_route")}',48,500,8)
-        if trip.get('note'): page.wrapped(f'Toelichting: {trip.get("note")}',48,500,8)
-        prev_odo=None
+        stops = trip.get('stops') or []
+        if not stops:
+            continue
+        dkey = parse_dt(stops[0].get('created_at')).strftime('%Y-%m-%d')
+        day_counts[dkey] = day_counts.get(dkey, 0) + 1
+        trip['day_trip_no'] = day_counts[dkey]
+    for idx, trip in enumerate(trips, start=1):
+        stops = trip.get('stops') or []
+        estimated = 118 + 20 * max(1, len(stops))
+        if page.need(estimated):
+            page = new_page()
+        start_dt = parse_dt(stops[0]['created_at']) if stops else parse_dt(trip.get('started_at'))
+        page.text(f'Rit {trip.get("day_trip_no", idx):02d} - {start_dt.strftime("%d-%m-%Y")}', 36, page.y, 10.5, bold=True)
+        page.text(f'{float(trip.get("km") or 0):.1f} km', 500, page.y, 9, bold=True)
+        page.y -= 14
+        page.text(f'Ritsoort: {trip.get("trip_type_label") or "Zakelijk"}', 48, page.y, 8.5, bold=True)
+        page.text(f'Beginstand: {float(trip.get("start_odometer") or 0):.0f} km', 220, page.y, 8.2)
+        page.text(f'Eindstand: {float(trip.get("last_odometer") or 0):.0f} km', 390, page.y, 8.2)
+        page.y -= 12
+        page.text(f'Zakelijk: {float(trip.get("business_km") or 0):.1f} km', 48, page.y, 8)
+        page.text(f'Prive: {float(trip.get("private_km") or 0):.1f} km', 220, page.y, 8)
+        page.text(f'Prive omrij: {float(trip.get("private_detour_km") or 0):.1f} km', 390, page.y, 8)
+        page.y -= 12
+        purpose = trip.get('purpose') or '-'
+        client = trip.get('client') or ''
+        page.wrapped(f'Doel: {purpose}' + (f' | Klant/opdracht: {client}' if client else ''), 48, 500, 8.2)
+        if trip.get('deviating_route'):
+            page.wrapped(f'Afwijkende route: {trip.get("deviating_route")}', 48, 500, 8)
+        if trip.get('note'):
+            page.wrapped(f'Toelichting: {trip.get("note")}', 48, 500, 8)
+        prev_odo = None
         for j,stop in enumerate(stops):
-            dt=parse_dt(stop.get('created_at')); odo=float(stop.get('odometer') or 0); seg=0.0 if prev_odo is None else max(0.0,odo-prev_odo)
-            role='Vertrek' if j==0 else ('Aankomst' if j==len(stops)-1 and trip.get('status')=='completed' else f'Tussenstop {j}')
-            loc=stop.get('location_address') or stop.get('location_label') or stop.get('manual_label') or 'Locatie onbekend'
-            seg_type=stop.get('segment_trip_type_label') or ''
-            header=f'{role}: {dt.strftime("%H:%M")} | {odo:.0f} km'+(f' | +{seg:.1f} km' if j else '')+(f' | {seg_type}' if j and seg_type else '')
-            if page.need(38): page=new_page(); page.text(f'Rit {trip.get("day_trip_no",idx):02d} - vervolg',36,page.y,10.5,bold=True); page.y-=15
-            page.text(header,54,page.y,8.2,bold=True); page.y-=11; page.wrapped(loc,66,475,8)
-            if stop.get('note'): page.wrapped(f'Notitie: {stop.get("note")}',66,475,7.5)
-            prev_odo=odo
-        page.y-=4; page.line(36,page.y,559,page.y,.35,.82); page.y-=14
-    total_pages=len(pages)
-    for n,pg in enumerate(pages,start=1):
-        pg.line(36,30,559,30,.35,.85); pg.text(f'Rit & Tank - {label}',36,18,7,gray=.45); pg.text(f'Pagina {n} van {total_pages}',493,18,7,gray=.45)
-    return _build_pdf(pages), f'rittenregistratie_{filename_label}.pdf'
+            dt = parse_dt(stop.get('created_at'))
+            odo = float(stop.get('odometer') or 0)
+            seg = 0.0 if prev_odo is None else max(0.0, odo - prev_odo)
+            role = 'Vertrek' if j == 0 else ('Aankomst' if j == len(stops) - 1 and trip.get('status') == 'completed' else f'Tussenstop {j}')
+            loc = stop.get('location_address') or stop.get('location_label') or stop.get('manual_label') or 'Locatie onbekend'
+            seg_type = stop.get('segment_trip_type_label') or ''
+            header = f'{role}: {dt.strftime("%H:%M")} | {odo:.0f} km' + (f' | +{seg:.1f} km' if j else '') + (f' | {seg_type}' if j and seg_type else '')
+            if page.need(38):
+                page = new_page()
+                page.text(f'Rit {trip.get("day_trip_no", idx):02d} - vervolg', 36, page.y, 10.5, bold=True)
+                page.y -= 15
+            page.text(header, 54, page.y, 8.2, bold=True)
+            page.y -= 11
+            page.wrapped(loc, 66, 475, 8)
+            if stop.get('note'):
+                page.wrapped(f'Notitie: {stop.get("note")}', 66, 475, 7.5)
+            prev_odo = odo
+        page.y -= 4
+        page.line(36, page.y, 559, page.y, .35, .82)
+        page.y -= 14
+    total_pages = len(pages)
+    footer_label = f'{company_name} · Rit & Tank · {label}'
+    for n, pg in enumerate(pages, start=1):
+        pg.line(36, 30, 559, 30, .35, .85)
+        pg.text(footer_label, 36, 18, 7, gray=.45)
+        pg.text(f'Pagina {n} van {total_pages}', 493, 18, 7, gray=.45)
+    return _build_pdf(pages, pdf_images), f'rittenregistratie_{filename_label}.pdf'
 
 
 def edit_business_trip(trip_id: int, payload: dict[str, Any]) -> dict[str, Any]:

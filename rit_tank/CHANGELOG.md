@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.0.4
+- Fiscale PDF-uitdraai vernieuwd met een kalenderjaar- en periodekaart linksboven.
+- Zilvergrijze Renault Captur-afbeelding toegevoegd aan de PDF-kop.
+- Bedrijfsnaam van de instellingen zichtbaar gemaakt in de kop en voettekst.
+- PDF-afbeelding wordt als compacte JPEG meegeleverd voor een snelle uitdraai.
+
 ## 5.0.3
 - Zilvergrijze Renault Captur (2014) als gegenereerde illustratieve afbeelding op het startscherm.
 - Op smalle schermen staat de afbeelding onder de kilometerstand; op brede schermen ernaast.
