@@ -37,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '5.0.2'
+APP_VERSION = '5.0.3'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -3221,7 +3221,7 @@ def pwa_manifest() -> bytes:
 
 
 SERVICE_WORKER = f'''const CACHE = "rit-tank-shell-{APP_VERSION}";
-const SHELL = ["./", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png"];
+const SHELL = ["./", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png", "captur-2014.png"];
 self.addEventListener("install", event => {{
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 }});
@@ -3363,6 +3363,8 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 .toast{bottom:calc(94px + env(safe-area-inset-bottom));background:#dffbf3;color:#09281f}.biz-hero{border-radius:26px;background:linear-gradient(145deg,#231a0d,#121710);border-color:rgba(255,190,91,.28)}.biz-hero.active-trip{background:linear-gradient(145deg,#0e342a,#0a211c);border-color:rgba(69,240,195,.34)}
 @media(max-width:560px){.app{padding:8px 13px calc(108px + env(safe-area-inset-bottom))}.hero{padding:21px;min-height:215px;grid-template-columns:minmax(0,1.35fr) minmax(110px,.65fr)}.hero h2{font-size:18px}.odo strong{font-size:38px}.hero-stat{display:block}.kpis{grid-template-columns:repeat(3,1fr)}.kpi{padding:13px 11px}.kpi .ico{font-size:16px}.kpi b{font-size:18px}.kpi span{font-size:10px}.chart{min-width:500px}.sheet{padding-left:15px;padding-right:15px}}
 @media(max-width:390px){.hero{grid-template-columns:1fr 105px;padding:18px}.odo strong{font-size:34px}.action-secondary{font-size:13px}.kpis{grid-template-columns:repeat(2,1fr)}.brand h1{font-size:23px}}
+.hero-car img{display:block;width:100%;height:auto;object-fit:contain;border-radius:20px}.hero-car{min-width:0}.hero{grid-template-columns:minmax(0,1fr) minmax(200px,1.1fr);gap:18px}
+@media(max-width:560px){.hero{grid-template-columns:minmax(0,1fr);gap:12px}.hero-car{width:100%;max-width:360px;justify-self:center}.hero-car img{border-radius:16px}}
 </style>
 </head>
 <body>
@@ -3375,7 +3377,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 
   <section class="hero">
     <div class="hero-copy"><div class="eyebrow">Kilometerstand</div><h2 id="vehicleName">Mijn auto</h2><div class="odo"><strong id="odometer">—</strong><span>km</span></div><div class="hero-consumption"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 21V4h10v17M3 21h14M7 7h6v5H7zM15 8h2l2 2v7a2 2 0 0 0 4 0v-5l-2-2"/></svg><span><strong id="heroConsumption">—</strong> L/100 km <small>laatste volle tank</small></span></div><div class="since-full" id="sinceFull">—</div></div>
-    <div class="hero-car" aria-hidden="true"><svg viewBox="0 0 250 145"><defs><linearGradient id="carPaint" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3ee6b7"/><stop offset=".55" stop-color="#159d82"/><stop offset="1" stop-color="#096b5b"/></linearGradient><linearGradient id="glass" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#bff8e9" stop-opacity=".82"/><stop offset="1" stop-color="#0b3430" stop-opacity=".9"/></linearGradient></defs><ellipse cx="126" cy="124" rx="100" ry="12" fill="#000" opacity=".34"/><path class="car-body" d="M24 92c4-18 18-27 39-31l27-29c8-8 18-12 31-12h43c13 0 23 5 31 16l18 26c19 5 28 15 31 31l-5 19H28L24 92Z" fill="url(#carPaint)"/><path d="m78 61 24-27c5-5 11-7 19-7h13v34H78Zm63 0V27h20c11 0 18 4 24 13l14 21h-58Z" fill="url(#glass)"/><path d="M39 82h167" stroke="#9af8df" stroke-opacity=".5"/><path d="M113 68h16" stroke="#d6fff4" stroke-width="3" stroke-linecap="round" opacity=".65"/><path d="M217 70c8 5 13 12 15 22h-22l7-22Z" fill="#eafff9" opacity=".75"/><path d="M29 87h20l-7 15H26" fill="#d8fff5" opacity=".8"/><circle cx="73" cy="110" r="23" fill="#07100f"/><circle cx="73" cy="110" r="12" fill="#7b9690"/><circle cx="192" cy="110" r="23" fill="#07100f"/><circle cx="192" cy="110" r="12" fill="#7b9690"/><path d="M32 111h18m46 0h73m46 0h22" stroke="#a6ffe8" stroke-width="3" opacity=".5"/></svg></div>
+    <div class="hero-car"><img src="captur-2014.png" alt="Zilvergrijze Renault Captur uit 2014, illustratieve afbeelding" width="1536" height="1024" fetchpriority="high"></div>
   </section>
 
   <div class="dashboard-actions">
@@ -3855,6 +3857,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-cache')
             self.end_headers()
             self.wfile.write(SERVICE_WORKER)
+            return
+        if path == '/captur-2014.png':
+            image_path = Path(__file__).with_name('captur-2014.png')
+            if not image_path.is_file():
+                self.send_error(404, 'Afbeelding ontbreekt')
+                return
+            data = image_path.read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/png')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'public, max-age=3600')
+            self.end_headers()
+            self.wfile.write(data)
             return
         mi = re.fullmatch(r'/icon-(180|192|512)\.png', path)
         if mi:

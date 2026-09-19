@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.0.3
+- Zilvergrijze Renault Captur (2014) als gegenereerde illustratieve afbeelding op het startscherm.
+- Op smalle schermen staat de afbeelding onder de kilometerstand; op brede schermen ernaast.
+- Afbeelding wordt meegeleverd in de container en opgenomen in de offlinecache.
+- Versie en PWA-cache verhoogd; meldingslinks van 5.0.2 behouden.
+
 ## 5.0.2
 - Meldingslinks voor stopmeldingen, ritassistent en testmelding verwijzen naar de repository-installatie `675b3933_rit_tank`.
 - Versienummer en PWA-cache bijgewerkt. Stopdetectiegedrag blijft gelijk.
