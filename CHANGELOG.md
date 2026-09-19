@@ -1,0 +1,113 @@
+# Changelog
+
+## 5.0.1
+- Diagnoselog in Instellingen: ophalen, kopiëren en downloaden als tekstbestand.
+- Maximaal 500 gebeurtenissen van de laatste 48 uur, bewaard bij herstart.
+- Logt afstandsgrens, beweging, stilstand, provinciecontrole en resultaat van stopmelding.
+- Registreert ouderdom van HA-entiteitswijziging; dit is geen exacte GPS-meettijd.
+- Geen adressen, coördinaten, kenteken, sleutels of ruwe foutmeldingen in de export.
+- Actieve rit bekijken scrolt nu direct naar de actieve rit.
+- Stopdetectiegedrag is niet gewijzigd; deze versie verzamelt diagnosebewijs.
+
+## 5.0.0
+- Heruitgave van 4.4.1 onder versienummer 5.0.0 op verzoek van de gebruiker.
+- Versienummer in add-onconfiguratie, backend en PWA-cache bijgewerkt.
+- Bestaande functies, add-onidentiteit en gegevensopslag behouden.
+
+## 4.4.1
+- Overijssel toegevoegd aan provincies voor stopmeldingen.
+- Actieve rit: na 10 seconden gedetecteerde stilstand in Overijssel verschijnt bij geopende app de vraag of je de rit wilt opslaan.
+- Bevestigen opent de bestaande controle- en afsluitstappen; geen automatische opslag.
+- Achtergrond gebruikt de bestaande HA-meldingsservice. Locatie-updates bepalen de daadwerkelijke reactietijd.
+- Groningen en Drenthe behouden de ingestelde vertraging; minimale ritafstand blijft gelden.
+
+## 4.4.0
+- Aankomstscherm met route, grote voorgestelde tellerstand, ritsoort, Alles akkoord en Aanpassen.
+- Bekend vertrek en aankomst bouwen nu een GPS-routeconcept op zonder officiële registratie; bevestiging blijft nodig.
+- Concept onderweg wordt op het dashboard getoond; zichtbare dashboards verversen iedere 30 seconden, niet tijdens invoer.
+- Routevoorstellen worden bij aankomst vastgelegd; onderbroken/schaarse GPS-data geven handmatige controle.
+- Kilometerleren per kenteken (of voertuignaam) op basis van expliciet gecontroleerde vertrek- en eindstanden.
+- Minimaal vijf stabiele trajecten van minimaal 5 km; mediaan van maximaal 30 voorbeelden, correctie begrensd op ±10%.
+- Gewoon Akkoord drukken traint het model niet; kilometerleren kan worden uitgezet zonder historie te wissen.
+- Controle op dubbele bevestiging, overlappende ritten en oudere voorstellen bij een nieuwere actieve rit.
+- Actieve rit kan bij aankomst expliciet worden afgesloten; bestaande tankbon- en Drive-functies blijven behouden.
+
+## 4.3.1
+- **Volgend adres** en **Rit afsluiten** tonen nu eerst groot de actueel berekende kilometerstand.
+- Het voorstel wordt bij iedere klik opnieuw opgehaald uit de meest recente GPS-route.
+- Met **Akkoord** ga je direct door; met **Wijzigen** verschijnt het kilometerwiel om de stand te corrigeren.
+- Bij onvoldoende GPS-data schakelt de app duidelijk terug naar handmatige invoer.
+
+## 4.3.0
+- Drie autonomieniveaus toegevoegd: Handmatig, Assistent en Autopilot.
+- Autopilot classificeert bekende routes automatisch vanaf een instelbare betrouwbaarheid.
+- Nieuwe **Te controleren**-inbox toont route, voorstel, betrouwbaarheid en classificatiebron.
+- Slimme tankbon leest lokaal liters, prijs per liter, totaalbedrag, datum en tankstation uit een foto.
+- Herkende bongegevens worden vooringevuld maar blijven altijd corrigeerbaar vóór opslaan.
+- Dagelijkse versleutelde Google Drive-back-up toegevoegd met handmatige testknop en bewaartermijn.
+- Back-ups bevatten de consistente SQLite-database, tankbonnen en herstelmetadata.
+- Drive-back-ups gebruiken AES-256-GCM en een apart back-upwachtwoord; service-accountgegevens worden niet meegekopieerd.
+
+## 4.2.0
+- Volledig vernieuwd premium iPhone-dashboard met donkere automotive-uitstraling.
+- Grote kilometerkaart met voertuig, verbruik en afstand sinds de laatste volle tank.
+- **Rit starten** is de centrale hoofdactie en verandert bij een actieve rit in **Actieve rit bekijken**.
+- Nieuwe vaste ondernavigatie voor Overzicht, Ritten, Tanken en Meer.
+- Snelle acties voor tankbeurt en kilometerstand opnieuw ontworpen met duidelijke pictogrammen.
+- Statistieken, grafieken, kaarten, modals en invoervelden visueel geharmoniseerd.
+- Safe-area, Dynamic Island, kleine iPhones en standalone-weergave blijven ondersteund.
+- Alle bestaande tank-, rit-, GPS-, Home Assistant-, export- en beveiligingsfuncties blijven behouden.
+
+## 4.1.0
+- Echte standalone-modus toegevoegd naast Home Assistant Ingress.
+- Eigen wachtwoordlogin met ondertekende, Secure, HttpOnly en SameSite=Strict sessiecookie.
+- Sessies verlopen instelbaar na 1–90 dagen en worden ongeldig zodra het wachtwoord verandert.
+- Rate limiting toegevoegd na herhaalde foutieve inlogpogingen.
+- Alle gegevens-, mutatie- en exportroutes vereisen authenticatie buiten Ingress.
+- Same-origin-controle toegevoegd aan alle wijzigende standalone-aanvragen.
+- Directe standalone-toegang zonder HTTPS wordt geweigerd.
+- Poort 8099 kan optioneel in Home Assistant worden gepubliceerd; standaard blijft hij gesloten.
+- Uitlogknop en sessieverloopafhandeling toegevoegd aan de PWA.
+- Bestaande SQLite-database en Home Assistant-functies blijven behouden.
+
+## 4.0.0
+- Rit & Tank is nu een installeerbare PWA met manifest, eigen app-icoon en standalone/fullscreen-weergave.
+- iPhone safe-area-ondersteuning toegevoegd voor notch en Dynamic Island.
+- Service worker toegevoegd voor een offline beschikbare app-interface en beheerste cache-updates.
+- Installatiehulp en PWA-status toegevoegd aan Instellingen.
+- Online/offline-status zichtbaar gemaakt; na herstel worden actuele gegevens opnieuw geladen.
+- App-snelkoppelingen toegevoegd voor een nieuwe rit en tankbeurt.
+- Nieuwe toekomstvaste API-aliases toegevoegd: `/api/trips/*`, `/api/stats/*` en `/api/export/pdf`.
+- Home Assistant blijft de achtergrondlocatie en mobiele meldingen verzorgen; de eigen backend blijft eigenaar van ritten, tankbeurten en historie.
+- Bestaande 3.6-database en alle geregistreerde gegevens blijven behouden.
+
+## 3.6.0
+- Achtergrond-GPS telt tijdens een actieve rit de afgelegde route sinds de laatste vastgelegde stop op.
+- Bij **Rit afsluiten** wordt de eind-kilometerstand automatisch voorgesteld als: laatste echte tellerstand + geschatte achtergrondroute.
+- De schatting is zichtbaar in de ritkaart én in het afsluitvenster, maar blijft bewust corrigeerbaar met het kilometer-scrollwheel.
+- Nieuwe snelle stopmelding na standaard **30 seconden stilstand** (best-effort, afhankelijk van iPhone/Companion locatie-updates).
+- Snelle stopmeldingen én automatische aankomstpushes worden uitsluitend verstuurd als Google Geocoding de stop in **Groningen** of **Drenthe** plaatst.
+- Pushmelding toont geschatte afstand en voorgestelde eind-kilometerstand en opent Rit & Tank direct.
+- GPS-jitter wordt gefilterd; onrealistische sprongen en onnauwkeurige locaties tellen niet mee voor de afstandsschatting.
+- Na een handmatig opgeslagen tussenstop wordt de achtergrondafstand opnieuw vanaf dat kilometerpunt opgebouwd.
+- Polling van de Home Assistant tracker gebeurt maximaal iedere 10 seconden; de werkelijke reactiesnelheid blijft afhankelijk van hoe snel iOS/Companion nieuwe GPS-data publiceert.
+- Bestaande 3.5 database en historie blijven behouden.
+
+## 3.5.0
+- Nieuwe achtergrond-ritassistent via Home Assistant `person` / `device_tracker`.
+- Bekende plekken kunnen automatisch als **passieve Home Assistant-zones** worden gesynchroniseerd.
+- Pushmelding bij gedetecteerde aankomst met acties **Privé** en **Zakelijk**.
+- Luistert via de Home Assistant WebSocket API naar `mobile_app_notification_action`.
+- Nieuwe inbox met nog te verwerken automatisch herkende ritten.
+- Kilometerstand blijft een expliciete controle voordat een gedetecteerde rit definitief wordt opgeslagen.
+- Experimentele herkenning van onbekende stops na minimale ritafstand + instelbare stilstandtijd.
+- Statusweergave voor huidige plek, laatste achtergrondlocatie, zonesynchronisatie en WebSocket-verbinding.
+- Testknop voor mobiele melding en knop om bekende plekken opnieuw met HA-zones te synchroniseren.
+- Bestaande 3.4 database en historie blijven behouden.
+
+## 3.4.0
+- Bekende plekken met GPS, herkenningsradius en eigen regels.
+- Classificatie gebeurt per traject/etappe in plaats van alleen per complete rit.
+- Slim voorstel Zakelijk/Privé op basis van bestemming, vertrekplek en geleerde routes.
+- Terugkerende routes worden onthouden na bevestiging.
+- CSV en fiscale PDF bevatten ritsoort per etappe.

@@ -1,0 +1,61 @@
+name: Rit & Tank
+version: '5.0.1'
+slug: rit_tank
+description: Zelfstandige beveiligde Rit & Tank-PWA met eigen database, HTTPS-login,
+  GPS-afstandsschatting, Home Assistant-koppeling, fiscale PDF en tankbon-foto.
+url: https://www.home-assistant.io/
+arch:
+- amd64
+- aarch64
+startup: application
+boot: auto
+init: false
+ingress: true
+ingress_port: 8099
+ports:
+  8099/tcp: null
+ports_description:
+  8099/tcp: Zelfstandige PWA — uitsluitend achter een HTTPS reverse proxy
+panel_icon: mdi:car-info
+panel_title: Rit & Tank
+panel_admin: false
+homeassistant_api: true
+backup: hot
+options:
+  vehicle_name: Mijn auto
+  fuel_type: Benzine
+  currency: €
+  timezone: Europe/Amsterdam
+  entity_prefix: auto
+  initial_odometer: 0
+  google_places_api_key: ''
+  places_radius_m: 1800
+  places_max_results: 8
+  standalone_enabled: false
+  standalone_password: ''
+  standalone_session_days: 30
+  google_drive_enabled: false
+  google_drive_folder_id: ''
+  google_drive_service_account_json: ''
+  backup_encryption_password: ''
+  backup_hour: 3
+  backup_retention_days: 30
+schema:
+  vehicle_name: str
+  fuel_type: str
+  currency: str
+  timezone: str
+  entity_prefix: str
+  initial_odometer: float
+  google_places_api_key: password
+  places_radius_m: int(100,5000)
+  places_max_results: int(1,20)
+  standalone_enabled: bool
+  standalone_password: password
+  standalone_session_days: int(1,90)
+  google_drive_enabled: bool
+  google_drive_folder_id: str
+  google_drive_service_account_json: password
+  backup_encryption_password: password
+  backup_hour: int(0,23)
+  backup_retention_days: int(1,365)
