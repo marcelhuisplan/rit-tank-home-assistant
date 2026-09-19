@@ -1,5 +1,5 @@
 name: Rit & Tank
-version: '5.0.6'
+version: '5.0.7'
 slug: rit_tank
 description: Zelfstandige beveiligde Rit & Tank-PWA met eigen database, HTTPS-login,
   GPS-afstandsschatting, Home Assistant-koppeling, fiscale PDF en tankbon-foto.
@@ -37,6 +37,7 @@ options:
   google_drive_enabled: false
   google_drive_folder_id: ''
   google_drive_service_account_json: ''
+  google_drive_oauth_json: ''
   backup_encryption_password: ''
   backup_hour: 3
   backup_retention_days: 30
@@ -56,6 +57,7 @@ schema:
   google_drive_enabled: bool
   google_drive_folder_id: str
   google_drive_service_account_json: password
+  google_drive_oauth_json: password
   backup_encryption_password: password
   backup_hour: int(0,23)
-  backup_retention_days: int(1,365)
+  backup_retention_days: int(0,365)

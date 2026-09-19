@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.0.7
+- Grote tankboncamera bovenaan het overzicht en als eerste onderdeel bij tanken.
+- Herstel automatisch invullen van liters/literprijs bij herhaalde scans; liters behouden twee decimalen. Niet herkende waarden worden expliciet gemeld en niet overschreven.
+- Verbeterde herkenning van literprijslabels, gesplitste regels en brandstoftabellen.
+- Huidige ritlocatie toont maximaal tien bestaande BAG-adressen in de dichtstbijzijnde straat; huisnummerkeuze of handmatige adresbevestiging blijft in de registratie behouden.
+- Locatie-fallback staat in de database; bestaande browserkeuze wordt eenmalig overgenomen. Tijdelijk ontbrekende HA-entiteiten blijven geselecteerd.
+- PDF-scherm met delen naar andere apps, openen/afdrukken, downloaden en permanent archiveren in Drive.
+- Drive ondersteunt gebruikers-OAuth naast service-accounts voor Gedeelde Drives. Bewaartermijn 0 betekent onbeperkt. PDF-archieven worden nooit door back-upopruiming verwijderd.
+- Huisplan-logo blijft op website, login en PWA-iconen behouden.
+
+
 ## 5.0.6
 - Huisplan-logo op het inlogscherm en in de kop van de website.
 - Huisplan-logo als browsericoon en beginschermicoon voor iPhone/iPad.

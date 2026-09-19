@@ -29,7 +29,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse, quote
+from urllib.parse import parse_qs, urlparse, quote, urlencode
 from zoneinfo import ZoneInfo
 
 DATA_DIR = Path('/data')
@@ -37,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '5.0.6'
+APP_VERSION = '5.0.7'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -59,6 +59,7 @@ DEFAULT_OPTIONS = {
     'google_drive_enabled': False,
     'google_drive_folder_id': '',
     'google_drive_service_account_json': '',
+    'google_drive_oauth_json': '',
     'backup_encryption_password': '',
     'backup_hour': 3,
     'backup_retention_days': 30,
@@ -431,12 +432,12 @@ def set_settings(payload: dict[str, Any]) -> dict[str, Any]:
     allowed = (
         'vehicle_name', 'fuel_type', 'currency', 'driver_name', 'company_name',
         'vehicle_make', 'vehicle_model', 'license_plate', 'vehicle_period_from',
-        'vehicle_period_to', 'assistant_enabled', 'assistant_location_entity',
+        'vehicle_period_to', 'assistant_enabled', 'assistant_location_entity', 'location_fallback_entity',
         'assistant_mode', 'assistant_auto_confidence', 'distance_learning_enabled',
         'assistant_notify_service', 'assistant_sync_zones', 'assistant_unknown_stops',
         'assistant_check_seconds', 'assistant_unknown_stop_minutes', 'assistant_fast_stop_seconds', 'assistant_min_trip_m'
     )
-    allow_empty = {'assistant_location_entity', 'assistant_notify_service'}
+    allow_empty = {'assistant_location_entity', 'assistant_notify_service', 'location_fallback_entity'}
     with DB_LOCK, db() as con:
         for key in allowed:
             if key in payload:
@@ -672,17 +673,54 @@ def google_reverse_geocode(lat: float, lon: float) -> dict[str, Any]:
         }
 
 
+def nearby_house_numbers(lat: float, lon: float) -> dict[str, Any]:
+    """Use real BAG addresses, never manufacture house numbers from GPS."""
+    base = 'https://api.pdok.nl/bzk/locatieserver/search/v3_1/'
+    fields = 'id,weergavenaam,straatnaam,woonplaatsnaam,openbareruimte_id,huis_nlt,centroide_ll,afstand'
+    try:
+        nearest = http_json(base + 'reverse?' + urlencode({
+            'lat': lat, 'lon': lon, 'type': 'adres', 'distance': 250,
+            'rows': 1, 'fl': fields,
+        }), timeout=10).get('response', {}).get('docs', [])
+        if not nearest:
+            return {'addresses': [], 'street': '', 'source': 'PDOK / BAG'}
+        street_id = str(nearest[0].get('openbareruimte_id') or '')
+        if not re.fullmatch(r'\d+', street_id):
+            return {'addresses': [], 'street': '', 'source': 'PDOK / BAG'}
+        docs = http_json(base + 'free?' + urlencode({
+            'q': '*:*', 'fq': f'type:adres AND openbareruimte_id:{street_id}',
+            'lat': lat, 'lon': lon, 'rows': 10, 'fl': fields,
+        }), timeout=10).get('response', {}).get('docs', [])
+        addresses, seen = [], set()
+        for doc in docs:
+            if str(doc.get('openbareruimte_id')) != street_id:
+                continue
+            point = re.fullmatch(r'POINT\(([\d.\-]+) ([\d.\-]+)\)', str(doc.get('centroide_ll') or ''))
+            label = str(doc.get('weergavenaam') or '')
+            if not point or not label or label in seen:
+                continue
+            lng, latitude = map(float, point.groups())
+            seen.add(label)
+            addresses.append({'address': label, 'house_number': doc.get('huis_nlt') or '',
+                              'latitude': latitude, 'longitude': lng,
+                              'distance_m': round(haversine_m(lat, lon, latitude, lng))})
+        addresses.sort(key=lambda item: item['distance_m'])
+        return {'addresses': addresses[:10], 'street': nearest[0].get('straatnaam') or '', 'source': 'PDOK / BAG'}
+    except Exception:
+        raise ValueError('Huisnummers konden niet worden opgehaald. Probeer opnieuw of vul het adres handmatig in.') from None
+
+
 def trip_location_details(stop: dict[str, Any]) -> dict[str, Any]:
+    # A confirmed address must not be replaced by a nearby HA zone or geocoder.
+    manual = str(stop.get('manual_label') or '').strip()
+    if manual:
+        return {'label': manual, 'address': manual, 'google_maps_uri': 'https://www.google.com/maps/search/?api=1&query=' + quote(manual)}
     kp = known_place_by_id(stop.get('known_place_id')) if stop.get('known_place_id') else None
     lat, lon = to_float(stop.get('latitude')), to_float(stop.get('longitude'))
     if kp:
         maps = f'https://www.google.com/maps/search/?api=1&query={lat},{lon}' if lat is not None and lon is not None else ''
         return {'label': str(kp.get('name') or 'Bekende plek'), 'address': str(kp.get('name') or ''), 'google_maps_uri': maps}
-    manual = str(stop.get('manual_label') or '').strip()
     place_id = str(stop.get('place_id') or '').strip()
-    if manual:
-        maps = f'https://www.google.com/maps/search/?api=1&query={lat},{lon}' if lat is not None and lon is not None else ''
-        return {'label': manual, 'address': manual, 'google_maps_uri': maps}
     if place_id:
         details = google_place_details(place_id)
         if details:
@@ -943,9 +981,10 @@ def backup_config() -> dict[str, Any]:
         'enabled': option_bool(opts.get('google_drive_enabled')),
         'folder_id': str(opts.get('google_drive_folder_id') or '').strip(),
         'credentials': str(opts.get('google_drive_service_account_json') or '').strip(),
+        'oauth': str(opts.get('google_drive_oauth_json') or '').strip(),
         'password': str(opts.get('backup_encryption_password') or ''),
         'hour': max(0, min(23, int(opts.get('backup_hour') or 3))),
-        'retention_days': max(1, min(365, int(opts.get('backup_retention_days') or 30))),
+        'retention_days': max(0, min(365, int(opts.get('backup_retention_days', 30)))),
     }
 
 
@@ -954,7 +993,7 @@ def backup_status() -> dict[str, Any]:
     state = assistant_state_get('backup_status', {}) or {}
     return {
         'enabled': cfg['enabled'],
-        'configured': bool(cfg['enabled'] and cfg['folder_id'] and cfg['credentials'] and len(cfg['password']) >= 12),
+        'configured': bool(cfg['enabled'] and cfg['folder_id'] and (cfg['credentials'] or cfg['oauth']) and len(cfg['password']) >= 12),
         'hour': cfg['hour'],
         'retention_days': cfg['retention_days'],
         'last_ok_at': state.get('last_ok_at') or '',
@@ -997,6 +1036,76 @@ def _encrypted_backup_file(password: str) -> Path:
         zip_path.unlink(missing_ok=True)
 
 
+def drive_service(cfg: dict[str, Any]):
+    from googleapiclient.discovery import build
+    if not cfg['enabled'] or not cfg['folder_id']:
+        raise ValueError('Schakel Google Drive in en vul de doelmap in de add-onconfiguratie in.')
+    try:
+        if cfg['oauth']:
+            from google.oauth2.credentials import Credentials
+            credentials = Credentials.from_authorized_user_info(json.loads(cfg['oauth']))
+        else:
+            from google.oauth2.service_account import Credentials
+            credentials = Credentials.from_service_account_info(json.loads(cfg['credentials']), scopes=['https://www.googleapis.com/auth/drive'])
+    except Exception:
+        raise ValueError('Google-inloggegevens ontbreken of zijn ongeldig. Controleer de add-onconfiguratie.') from None
+    service = build('drive', 'v3', credentials=credentials, cache_discovery=False)
+    # Service accounts cannot own files in a personal My Drive.
+    folder = service.files().get(fileId=cfg['folder_id'], fields='id,mimeType,driveId,trashed', supportsAllDrives=True).execute()
+    if folder.get('trashed') or folder.get('mimeType') != 'application/vnd.google-apps.folder':
+        raise ValueError('De gekozen Drive-map bestaat niet of is verwijderd.')
+    if not cfg['oauth'] and not folder.get('driveId'):
+        raise ValueError('Een service-account vereist een Gedeelde Drive. Gebruik OAuth voor een gewone Google Drive.')
+    return service
+
+
+def archive_pdf(payload: dict[str, Any]) -> dict[str, Any]:
+    """Upload the exact PDF the user previewed; archives never enter backup cleanup."""
+    try:
+        raw = base64.b64decode(str(payload.get('pdf_base64') or ''), validate=True)
+    except Exception:
+        raise ValueError('Ongeldig PDF-bestand.') from None
+    if not raw.startswith(b'%PDF-') or len(raw) > 8 * 1024 * 1024:
+        raise ValueError('PDF ontbreekt of is groter dan 8 MB.')
+    name = re.sub(r'[^A-Za-z0-9_.-]', '_', str(payload.get('filename') or 'rittenregistratie.pdf'))[:160]
+    if not name.lower().endswith('.pdf'):
+        name += '.pdf'
+    cfg = backup_config()
+    try:
+        service = drive_service(cfg)
+        from googleapiclient.http import MediaIoBaseUpload
+        uploaded = service.files().create(
+            body={'name': name, 'parents': [cfg['folder_id']],
+                  'appProperties': {'rit_tank_kind': 'pdf_archive'},
+                  'description': 'Permanent PDF-archief Rit & Tank'},
+            media_body=MediaIoBaseUpload(io.BytesIO(raw), mimetype='application/pdf', resumable=True),
+            fields='id,name', supportsAllDrives=True,
+        ).execute()
+        return {'ok': True, 'name': uploaded['name']}
+    except ValueError:
+        raise
+    except Exception:
+        raise ValueError('Opslaan in Google Drive mislukt. Controleer de verbinding, toegang en beschikbare ruimte.') from None
+
+
+def prune_drive_backups(service, cfg: dict[str, Any]) -> None:
+    if cfg['retention_days'] == 0:
+        return
+    cutoff = (datetime.utcnow() - timedelta(days=cfg['retention_days'])).isoformat(timespec='seconds') + 'Z'
+    folder = cfg['folder_id'].replace('\\', '\\\\').replace("'", "\\'")
+    query = f"'{folder}' in parents and appProperties has {{ key='rit_tank_kind' and value='backup' }} and createdTime < '{cutoff}' and trashed = false"
+    token = None
+    while True:
+        response = service.files().list(q=query, fields='nextPageToken,files(id,name)', pageToken=token,
+                                        supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+        for item in response.get('files', []):
+            if re.fullmatch(r'RitTank_\d{8}_\d{6}\.rtbackup', item.get('name', '')):
+                service.files().delete(fileId=item['id'], supportsAllDrives=True).execute()
+        token = response.get('nextPageToken')
+        if not token:
+            break
+
+
 def run_drive_backup() -> dict[str, Any]:
     if not BACKUP_LOCK.acquire(blocking=False):
         raise ValueError('Er loopt al een back-up.')
@@ -1005,41 +1114,29 @@ def run_drive_backup() -> dict[str, Any]:
         cfg = backup_config()
         if not cfg['enabled']:
             raise ValueError('Google Drive-back-up staat niet aan.')
-        if not cfg['folder_id'] or not cfg['credentials']:
-            raise ValueError('Google Drive-map of service-account ontbreekt.')
+        if not cfg['folder_id'] or not (cfg['credentials'] or cfg['oauth']):
+            raise ValueError('Google Drive-map of inloggegevens ontbreken.')
         if len(cfg['password']) < 12:
             raise ValueError('Kies een back-upwachtwoord van minimaal 12 tekens.')
-        try:
-            info = json.loads(cfg['credentials'])
-        except Exception:
-            raise ValueError('Service-account-JSON is ongeldig.')
-        from google.oauth2.service_account import Credentials
-        from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
-        credentials = Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/drive'])
-        service = build('drive', 'v3', credentials=credentials, cache_discovery=False)
+        service = drive_service(cfg)
         path = _encrypted_backup_file(cfg['password'])
         uploaded = service.files().create(
-            body={'name': path.name, 'parents': [cfg['folder_id']], 'description': 'Versleutelde Rit & Tank-back-up'},
+            body={'name': path.name, 'parents': [cfg['folder_id']], 'description': 'Versleutelde Rit & Tank-back-up', 'appProperties': {'rit_tank_kind': 'backup'}},
             media_body=MediaFileUpload(str(path), mimetype='application/octet-stream', resumable=True),
             fields='id,name,createdTime', supportsAllDrives=True,
         ).execute()
-        cutoff = (datetime.utcnow() - timedelta(days=cfg['retention_days'])).isoformat(timespec='seconds') + 'Z'
-        query = f"'{cfg['folder_id']}' in parents and name contains 'RitTank_' and createdTime < '{cutoff}' and trashed = false"
-        old = service.files().list(q=query, fields='files(id,name)', supportsAllDrives=True, includeItemsFromAllDrives=True).execute().get('files', [])
-        for item in old:
-            try:
-                service.files().delete(fileId=item['id'], supportsAllDrives=True).execute()
-            except Exception:
-                pass
+        prune_drive_backups(service, cfg)
         state = {'last_ok_at': iso_local(), 'last_file': uploaded.get('name') or path.name, 'last_error': ''}
         assistant_state_set('backup_status', state)
         return {'ok': True, **state}
     except ValueError:
         raise
     except Exception as exc:
-        assistant_state_set('backup_status', {'last_error': str(exc)[:500]})
-        raise ValueError(f'Google Drive-back-up mislukt: {str(exc)[:180]}')
+        state = assistant_state_get('backup_status', {}) or {}
+        state['last_error'] = 'Google Drive-back-up mislukt. Controleer toegang, verbinding en opslagruimte.'
+        assistant_state_set('backup_status', state)
+        raise ValueError(state['last_error']) from None
     finally:
         if path:
             path.unlink(missing_ok=True)
@@ -1150,14 +1247,40 @@ def parse_receipt_text(text: str) -> dict[str, Any]:
     for line in lines:
         low = line.casefold()
         vals = numbers(line)
-        if liters is None and vals and (re.search(r'\b(liter|liters|litres|ltr)\b', low) or re.search(r'\d\s*l\b', low)):
+        price_label = bool(re.search(r'/\s*l|per\s+liter|literprijs|eenheidsprijs|prijs\s*/', low))
+        if liters is None and not price_label and vals and (re.search(r'\b(liter|liters|litres|ltr|volume|hoeveelheid)\b', low) or re.search(r'\d\s*l\b', low)):
             liters = next((v for v in vals if 1 <= v <= 250), None)
-        if price is None and vals and ('/l' in low or 'per liter' in low or 'prijs/l' in low or 'eur/l' in low):
+        if price is None and vals and price_label:
             price = next((v for v in vals if .5 <= v <= 5), None)
         if vals and any(word in low for word in ('totaal', 'total', 'te betalen', 'bedrag', 'amount')):
             plausible = [v for v in vals if 1 <= v <= 1000]
             if plausible:
                 total = plausible[-1]
+    # Common pump receipts: "32,45 L x 1,899" or a numeric row below headings.
+    for index, line in enumerate(lines):
+        row_values = numbers(line)
+        # Numeric fuel table row: quantity, unit price, amount (labels may be above).
+        if len(row_values) == 3:
+            amount, unit_price, row_total = row_values
+            if 1 <= amount <= 250 and .5 <= unit_price <= 5 and abs(amount * unit_price - row_total) <= .06:
+                liters, price, total = liters or amount, price or unit_price, total or row_total
+        match = re.search(r'(\d{1,3}[.,]\d{1,3})\s*(?:l(?:tr|iter)?\.?\s*)?[x×@]\s*(?:€\s*)?(\d[.,]\d{2,3})', line, re.I)
+        if match:
+            amount, unit_price = [float(v.replace(',', '.')) for v in match.groups()]
+            if 1 <= amount <= 250 and .5 <= unit_price <= 5:
+                liters = liters or amount
+                price = price or unit_price
+        if index + 1 < len(lines):
+            low, following = line.casefold(), numbers(lines[index + 1])
+            if not numbers(line) and following:
+                if re.search(r'\b(liters?|ltr|volume|hoeveelheid)\b', low) and not re.search(r'per liter|literprijs|/\s*l', low):
+                    liters = liters or next((v for v in following if 1 <= v <= 250), None)
+                if re.search(r'literprijs|per liter|/\s*l|eenheidsprijs', low):
+                    price = price or next((v for v in following if .5 <= v <= 5), None)
+    if price and total and not liters:
+        candidate = total / price
+        if 1 <= candidate <= 250:
+            liters = candidate
     if liters and total and not price:
         candidate = total / liters
         if .5 <= candidate <= 5:
@@ -1186,7 +1309,7 @@ def parse_receipt_text(text: str) -> dict[str, Any]:
     found = sum(v is not None and v != '' for v in (liters, price, total, station, date_value))
     confidence = min(99, 28 + found * 14 + (15 if liters and price else 0))
     return {
-        'liters': round(liters, 1) if liters is not None else None,
+        'liters': round(liters, 2) if liters is not None else None,
         'price_per_liter': round(price, 3) if price is not None else None,
         'total': round(total, 2) if total is not None else None,
         'station': station,
@@ -2339,7 +2462,7 @@ def _trip_point_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
         raise ValueError('Leg eerst de huidige locatie vast met de 📍-knop.')
     place_id = str(payload.get('place_id') or '').strip()[:255]
-    if not place_id:
+    if not place_id and not payload.get('manual_label'):
         geo = google_reverse_geocode(lat, lon)
         place_id = str(geo.get('place_id') or '')[:255]
     return {
@@ -3446,7 +3569,7 @@ APP_HTML = r'''<!doctype html>
 .odo-wheelbox{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;align-items:center}.odo-wheelbox .wheel{height:140px;padding:45px 0;border-radius:14px}.odo-wheelbox .wheel:after{top:45px}.odo-wheelbox .wheel-item{font-size:20px}.odo-wheelbox .wheel-item.sel{font-size:28px}.odo-live{text-align:center;margin-top:8px}.odo-live b{font-size:28px;color:#fff}.odo-live span{color:var(--muted);margin-left:5px}.odo-last{text-align:center;color:#81909c;font-size:10px;margin-top:4px}.guide-date input{font-size:16px}.guide-tip{font-size:10px;color:#8fa0ac;line-height:1.35;margin-top:7px;text-align:center}
 @media(max-width:420px){.guide-section{padding:10px}.odo-wheelbox{gap:3px}.odo-wheelbox .wheel-item{font-size:18px}.odo-wheelbox .wheel-item.sel{font-size:25px}}
 
-.export-actions{display:flex;gap:8px;align-items:center}.pdf-link{background:#17251f;border-color:#2d7158;color:#7de0b4}.export-actions .maplink{min-width:42px;text-align:center}.trip-type-pill{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:900;margin-top:4px}.trip-type-pill.business{background:#11382f;color:#6ce0b3}.trip-type-pill.private{background:#3b2028;color:#ff9bad}.trip-type-pill.mixed{background:#3b2f15;color:#ffd27a}.trip-actions{gap:7px}.editbtn{background:#172635;border:1px solid #2d5069;color:#8dd2ff;border-radius:10px;padding:6px 9px}.audit-list{display:flex;flex-direction:column;gap:7px}.audit-row{background:#10161b;border:1px solid #27323b;border-radius:13px;padding:10px}.audit-row b{font-size:12px}.audit-row small{display:block;color:var(--muted);font-size:10px;margin-top:3px}.tax-note{font-size:11px;line-height:1.35;color:#a8b5bf;background:#13191e;border:1px solid #2b3540;border-radius:13px;padding:10px;margin-top:9px}.receipt-link{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;background:#2a2117;border:1px solid #624821;color:#ffd28b;border-radius:11px;padding:8px 9px}.filepick{display:block;background:#0f1418;border:1px dashed #3b4a55;border-radius:14px;padding:12px}.filepick input{padding:0;border:0;background:transparent;font-size:13px}.fiscal-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+[hidden]{display:none!important}.scan-card{display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;background:#19382f;border:1px solid #40836d;border-radius:18px;cursor:pointer;text-align:center}.scan-card>span{font-size:52px}.scan-card>b{font-size:20px}.scan-card small{color:var(--muted)}.address-choices .selected{outline:2px solid #65d9b0}.address-choices{display:grid;gap:6px;margin-top:12px}#receiptScanStatus{font-size:13px;line-height:1.5}#pdfModal .linkbtn{font:inherit} .export-actions{display:flex;gap:8px;align-items:center}.pdf-link{background:#17251f;border-color:#2d7158;color:#7de0b4}.export-actions .maplink{min-width:42px;text-align:center}.trip-type-pill{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:900;margin-top:4px}.trip-type-pill.business{background:#11382f;color:#6ce0b3}.trip-type-pill.private{background:#3b2028;color:#ff9bad}.trip-type-pill.mixed{background:#3b2f15;color:#ffd27a}.trip-actions{gap:7px}.editbtn{background:#172635;border:1px solid #2d5069;color:#8dd2ff;border-radius:10px;padding:6px 9px}.audit-list{display:flex;flex-direction:column;gap:7px}.audit-row{background:#10161b;border:1px solid #27323b;border-radius:13px;padding:10px}.audit-row b{font-size:12px}.audit-row small{display:block;color:var(--muted);font-size:10px;margin-top:3px}.tax-note{font-size:11px;line-height:1.35;color:#a8b5bf;background:#13191e;border:1px solid #2b3540;border-radius:13px;padding:10px;margin-top:9px}.receipt-link{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;background:#2a2117;border:1px solid #624821;color:#ffd28b;border-radius:11px;padding:8px 9px}.filepick{display:block;background:#0f1418;border:1px dashed #3b4a55;border-radius:14px;padding:12px}.filepick input{padding:0;border:0;background:transparent;font-size:13px}.fiscal-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 
 .smart-place-bar{display:flex;gap:8px;margin-top:10px}.smart-place-bar button{flex:1;border:1px solid #385064;background:#13212c;color:#9dd9ff;border-radius:14px;padding:11px;font-weight:900}.known-list{display:flex;flex-direction:column;gap:8px}.known-row{display:grid;grid-template-columns:42px 1fr auto;gap:10px;align-items:center;background:#10171c;border:1px solid #2b3841;border-radius:15px;padding:10px}.known-icon{font-size:24px;text-align:center}.known-row small{display:block;color:var(--muted);margin-top:2px;line-height:1.3}.known-actions{display:flex;gap:5px}.known-actions button{border:0;border-radius:10px;padding:7px 9px;background:#1c2b36;color:#a8dbff}.suggest-box{display:none;margin:12px 0;background:linear-gradient(145deg,#122b26,#112027);border:1px solid #2d8069;border-radius:16px;padding:12px}.suggest-box.show{display:block}.suggest-box b{font-size:14px}.suggest-box small{display:block;color:#9db0ba;margin-top:4px;line-height:1.35}.segment-choice{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}.segment-choice button{border:1px solid #35434c;background:#11181d;color:#aab8c2;border-radius:13px;padding:12px;font-weight:900}.segment-choice button.active.business{background:#11382f;border-color:#25866b;color:#74e7bb}.segment-choice button.active.private{background:#3b2028;border-color:#a1465e;color:#ff9bad}.segment-badge{display:inline-flex;margin-left:6px;padding:3px 7px;border-radius:999px;font-size:9px;font-weight:900;background:#1a2a34;color:#8fd5ff}.leg-pill{display:inline-flex;padding:2px 7px;border-radius:999px;font-size:9px;font-weight:900;margin-left:5px}.leg-pill.business{background:#11382f;color:#6ce0b3}.leg-pill.private{background:#3b2028;color:#ff9bad}.place-radius{display:flex;align-items:center;gap:10px}.place-radius input{flex:1}.place-preview{padding:10px;background:#0f1519;border:1px solid #2a3740;border-radius:13px;color:#9fc2d9;font-size:12px;margin-top:8px}
 .assistant-panel{display:none;margin:10px 0;border:1px solid #2d8069;background:linear-gradient(145deg,#0e2924,#111c24);border-radius:18px;padding:13px}.assistant-panel.show{display:block}.assistant-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.assistant-head b{font-size:15px}.assistant-head small{display:block;color:#9fb1bc;margin-top:3px;line-height:1.35}.assistant-status{font-size:10px;padding:5px 8px;border-radius:999px;background:#17352d;color:#7ce0b8;font-weight:900;white-space:nowrap}.assistant-status.off{background:#33251a;color:#ffc17a}.assistant-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}.assistant-item{background:#0d161b;border:1px solid #2b4246;border-radius:14px;padding:10px}.assistant-route{font-weight:900;font-size:13px}.assistant-meta{font-size:10px;color:#94a6b2;margin-top:3px;line-height:1.35}.assistant-actions{display:grid;grid-template-columns:1fr 1fr auto auto;gap:6px;margin-top:8px}.assistant-actions button{border:1px solid #34454f;background:#152029;color:#c5d2da;border-radius:10px;padding:9px 7px;font-weight:900}.assistant-actions .private{background:#342028;border-color:#864052;color:#ff9bad}.assistant-actions .business{background:#11372f;border-color:#27765f;color:#79deb9}.assistant-actions .complete{background:#12304a;border-color:#28638e;color:#8fd1ff}.assistant-actions .dismiss{min-width:38px}.assistant-zone-ok{color:#71d9b2}.assistant-zone-err{color:#ff9a9a}.assistant-settings{margin-top:14px;padding:12px;background:#0f1519;border:1px solid #2d3a43;border-radius:15px}.assistant-settings h3{margin:0 0 6px;font-size:15px}.assistant-settings p{margin:0 0 9px;color:#91a2ae;font-size:11px;line-height:1.4}.assistant-route-big{font-size:18px;font-weight:900;text-align:center;padding:11px;background:#0e151a;border:1px solid #2c3942;border-radius:14px;margin-top:10px}.assistant-note{font-size:11px;color:#9fb0ba;line-height:1.4;margin-top:8px}.odo-suggest{display:none;margin:2px 0 10px;padding:18px;border:1px solid rgba(69,240,195,.38);background:linear-gradient(145deg,#103a31,#0b211d);border-radius:21px;text-align:center;box-shadow:0 14px 35px rgba(0,0,0,.22)}.odo-suggest.show{display:block}.odo-suggest-label{color:#78e8ca;font-size:10px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.odo-suggest-value{font-size:42px;font-weight:900;letter-spacing:-.055em;margin-top:7px;color:#fff}.odo-suggest-value span{font-size:16px;letter-spacing:0;color:#b9cdc7}.odo-suggest-detail{color:#9eb5af;font-size:11px;line-height:1.4;margin-top:8px}.odo-suggest-actions{display:grid;grid-template-columns:1.35fr .65fr;gap:8px;margin-top:15px}.odo-suggest-accept,.odo-suggest-edit{border-radius:15px;padding:13px 8px;font-weight:900}.odo-suggest-accept{border:0;background:linear-gradient(135deg,#50eec7,#19b9a5);color:#05251d}.odo-suggest-edit{border:1px solid rgba(141,211,193,.23);background:#10211e;color:#d7e7e2}.odo-editor[hidden]{display:none}
@@ -3475,6 +3598,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
     <button class="iconbtn" onclick="openSettings()" aria-label="Instellingen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg></button>
   </div>
 
+  <button class="scan-card" style="width:100%;margin-bottom:16px;color:inherit;font:inherit" onclick="openFuel();$('fuelReceipt').click()"><span aria-hidden="true">📷</span><b>Tankbon scannen</b><small>Foto maken · liters en literprijs invullen</small></button>
   <section class="hero">
     <div class="hero-copy"><div class="eyebrow">Kilometerstand</div><h2 id="vehicleName">Mijn auto</h2><div class="odo"><strong id="odometer">—</strong><span>km</span></div><div class="hero-consumption"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 21V4h10v17M3 21h14M7 7h6v5H7zM15 8h2l2 2v7a2 2 0 0 0 4 0v-5l-2-2"/></svg><span><strong id="heroConsumption">—</strong> L/100 km <small>laatste volle tank</small></span></div><div class="since-full" id="sinceFull">—</div></div>
     <div class="hero-car"><img src="captur-2014.png" alt="Zilvergrijze Renault Captur uit 2014, illustratieve afbeelding" width="1536" height="1024" fetchpriority="high"></div>
@@ -3517,7 +3641,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
     </section>
     <div class="smart-place-bar"><button onclick="openKnownPlaces()">📌 Bekende plekken & slimme regels</button></div>
     <div class="tax-note">Slimme modus: iedere etappe tussen twee locaties krijgt apart een voorstel Zakelijk/Privé. Je bevestigt met één tik; de app onthoudt terugkerende routes. Voor een volledige rittenregistratie zijn o.a. datum, begin/eindstand, vertrek- en aankomstadres, ritsoort, eventuele afwijkende route en privé-omrijkilometers relevant. Controleer altijd of dit past bij jouw fiscale situatie.</div>
-    <section class="card"><div class="cardhead"><h3>Ritten in deze periode</h3><div class="export-actions"><a class="maplink" id="bizCsvLink" href="api/business.csv">CSV</a><a class="maplink pdf-link" id="bizPdfLink" href="api/business.pdf?period=month">PDF</a></div></div><div id="businessHistory"></div></section>
+    <section class="card"><div class="cardhead"><h3>Ritten in deze periode</h3><div class="export-actions"><a class="maplink" id="bizCsvLink" href="api/business.csv">CSV</a><a class="maplink pdf-link" id="bizPdfLink" onclick="openPdfExport(event)" href="api/business.pdf?period=month">PDF</a></div></div><div id="businessHistory"></div></section>
     <section class="card"><div class="cardhead"><h3>🧾 Wijzigingslogboek</h3><span style="color:var(--muted);font-size:11px">laatste 24</span></div><div class="audit-list" id="auditHistory"></div></section>
   </div>
 </div>
@@ -3528,22 +3652,24 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <button class="nav-item" onclick="openSettings()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0ZM12 2v3m0 14v3M2 12h3m14 0h3"/></svg><span>Meer</span></button>
 </nav>
 <div class="toast" id="toast"></div>
+<div class="modal" id="pdfModal"><div class="sheet"><div class="sheethead"><h2>PDF-export</h2><button class="close" onclick="closeModal('pdfModal')">✕</button></div><p id="pdfStatus" role="status">PDF voorbereiden…</p><div class="settings-actions"><button class="linkbtn" id="pdfShare" onclick="sharePdf()" disabled>Delen / andere app</button><a class="linkbtn" id="pdfOpen" target="_blank" rel="noopener" hidden>Openen / afdrukken</a><a class="linkbtn" id="pdfDownload" hidden>Downloaden</a><button class="linkbtn" id="pdfDrive" onclick="archivePdf()" disabled>Bewaren in Google Drive</button></div><p class="tax-note">Open de PDF en gebruik het deel- of printmenu van je apparaat om af te drukken. Op iPhone/iPad kun je via Delen ook een andere app kiezen.</p></div></div>
 
 <div class="modal" id="fuelModal"><div class="sheet" id="fuelSheet"><div class="grab"></div><div class="sheethead"><h2>⛽ Tankbeurt</h2><button class="close" onclick="closeModal('fuelModal')">✕</button></div>
+  <div class="guide-section" id="fuelStepScan"><label class="scan-card" for="fuelReceipt"><span aria-hidden="true">📷</span><b>Tankbon scannen</b><small>Maak een foto of kies een bon. Liters en literprijs worden ingevuld.</small></label><input id="fuelReceipt" type="file" accept="image/*" capture="environment"><p id="receiptScanStatus" role="status">Maak een scherpe foto van de volledige bon.</p></div>
   <input id="fuelOdo" type="hidden">
   <div class="guide-section active" id="fuelStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small>Scroll de cijfers</small></div><div class="odo-wheelbox" id="fuelOdoWheels"></div><div class="odo-live"><b id="fuelOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="fuelOdoLast"></div><button class="guide-next" type="button" onclick="guideTo('fuelStepDate')">Kilometerstand staat goed →</button></div>
   <div class="guide-section guide-date" id="fuelStepDate"><div class="guide-head"><span class="step-badge">2</span><b>Datum & tijd</b><small>Staat standaard op nu</small></div><div class="field" style="margin-top:0"><input id="fuelDate" type="datetime-local"></div><button class="guide-next" type="button" onclick="guideTo('fuelStepLiters')">Verder naar liters →</button></div>
-  <div class="guide-section" id="fuelStepLiters"><div class="guide-head"><span class="step-badge">3</span><b>Liters</b><small>Hele + tienden</small></div><div class="wheelbox"><div class="wheel" id="literWhole"></div><div class="wheel-sep">,</div><div class="wheel" id="literDec"></div></div><button class="guide-next" type="button" onclick="guideTo('fuelStepPrice')">Verder naar prijs →</button></div>
+  <div class="guide-section" id="fuelStepLiters"><div class="guide-head"><span class="step-badge">3</span><b>Liters</b><small>Liters met 2 decimalen</small></div><div class="wheelbox"><div class="wheel" id="literWhole"></div><div class="wheel-sep">,</div><div class="wheel" id="literDec"></div><div class="wheel" id="literDec2"></div></div><button class="guide-next" type="button" onclick="guideTo('fuelStepPrice')">Verder naar prijs →</button></div>
   <div class="guide-section" id="fuelStepPrice"><div class="guide-head"><span class="step-badge">4</span><b>Prijs per liter</b><small>3 decimalen</small></div><div class="wheelbox price"><div class="wheel" id="priceWhole"></div><div class="wheel-sep">,</div><div class="wheel" id="priceD1"></div><div class="wheel" id="priceD2"></div><div class="wheel" id="priceD3"></div></div><div class="live-total">Totaal: <b id="fuelTotal">€ 0,00</b></div><button class="guide-next" type="button" onclick="guideTo('fuelStepLocation')">Verder naar tankstation →</button></div>
   <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">5</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div><button class="guide-next" type="button" onclick="guideTo('fuelStepFinish')">Verder →</button></div>
-  <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">6</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" placeholder="Bijv. snelweg, vakantie..."></div><div class="field filepick"><label>📷 Slimme tankbon (optioneel)</label><input id="fuelReceipt" type="file" accept="image/*" capture="environment"><div id="receiptScanStatus" style="font-size:10px;color:var(--muted);margin-top:7px">Maak een scherpe foto; liters, prijs en station worden lokaal herkend en vooringevuld.</div></div><button class="save" onclick="saveFuel()">Tankbeurt opslaan</button></div>
+  <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">6</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" placeholder="Bijv. snelweg, vakantie..."></div><button class="save" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button></div>
 </div></div>
 
 <div class="modal" id="kmModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>🛣️ Kilometerstand</h2><button class="close" onclick="closeModal('kmModal')">✕</button></div><input id="kmOdo" type="hidden"><div class="guide-section active" id="kmStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Nieuwe kilometerstand</b><small>Laatste stand is vooringesteld</small></div><div class="odo-wheelbox" id="kmOdoWheels"></div><div class="odo-live"><b id="kmOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="kmOdoLast"></div><button class="guide-next" type="button" onclick="guideTo('kmStepRest')">Verder →</button></div><div class="guide-section" id="kmStepRest"><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="kmDate" type="datetime-local"></div><div class="field"><label>Notitie (optioneel)</label><input id="kmNote" maxlength="200" placeholder="Bijv. thuiskomst, zakelijke rit..."></div><button class="save" onclick="saveKm()">Kilometerstand opslaan</button></div></div></div>
 
 <div class="modal" id="tripModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2 id="tripModalTitle">💼 Zakelijke rit</h2><button class="close" onclick="closeModal('tripModal')">✕</button></div>
   <div id="tripStartFields"><div class="tax-note">Start alleen je ritregistratie. Vanaf de eerstvolgende locatie classificeert de app <b>iedere etappe apart</b> als zakelijk of privé.</div><div class="purpose-grid"><div class="field"><label>Doel / afspraak</label><input id="tripPurpose" maxlength="120" placeholder="Bijv. klantbezoek"></div><div class="field"><label>Klant / project</label><input id="tripClient" maxlength="120" placeholder="Optioneel"></div></div><div class="field"><label>Ritnotitie (optioneel)</label><input id="tripTripNote" maxlength="250" placeholder="Bijv. offertebespreking"></div></div>
-  <input id="tripOdo" type="hidden"><div class="guide-section active" id="tripStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small id="tripOdoStepHint">Laatste stand is vooringesteld</small></div><div class="odo-suggest" id="tripOdoSuggestion"><div class="odo-suggest-label">Berekende kilometerstand</div><div class="odo-suggest-value"><b id="tripOdoSuggestedValue">—</b> <span>km</span></div><div class="odo-suggest-detail" id="tripOdoSuggestedDetail"></div><div class="odo-suggest-actions"><button class="odo-suggest-accept" type="button" onclick="acceptTripOdoSuggestion()">✓ Akkoord</button><button class="odo-suggest-edit" type="button" onclick="editTripOdoSuggestion()">Wijzigen</button></div></div><div class="odo-editor" id="tripOdoEditor"><div class="odo-wheelbox" id="tripOdoWheels"></div><div class="odo-live"><b id="tripOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="tripOdoLast"></div><label class="assistant-note"><input type="checkbox" id="tripOdoChecked"> Ik heb de vorige én huidige tellerstand gecontroleerd; gebruik dit traject voor kilometerleren.</label><button class="guide-next" type="button" onclick="guideTo('tripStepLocation')">Kilometerstand bevestigen →</button></div></div><div class="guide-section" id="tripStepLocation"><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="tripDate" type="datetime-local"></div><div class="trip-location-box"><b id="tripLocationTitle">📍 Nog geen locatie vastgelegd</b><small id="tripLocationDetail">Tik hieronder zodra je op de juiste plek bent.</small><button class="location-big" type="button" onclick="captureTripLocation()">📍 Gebruik huidige locatie</button><div class="google-attrib" id="tripGoogleAttrib" style="display:none">Adres via <b translate="no">Google Maps</b></div></div></div>
+  <input id="tripOdo" type="hidden"><div class="guide-section active" id="tripStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small id="tripOdoStepHint">Laatste stand is vooringesteld</small></div><div class="odo-suggest" id="tripOdoSuggestion"><div class="odo-suggest-label">Berekende kilometerstand</div><div class="odo-suggest-value"><b id="tripOdoSuggestedValue">—</b> <span>km</span></div><div class="odo-suggest-detail" id="tripOdoSuggestedDetail"></div><div class="odo-suggest-actions"><button class="odo-suggest-accept" type="button" onclick="acceptTripOdoSuggestion()">✓ Akkoord</button><button class="odo-suggest-edit" type="button" onclick="editTripOdoSuggestion()">Wijzigen</button></div></div><div class="odo-editor" id="tripOdoEditor"><div class="odo-wheelbox" id="tripOdoWheels"></div><div class="odo-live"><b id="tripOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="tripOdoLast"></div><label class="assistant-note"><input type="checkbox" id="tripOdoChecked"> Ik heb de vorige én huidige tellerstand gecontroleerd; gebruik dit traject voor kilometerleren.</label><button class="guide-next" type="button" onclick="guideTo('tripStepLocation')">Kilometerstand bevestigen →</button></div></div><div class="guide-section" id="tripStepLocation"><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="tripDate" type="datetime-local"></div><div class="trip-location-box"><b id="tripLocationTitle">📍 Nog geen locatie vastgelegd</b><small id="tripLocationDetail">Tik hieronder zodra je op de juiste plek bent.</small><button class="location-big" type="button" onclick="captureTripLocation()">📍 Gebruik huidige locatie</button><div id="tripAddressChoices" class="address-choices"></div><div class="field"><label for="tripManualAddress">Adres uit je afspraak (eventueel corrigeren)</label><input id="tripManualAddress" maxlength="120" placeholder="Straat, huisnummer en plaats"><button class="guide-next" type="button" onclick="confirmManualTripAddress()">Dit adres gebruiken</button></div><div class="google-attrib" id="tripGoogleAttrib" style="display:none">Adres via <b translate="no">Google Maps</b></div></div></div>
   <div class="suggest-box" id="tripSuggestionBox"><b id="tripSuggestionTitle">Slim voorstel</b><small id="tripSuggestionReason"></small><div class="segment-choice"><button type="button" id="segmentBusiness" class="business" onclick="setSegmentType('business')">💼 Zakelijk</button><button type="button" id="segmentPrivate" class="private" onclick="setSegmentType('private')">🏠 Privé</button></div></div>
   <div class="field"><label>Notitie bij deze stop (optioneel)</label><input id="tripStopNote" maxlength="250" placeholder="Bijv. bezoek afgerond"></div><div id="tripFinishFields" style="display:none"><div class="field"><label>Afwijkende route (alleen indien van toepassing)</label><input id="tripDeviatingRoute" maxlength="300" placeholder="Bijv. omleiding via A1 wegens afsluiting"></div><div class="field"><label>Privé-omrijkilometers</label><input id="tripPrivateDetour" type="number" min="0" step="0.1" inputmode="decimal" value="0"></div></div>
   <button class="save" id="tripSaveButton" onclick="saveTripPoint()">Opslaan</button>
@@ -3591,7 +3717,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <div class="field"><label>Merk auto</label><input id="setMake" maxlength="80" placeholder="Bijv. Volkswagen"></div>
   <div class="field"><label>Type / model</label><input id="setModel" maxlength="80" placeholder="Bijv. Golf Variant"></div>
   <div class="field"><label>Kenteken</label><input id="setPlate" maxlength="20" placeholder="Bijv. AB-12-CD"></div><div class="row2"><div class="field"><label>Auto beschikbaar vanaf</label><input id="setPeriodFrom" type="date"></div><div class="field"><label>Auto beschikbaar t/m</label><input id="setPeriodTo" type="date"></div></div>
-  <div class="field"><label>Locatie-fallback op dit apparaat</label><select id="setLocationEntity"><option value="">Geen — alleen GPS van browser</option></select><div style="font-size:11px;color:var(--muted);margin-top:5px">Als iOS/Ingress geen browser-GPS toestaat, gebruikt 📍 deze Home Assistant person/device_tracker.</div></div>
+  <div class="field"><label>Locatie-fallback (blijvend opgeslagen)</label><select id="setLocationEntity"><option value="">Geen — alleen GPS van browser</option></select><div style="font-size:11px;color:var(--muted);margin-top:5px">Als iOS/Ingress geen browser-GPS toestaat, gebruikt 📍 deze Home Assistant person/device_tracker.</div></div>
   <div class="assistant-settings">
     <h3>🤖 Automatische ritassistent</h3>
     <p>Herkent bekende plekken op de achtergrond, maakt passieve Home Assistant-zones en stuurt een melding met Privé/Zakelijk zodra een aankomst wordt gedetecteerd.</p>
@@ -3608,7 +3734,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
     <div class="settings-actions"><button class="linkbtn" style="font:inherit" onclick="testAssistantNotification()">🔔 Test melding</button><button class="linkbtn" style="font:inherit" onclick="syncAssistantZones()">📍 Zones synchroniseren</button></div>
   </div>
   <div class="field" id="initialWrap"><label>Begin-kilometerstand</label><input id="setInitial" type="number" inputmode="decimal" step="0.1"><div style="font-size:11px;color:var(--muted);margin-top:5px">Alleen van toepassing als er nog geen registraties zijn.</div></div>
-  <div class="pwa-card"><b>☁️ Versleutelde Google Drive-back-up</b><small id="backupStatusText">Configureer de gedeelde Drive-map en service-accountgegevens in de add-onconfiguratie.</small><div class="settings-actions"><button class="pwa-install" type="button" onclick="runBackupNow()">Nu back-up maken</button></div></div>
+  <div class="pwa-card"><b>☁️ Versleutelde Google Drive-back-up</b><small id="backupStatusText">Configureer Google Drive in de add-onconfiguratie. Stel backup_retention_days in op 0 om back-ups onbeperkt te bewaren.</small><div class="settings-actions"><button class="pwa-install" type="button" onclick="runBackupNow()">Nu back-up maken</button></div></div>
   <div class="pwa-card"><b>📲 Zelfstandige iPhone-app</b><small id="pwaInstallText">Installeer Rit & Tank op je beginscherm voor een eigen icoon, fullscreen weergave en een offline beschikbare app-interface.</small><div class="settings-actions"><button class="pwa-install" id="pwaInstallButton" type="button" onclick="installPwa()">Zet op beginscherm</button><button class="linkbtn" id="standaloneLogoutButton" style="display:none;font:inherit" type="button" onclick="logoutStandalone()">Uitloggen</button></div></div>
   <div class="tech" id="techStatus"></div>
   <section class="assistant-panel show">
@@ -3622,7 +3748,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
       <button type="button" class="btn" onclick="downloadDiagnosticLog()">Download log</button>
     </div>
   </section>
-  <button class="save" onclick="saveSettings()">Instellingen opslaan</button><div class="settings-actions"><a class="linkbtn" href="api/export.csv">⬇️ Tank/auto CSV</a><a class="linkbtn" id="settingsBusinessCsv" href="api/business.csv">🧾 Ritten CSV</a><a class="linkbtn" id="settingsBusinessPdf" href="api/business.pdf?period=month">📄 Fiscale PDF</a><button class="linkbtn" style="font:inherit" onclick="reloadData()">↻ Vernieuwen</button></div>
+  <button class="save" onclick="saveSettings()">Instellingen opslaan</button><div class="settings-actions"><a class="linkbtn" href="api/export.csv">⬇️ Tank/auto CSV</a><a class="linkbtn" id="settingsBusinessCsv" href="api/business.csv">🧾 Ritten CSV</a><a class="linkbtn" id="settingsBusinessPdf" onclick="openPdfExport(event)" href="api/business.pdf?period=month">📄 Fiscale PDF</a><button class="linkbtn" style="font:inherit" onclick="reloadData()">↻ Vernieuwen</button></div>
 </div></div>
 
 <script>
@@ -3646,11 +3772,11 @@ function toast(msg,error=false){let t=$('toast');t.textContent=msg;t.className='
 function closeModal(id){$(id).classList.remove('show')} function openModal(id){$(id).classList.add('show');let sh=$(id).querySelector('.sheet');if(sh)sh.scrollTop=0}
 let GUIDE_TIMER=null;
 function guideTo(id,delay=80){clearTimeout(GUIDE_TIMER);GUIDE_TIMER=setTimeout(()=>{let el=$(id);if(!el)return;let modal=el.closest('.modal');if(modal)modal.querySelectorAll('.guide-section').forEach(x=>x.classList.toggle('active',x===el));el.scrollIntoView({behavior:'smooth',block:'center'})},delay)}
-async function reloadData(){try{DATA=await api(`api/summary?period=${PERIOD}`);render();handleLaunchAction()}catch(e){toast(e.message,true)}}
+async function reloadData(){try{DATA=await api(`api/summary?period=${PERIOD}`);await migrateLocationFallback();render();handleLaunchAction()}catch(e){toast(e.message,true)}}
 function render(){let s=DATA.settings,p=DATA.period,f=DATA.period_full_tank;$('vehicleName').textContent=s.vehicle_name;$('fuelType').textContent=s.fuel_type;$('odometer').textContent=DATA.current_odometer==null?'—':fmt(DATA.current_odometer,0);$('heroConsumption').textContent=DATA.latest_full_cycle?.l100!=null?fmt(DATA.latest_full_cycle.l100,2):'—';$('sinceFull').textContent=DATA.since_full_km==null?'Nog geen volle-tank startpunt':`${fmt(DATA.since_full_km,0)} km sinds laatste volle tank`;$('periodLabel').textContent=p.label;$('fuelCount').textContent=`${p.fuel_count} tankbeurt${p.fuel_count===1?'':'en'}`;$('kpiKm').textContent=`${fmt(p.km,1)} km`;$('kpiLiters').textContent=`${fmt(p.liters,2)} L`;$('kpiL100').textContent=f?.l100==null?'—':fmt(f.l100,2);$('kpiCost').textContent=money(p.cost);$('kpiPrice').textContent=p.avg_price==null?'—':`${s.currency} ${fmt(p.avg_price,3)}`;$('kpiCost100').textContent=f?.cost100==null?'—':money(f.cost100);if(f){$('fullAvgVal').textContent=`${fmt(f.l100,2)} L/100 km`;$('fullAvgInfo').innerHTML=`${f.cycles} complete cyclus${f.cycles===1?'':'sen'}<br>${fmt(f.km,0)} km · ${fmt(f.liters,1)} L`}else{$('fullAvgVal').textContent='—';$('fullAvgInfo').textContent='Nog geen complete volle-tank cyclus in deze periode'};renderChart();renderStations();renderHistory();renderBusiness();$('eventCount').textContent=`${DATA.total_events} totaal`;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.period===PERIOD));document.querySelectorAll('.seg button').forEach(b=>b.classList.toggle('active',b.dataset.metric===METRIC));switchView(VIEW,false)}
 function renderChart(){let c=$('chart');c.innerHTML='';let vals=DATA.chart.map(x=>Number(x[METRIC]??0)||0),max=Math.max(...vals,1);DATA.chart.forEach(x=>{let w=document.createElement('div');w.className='bar-wrap';let value=Number(x[METRIC]??0)||0,pct=value<=0?1:Math.max(3,value/max*88);let label=METRIC==='cost'?`${DATA.settings.currency}${fmt(value,0)}`:METRIC==='liters'?`${fmt(value,1)}L`:METRIC==='l100'?`${fmt(value,1)}`:`${fmt(value,0)}`;w.innerHTML=`<div class="bar-val">${value?label:''}</div><div class="bar ${METRIC==='l100'?'orange':''}" style="height:${pct}%"></div><div class="bar-label">${x.label}</div>`;c.appendChild(w)})}
 function renderStations(){let box=$('stationStats'),arr=DATA.station_stats||[];$('stationCount').textContent=arr.length?`${arr.length} locatie${arr.length===1?'':'s'}`:'';box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">In deze periode zijn nog geen tanklocaties opgeslagen.</div>';return}arr.forEach(x=>{let r=document.createElement('div');r.className='station-row';let map=x.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(x.google_maps_uri)}">📍</a>`:'';r.innerHTML=`<div class="station-icon">⛽</div><div><strong>${esc(x.name)}</strong><small>${x.count}× getankt · ${fmt(x.liters,1)} L · ${money(x.cost)}<br>gem. ${x.avg_price==null?'—':DATA.settings.currency+' '+fmt(x.avg_price,3)}/L${x.address?'<br>'+esc(x.address):''}</small></div>${map}`;box.appendChild(r)})}
-function renderHistory(){let h=$('history');h.innerHTML='';if(!DATA.recent.length){h.innerHTML='<div class="empty">Nog geen registraties. Voeg je eerste kilometerstand of tankbeurt toe.</div>';return}DATA.recent.forEach(e=>{let d=document.createElement('div');d.className='event';let fuel=e.type==='fuel',station=e.station_display||e.station||'',desc=fuel?`${fmt(e.liters,1)} L · ${DATA.settings.currency} ${fmt(e.price_per_liter,3)}/L${station?' · '+esc(station):''}`:`+${fmt(e.delta_km,1)} km`,map=e.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(e.google_maps_uri)}">📍</a>`:'',receipt=e.receipt_path?`<a class="receipt-link" target="_blank" href="api/receipt/${e.id}">📷</a>`:'';d.innerHTML=`<div class="event-icon">${fuel?'⛽':'🛣️'}</div><div><strong>${fuel?'Tankbeurt':'Kilometerstand'} · ${fmt(e.odometer,0)} km</strong><small>${e.date_label} ${e.time_label} · ${desc}${e.station_address?'<br>'+esc(e.station_address):''}${e.note?'<br>'+esc(e.note):''}</small></div><div class="right">${fuel?`<b>${money(e.cost)}</b>`:`<b>${fmt(e.delta_km,1)} km</b>`}<div class="event-actions">${map}${receipt}<button class="trash" onclick="removeEvent(${e.id})">🗑️</button></div></div>`;h.appendChild(d)})}
+function renderHistory(){let h=$('history');h.innerHTML='';if(!DATA.recent.length){h.innerHTML='<div class="empty">Nog geen registraties. Voeg je eerste kilometerstand of tankbeurt toe.</div>';return}DATA.recent.forEach(e=>{let d=document.createElement('div');d.className='event';let fuel=e.type==='fuel',station=e.station_display||e.station||'',desc=fuel?`${fmt(e.liters,2)} L · ${DATA.settings.currency} ${fmt(e.price_per_liter,3)}/L${station?' · '+esc(station):''}`:`+${fmt(e.delta_km,1)} km`,map=e.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(e.google_maps_uri)}">📍</a>`:'',receipt=e.receipt_path?`<a class="receipt-link" target="_blank" href="api/receipt/${e.id}">📷</a>`:'';d.innerHTML=`<div class="event-icon">${fuel?'⛽':'🛣️'}</div><div><strong>${fuel?'Tankbeurt':'Kilometerstand'} · ${fmt(e.odometer,0)} km</strong><small>${e.date_label} ${e.time_label} · ${desc}${e.station_address?'<br>'+esc(e.station_address):''}${e.note?'<br>'+esc(e.note):''}</small></div><div class="right">${fuel?`<b>${money(e.cost)}</b>`:`<b>${fmt(e.delta_km,1)} km</b>`}<div class="event-actions">${map}${receipt}<button class="trash" onclick="removeEvent(${e.id})">🗑️</button></div></div>`;h.appendChild(d)})}
 function switchView(view,remember=true){VIEW=view==='business'?'business':'auto';document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${VIEW}`));document.querySelectorAll('.view-tab').forEach(b=>b.classList.toggle('active',b.dataset.view===VIEW));if(remember)localStorage.setItem('rit_tank_view',VIEW)}
 document.querySelectorAll('.view-tab').forEach(b=>b.onclick=()=>{switchView(b.dataset.view);window.scrollTo({top:0,behavior:'smooth'})});VIEW=localStorage.getItem('rit_tank_view')||'auto';
 function smartTripAction(){if(!DATA)return;let active=DATA.business?.active_trip;if(active){switchView('business');$('bizHero').scrollIntoView({block:'start',behavior:'smooth'})}else openTripPoint('start')}
@@ -3724,34 +3850,65 @@ async function refreshTripOdoProposal(request){
     $('tripOdoStepHint').textContent='Voorstel niet beschikbaar — controleer de teller';
   }finally{clearTimeout(timer)}
 }
-function openTripPoint(mode){TRIP_MODE=mode;++TRIP_PROPOSAL_REQUEST;$('tripOdoChecked').checked=false;TRIP_LOCATION=null;TRIP_SEGMENT_TYPE='';TRIP_SUGGESTION=null;let active=DATA.business?.active_trip;$('tripModalTitle').textContent=mode==='start'?'🚗 Ritregistratie starten':mode==='finish'?'🏁 Laatste locatie':'📍 Volgende locatie';$('tripStartFields').style.display=mode==='start'?'block':'none';$('tripFinishFields').style.display=mode==='finish'?'block':'none';$('tripSuggestionBox').classList.remove('show');$('tripDate').value=localInputNow();$('tripStopNote').value='';if(mode==='start'){$('tripPurpose').value='';$('tripClient').value='';$('tripTripNote').value=''};if(mode==='finish'){$('tripDeviatingRoute').value=active?.deviating_route||'';$('tripPrivateDetour').value=Number(active?.private_detour_km||0)};$('tripLocationTitle').textContent='📍 Nog geen locatie vastgelegd';$('tripLocationDetail').textContent='Tik hieronder zodra je op de juiste plek bent.';$('tripGoogleAttrib').style.display='none';$('tripSaveButton').textContent=mode==='start'?'Registratie starten':mode==='finish'?'Ritregistratie afsluiten':'Locatie opslaan';$('tripOdoSuggestion').classList.remove('show');$('tripOdoEditor').hidden=mode!=='start';$('tripOdoStepHint').textContent=mode==='start'?'Laatste stand is vooringesteld':'Berekende stand ophalen…';initOdometerWheel('trip',DATA.current_odometer??0);openModal('tripModal');setTimeout(()=>guideTo('tripStepOdo',0),80);if(mode!=='start')refreshTripOdoProposal(TRIP_PROPOSAL_REQUEST)}
-async function captureTripLocation(){let title=$('tripLocationTitle'),detail=$('tripLocationDetail');title.textContent='📍 Locatie bepalen...';detail.textContent='Even geduld.';try{let loc=await resolveLocation();let geo=await api('api/location/reverse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:loc.latitude,longitude:loc.longitude})});TRIP_LOCATION={...loc,place_id:geo.place_id||'',address:geo.address||''};title.textContent='✓ Locatie vastgelegd';detail.textContent=`${geo.address||fmt(loc.latitude,5)+', '+fmt(loc.longitude,5)}${loc.accuracy?` · ±${Math.round(loc.accuracy)} m`:''}`;$('tripGoogleAttrib').style.display=geo.source==='google'?'block':'none';if(TRIP_MODE!=='start'){try{let sug=await api('api/business/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:loc.latitude,longitude:loc.longitude})});showTripSuggestion(sug)}catch(e){showTripSuggestion({reason:'Kies zelf of dit traject zakelijk of privé was.'})}}setTimeout(()=>{let target=TRIP_MODE==='start'?$('tripStopNote'):$('tripSuggestionBox');if(target)target.scrollIntoView({behavior:'smooth',block:'center'})},350)}catch(e){TRIP_LOCATION=null;title.textContent='⚠️ Locatie niet vastgelegd';detail.textContent=e.message;toast(e.message,true)}}
-async function saveTripPoint(){if(!TRIP_LOCATION){toast('Leg eerst de huidige locatie vast met 📍.',true);return}if(TRIP_MODE!=='start'&&!TRIP_SEGMENT_TYPE){toast('Kies Zakelijk of Privé voor dit traject.',true);return}let path=TRIP_MODE==='start'?'api/business/start':TRIP_MODE==='finish'?'api/business/finish':'api/business/stop';let payload={odometer_checked:$('tripOdoChecked').checked,odometer:$('tripOdo').value,created_at:$('tripDate').value,latitude:TRIP_LOCATION.latitude,longitude:TRIP_LOCATION.longitude,location_accuracy:TRIP_LOCATION.accuracy??null,location_source:TRIP_LOCATION.source||'',place_id:TRIP_LOCATION.place_id||'',note:$('tripStopNote').value,segment_trip_type:TRIP_SEGMENT_TYPE};if(TRIP_MODE==='start'){payload.purpose=$('tripPurpose').value;payload.client=$('tripClient').value;payload.trip_note=$('tripTripNote').value}if(TRIP_MODE==='finish'){payload.deviating_route=$('tripDeviatingRoute').value;payload.private_detour_km=$('tripPrivateDetour').value}try{await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('tripModal');toast(TRIP_MODE==='start'?'Ritregistratie gestart':TRIP_MODE==='finish'?'Ritregistratie afgesloten':`${TRIP_SEGMENT_TYPE==='business'?'Zakelijke':'Privé'} etappe opgeslagen`);switchView('business');reloadData()}catch(e){toast(e.message,true)}}
+function openTripPoint(mode){TRIP_MODE=mode;++TRIP_PROPOSAL_REQUEST;++TRIP_ADDRESS_REQUEST;TRIP_GPS=null;$('tripAddressChoices').innerHTML='';$('tripManualAddress').value='';$('tripOdoChecked').checked=false;TRIP_LOCATION=null;TRIP_SEGMENT_TYPE='';TRIP_SUGGESTION=null;let active=DATA.business?.active_trip;$('tripModalTitle').textContent=mode==='start'?'🚗 Ritregistratie starten':mode==='finish'?'🏁 Laatste locatie':'📍 Volgende locatie';$('tripStartFields').style.display=mode==='start'?'block':'none';$('tripFinishFields').style.display=mode==='finish'?'block':'none';$('tripSuggestionBox').classList.remove('show');$('tripDate').value=localInputNow();$('tripStopNote').value='';if(mode==='start'){$('tripPurpose').value='';$('tripClient').value='';$('tripTripNote').value=''};if(mode==='finish'){$('tripDeviatingRoute').value=active?.deviating_route||'';$('tripPrivateDetour').value=Number(active?.private_detour_km||0)};$('tripLocationTitle').textContent='📍 Nog geen locatie vastgelegd';$('tripLocationDetail').textContent='Tik hieronder zodra je op de juiste plek bent.';$('tripGoogleAttrib').style.display='none';$('tripSaveButton').textContent=mode==='start'?'Registratie starten':mode==='finish'?'Ritregistratie afsluiten':'Locatie opslaan';$('tripOdoSuggestion').classList.remove('show');$('tripOdoEditor').hidden=mode!=='start';$('tripOdoStepHint').textContent=mode==='start'?'Laatste stand is vooringesteld':'Berekende stand ophalen…';initOdometerWheel('trip',DATA.current_odometer??0);openModal('tripModal');setTimeout(()=>guideTo('tripStepOdo',0),80);if(mode!=='start')refreshTripOdoProposal(TRIP_PROPOSAL_REQUEST)}
+let TRIP_ADDRESS_REQUEST=0,TRIP_ADDRESSES=[],TRIP_GPS=null;
+async function captureTripLocation(){let request=++TRIP_ADDRESS_REQUEST,title=$('tripLocationTitle'),detail=$('tripLocationDetail');TRIP_LOCATION=null;TRIP_GPS=null;TRIP_ADDRESSES=[];$('tripManualAddress').value='';$('tripAddressChoices').innerHTML='';title.textContent='📍 Locatie bepalen…';detail.textContent='Adressen in de buurt ophalen.';try{
+ let loc=await resolveLocation();if(request!==TRIP_ADDRESS_REQUEST)return;TRIP_GPS=loc;
+ let r=await api('api/location/addresses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(loc)});if(request!==TRIP_ADDRESS_REQUEST)return;TRIP_ADDRESSES=r.addresses||[];
+ title.textContent='Kies het huisnummer van je afspraak';detail.textContent=TRIP_ADDRESSES.length?`${r.street} · ${TRIP_ADDRESSES.length} adressen · bron PDOK / BAG. Controleer straat en huisnummer.`:'Geen adressen gevonden. Vul straat, huisnummer en plaats handmatig in.';
+ $('tripGoogleAttrib').style.display='none';TRIP_ADDRESSES.forEach((a,i)=>{let b=document.createElement('button');b.type='button';b.className='guide-next';b.textContent=`${a.address} · ${a.distance_m} m`;b.onclick=()=>chooseTripAddress(i);$('tripAddressChoices').appendChild(b)});
+ }catch(e){if(request!==TRIP_ADDRESS_REQUEST)return;title.textContent=TRIP_GPS?'Adres handmatig bevestigen':'⚠️ Locatie niet vastgelegd';detail.textContent=e.message;toast(e.message,true)}}
+function chooseTripAddress(index){let address=TRIP_ADDRESSES[index];if(!address||!TRIP_GPS)return;$('tripManualAddress').value=address.address;confirmTripAddress(address.address,{...TRIP_GPS,latitude:address.latitude,longitude:address.longitude,source:'pdok_confirmed'})}
+function confirmManualTripAddress(){let label=$('tripManualAddress').value.trim();if(!TRIP_GPS){toast('Bepaal eerst je huidige locatie.',true);return}if(!label){toast('Vul straat, huisnummer en plaats in.',true);return}confirmTripAddress(label,{...TRIP_GPS,source:'manual_address'})}
+async function confirmTripAddress(label,location){TRIP_LOCATION={...location,place_id:'',address:label,manual_label:label};let selected=TRIP_LOCATION;$('tripLocationTitle').textContent='✓ Adres bevestigd';$('tripLocationDetail').textContent=label;for(let b of $('tripAddressChoices').children)b.classList.toggle('selected',b.textContent.startsWith(label+' ·'));if(TRIP_MODE!=='start'){try{let sug=await api('api/business/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(location)});if(TRIP_LOCATION===selected)showTripSuggestion(sug)}catch(e){if(TRIP_LOCATION===selected)showTripSuggestion({reason:'Kies zelf of dit traject zakelijk of privé was.'})}}}
+$('tripManualAddress').addEventListener('input',()=>{TRIP_LOCATION=null;$('tripLocationTitle').textContent='Bevestig het aangepaste adres'});
+async function saveTripPoint(){if(!TRIP_LOCATION){toast('Leg eerst de huidige locatie vast met 📍.',true);return}if(TRIP_MODE!=='start'&&!TRIP_SEGMENT_TYPE){toast('Kies Zakelijk of Privé voor dit traject.',true);return}let path=TRIP_MODE==='start'?'api/business/start':TRIP_MODE==='finish'?'api/business/finish':'api/business/stop';let payload={odometer_checked:$('tripOdoChecked').checked,odometer:$('tripOdo').value,created_at:$('tripDate').value,latitude:TRIP_LOCATION.latitude,longitude:TRIP_LOCATION.longitude,location_accuracy:TRIP_LOCATION.accuracy??null,location_source:TRIP_LOCATION.source||'',place_id:TRIP_LOCATION.place_id||'',manual_label:TRIP_LOCATION.manual_label||'',note:$('tripStopNote').value,segment_trip_type:TRIP_SEGMENT_TYPE};if(TRIP_MODE==='start'){payload.purpose=$('tripPurpose').value;payload.client=$('tripClient').value;payload.trip_note=$('tripTripNote').value}if(TRIP_MODE==='finish'){payload.deviating_route=$('tripDeviatingRoute').value;payload.private_detour_km=$('tripPrivateDetour').value}try{await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('tripModal');toast(TRIP_MODE==='start'?'Ritregistratie gestart':TRIP_MODE==='finish'?'Ritregistratie afgesloten':`${TRIP_SEGMENT_TYPE==='business'?'Zakelijke':'Privé'} etappe opgeslagen`);switchView('business');reloadData()}catch(e){toast(e.message,true)}}
 function esc(s){let d=document.createElement('div');d.textContent=s||'';return d.innerHTML} function escAttr(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
 async function removeEvent(id){if(!confirm('Deze registratie verwijderen?'))return;try{await api(`api/events/${id}`,{method:'DELETE'});toast('Registratie verwijderd');reloadData()}catch(e){toast(e.message,true)}}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{PERIOD=b.dataset.period;reloadData()});document.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{METRIC=b.dataset.metric;renderChart();document.querySelectorAll('.seg button').forEach(x=>x.classList.toggle('active',x===b))});document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)closeModal(m.id)}));
+let PDF_EXPORT=null,PDF_REQUEST=0;
+async function openPdfExport(event){event.preventDefault();let url=event.currentTarget.href,request=++PDF_REQUEST;if(PDF_EXPORT)URL.revokeObjectURL(PDF_EXPORT.url);PDF_EXPORT=null;openModal('pdfModal');$('pdfStatus').textContent='PDF voorbereiden…';$('pdfShare').disabled=true;$('pdfDrive').disabled=true;$('pdfOpen').hidden=true;$('pdfDownload').hidden=true;try{let response=await fetch(url,{cache:'no-store'});if(!response.ok)throw new Error('PDF maken mislukt. Log zo nodig opnieuw in.');if(!(response.headers.get('Content-Type')||'').includes('application/pdf'))throw new Error('Geen PDF ontvangen. Log opnieuw in.');let blob=await response.blob();if(request!==PDF_REQUEST)return;let name=(response.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/)?.[1]||'rittenregistratie.pdf',file=new File([blob],name,{type:'application/pdf'}),objectUrl=URL.createObjectURL(blob);PDF_EXPORT={file,url:objectUrl,period:new URL(url,location.href).searchParams.get('period')||'month'};$('pdfOpen').href=objectUrl;$('pdfDownload').href=objectUrl;$('pdfDownload').download=name;$('pdfOpen').hidden=false;$('pdfDownload').hidden=false;$('pdfShare').disabled=!(navigator.canShare&&navigator.canShare({files:[file]}));$('pdfDrive').disabled=!DATA.app?.backup?.configured;$('pdfStatus').textContent='PDF gereed: '+name+(DATA.app?.backup?.configured?'':' · Stel Google Drive-back-up in via Meer → Instellingen.')}catch(e){$('pdfStatus').textContent=e.message}}
+async function sharePdf(){if(!PDF_EXPORT)return;try{await navigator.share({files:[PDF_EXPORT.file],title:'Rittenregistratie'})}catch(e){if(e.name!=='AbortError')toast('Delen niet beschikbaar. Gebruik Openen of Downloaden.',true)}}
+async function archivePdf(){if(!PDF_EXPORT)return;let exported=PDF_EXPORT;$('pdfDrive').disabled=true;try{let encoded=await new Promise((resolve,reject)=>{let reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('PDF kon niet worden gelezen.'));reader.readAsDataURL(exported.file)});let result=await api('api/backup/pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pdf_base64:encoded,filename:exported.file.name})});if(PDF_EXPORT===exported)$('pdfStatus').textContent='Permanent in Google Drive bewaard: '+result.name}catch(e){toast(e.message,true)}finally{if(PDF_EXPORT===exported)$('pdfDrive').disabled=false}}
 let wheels={};
-function createWheel(id,values,initial,onchange){let el=$(id);el.innerHTML='';values.forEach((v,i)=>{let x=document.createElement('div');x.className='wheel-item';x.textContent=v;x.dataset.idx=i;el.appendChild(x)});let w={el,values,index:Math.max(0,values.indexOf(initial))};w.select=idx=>{idx=Math.max(0,Math.min(values.length-1,idx));w.index=idx;[...el.children].forEach((x,i)=>x.classList.toggle('sel',i===idx));onchange?.()};let timer;el.addEventListener('scroll',()=>{clearTimeout(timer);timer=setTimeout(()=>w.select(Math.round(el.scrollTop/50)),70)});requestAnimationFrame(()=>{el.scrollTop=w.index*50;w.select(w.index)});wheels[id]=w;return w}
+function createWheel(id,values,initial,onchange){
+ let el=$(id),previous=wheels[id];if(previous?.timer)clearTimeout(previous.timer);el.onscroll=null;el.innerHTML='';
+ values.forEach((v,i)=>{let x=document.createElement('div');x.className='wheel-item';x.textContent=v;x.dataset.idx=i;el.appendChild(x)});
+ let w={el,values,index:Math.max(0,values.indexOf(initial)),timer:null};wheels[id]=w;
+ w.select=idx=>{if(wheels[id]!==w)return;w.index=Math.max(0,Math.min(values.length-1,idx));[...el.children].forEach((x,i)=>x.classList.toggle('sel',i===w.index));onchange?.()};
+ requestAnimationFrame(()=>{if(wheels[id]!==w)return;el.scrollTop=w.index*50;w.select(w.index);el.onscroll=()=>{clearTimeout(w.timer);w.timer=setTimeout(()=>{if(wheels[id]===w)w.select(Math.round(el.scrollTop/50))},70)}});return w
+}
 function wheelVal(id){return wheels[id]?.values[wheels[id].index]}
 function initOdometerWheel(prefix,initial){let n=Math.max(0,Math.min(999999,Math.round(Number(initial)||0))),digits=String(n).padStart(6,'0').split('').map(Number),box=$(prefix+'OdoWheels');box.innerHTML='';for(let i=0;i<6;i++){let w=document.createElement('div');w.className='wheel odo-wheel';w.id=prefix+'OdoD'+i;box.appendChild(w);createWheel(w.id,Array.from({length:10},(_,x)=>x),digits[i],()=>updateOdometerWheel(prefix))}updateOdometerWheel(prefix);let last=DATA?.current_odometer;let lastEl=$(prefix+'OdoLast');if(lastEl)lastEl.textContent=last==null?'Nog geen vorige kilometerstand':`Laatste geregistreerde stand: ${fmt(last,0)} km`}
 function updateOdometerWheel(prefix){let raw='';for(let i=0;i<6;i++)raw+=String(wheelVal(prefix+'OdoD'+i)??0);let value=Number(raw),hidden=$(prefix+'Odo'),display=$(prefix+'OdoDisplay');if(hidden)hidden.value=value;if(display)display.textContent=value.toLocaleString('nl-NL')}
 
-function initFuelWheels(liters=null,price=null){let last=DATA.latest_fuel||{},L=Number(liters??last.liters??40),P=Number(price??last.price_per_liter??1.899),lw=Math.max(0,Math.min(120,Math.floor(L))),ld=Math.round((L-lw)*10)%10,pw=Math.max(0,Math.min(5,Math.floor(P))),frac=String(Math.round((P-pw)*1000)).padStart(3,'0').slice(-3),upd=()=>updateFuelTotal();createWheel('literWhole',Array.from({length:121},(_,i)=>i),lw,upd);createWheel('literDec',Array.from({length:10},(_,i)=>i),ld,upd);createWheel('priceWhole',Array.from({length:6},(_,i)=>i),pw,upd);createWheel('priceD1',Array.from({length:10},(_,i)=>i),Number(frac[0]),upd);createWheel('priceD2',Array.from({length:10},(_,i)=>i),Number(frac[1]),upd);createWheel('priceD3',Array.from({length:10},(_,i)=>i),Number(frac[2]),upd)}
-function fuelValues(){let liters=Number(wheelVal('literWhole')||0)+Number(wheelVal('literDec')||0)/10,price=Number(wheelVal('priceWhole')||0)+Number(wheelVal('priceD1')||0)/10+Number(wheelVal('priceD2')||0)/100+Number(wheelVal('priceD3')||0)/1000;return{liters:Number(liters.toFixed(1)),price:Number(price.toFixed(3))}}
+function initFuelWheels(liters=null,price=null){let last=DATA.latest_fuel||{},L=Math.max(0,Math.min(25000,Math.round(Number(liters??last.liters??40)*100))),P=Math.max(0,Math.min(5999,Math.round(Number(price??last.price_per_liter??1.899)*1000))),upd=()=>updateFuelTotal();createWheel('literWhole',Array.from({length:251},(_,i)=>i),Math.floor(L/100),upd);createWheel('literDec',Array.from({length:10},(_,i)=>i),Math.floor(L/10)%10,upd);createWheel('literDec2',Array.from({length:10},(_,i)=>i),L%10,upd);createWheel('priceWhole',Array.from({length:6},(_,i)=>i),Math.floor(P/1000),upd);createWheel('priceD1',Array.from({length:10},(_,i)=>i),Math.floor(P/100)%10,upd);createWheel('priceD2',Array.from({length:10},(_,i)=>i),Math.floor(P/10)%10,upd);createWheel('priceD3',Array.from({length:10},(_,i)=>i),P%10,upd);updateFuelTotal()}
+function fuelValues(){let liters=Number(wheelVal('literWhole')||0)+Number(wheelVal('literDec')||0)/10+Number(wheelVal('literDec2')||0)/100,price=Number(wheelVal('priceWhole')||0)+Number(wheelVal('priceD1')||0)/10+Number(wheelVal('priceD2')||0)/100+Number(wheelVal('priceD3')||0)/1000;return{liters:Number(liters.toFixed(2)),price:Number(price.toFixed(3))}}
 function updateFuelTotal(){if(!DATA)return;let v=fuelValues();$('fuelTotal').textContent=`${DATA.settings.currency} ${fmt(v.liters*v.price,2)}`}
-function openFuel(){FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];$('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelReceipt').value='';$('receiptScanStatus').textContent='Maak een scherpe foto; liters, prijs en station worden lokaal herkend en vooringevuld.';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';$('stations').innerHTML=(DATA.recent_stations||[]).map(s=>`<option value="${escAttr(s)}">`).join('');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');initOdometerWheel('fuel',DATA.current_odometer??0);initFuelWheels();openModal('fuelModal');setTimeout(()=>guideTo('fuelStepOdo',0),80)}
+function openFuel(){++RECEIPT_REQUEST;RECEIPT_SCANNING=false;$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];$('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelReceipt').value='';$('receiptScanStatus').textContent='Maak een scherpe foto; liters, prijs en station worden lokaal herkend en vooringevuld.';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';$('stations').innerHTML=(DATA.recent_stations||[]).map(s=>`<option value="${escAttr(s)}">`).join('');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');initOdometerWheel('fuel',DATA.current_odometer??0);initFuelWheels();openModal('fuelModal');setTimeout(()=>guideTo('fuelStepScan',0),80)}
 $('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
 function setLocationStatus(msg,kind=''){$('locationStatus').textContent=msg;$('locationStatus').className='location-status '+kind}
 function browserLocation(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Browser-GPS wordt hier niet ondersteund.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser'}),e=>reject(new Error(e.message||'Locatie niet beschikbaar.')),{enableHighAccuracy:true,timeout:9000,maximumAge:30000})})}
-async function resolveLocation(){try{return await browserLocation()}catch(first){let entity=localStorage.getItem('rit_tank_location_entity')||'';if(!entity)throw new Error('GPS kon niet worden gebruikt. Kies in ⚙️ een Home Assistant locatie-fallback.');let d=await api(`api/location/entity?entity_id=${encodeURIComponent(entity)}`);return d}}
+function savedLocationFallback(){if(DATA?.settings&&Object.prototype.hasOwnProperty.call(DATA.settings,'location_fallback_entity'))return DATA.settings.location_fallback_entity||'';try{return localStorage.getItem('rit_tank_location_entity')||''}catch(e){return ''}}
+async function migrateLocationFallback(){if(Object.prototype.hasOwnProperty.call(DATA.settings,'location_fallback_entity'))return;let value=savedLocationFallback();if(!value)return;try{await api('api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location_fallback_entity:value})});DATA.settings.location_fallback_entity=value}catch(e){/* Retry on next load; preserve local selection. */}}
+async function resolveLocation(){try{return await browserLocation()}catch(first){let entity=savedLocationFallback();if(!entity)throw new Error('GPS kon niet worden gebruikt. Kies in ⚙️ een Home Assistant locatie-fallback.');let d=await api(`api/location/entity?entity_id=${encodeURIComponent(entity)}`);return d}}
 async function findStations(){setLocationStatus('📍 Huidige locatie bepalen...');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';try{let loc=await resolveLocation();FUEL_LOCATION=loc;setLocationStatus(`Locatie gevonden${loc.accuracy?` · ±${Math.round(loc.accuracy)} m`:''}. Tankstations zoeken...`,'ok');let r=await api('api/places/nearby',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:loc.latitude,longitude:loc.longitude})});PLACE_RESULTS=r.places||[];renderPlaceChoices();setLocationStatus(`${PLACE_RESULTS.length} tankstation${PLACE_RESULTS.length===1?'':'s'} gevonden binnen ${r.radius_m} m.`,'ok')}catch(e){setLocationStatus(e.message,'err');toast(e.message,true)}}
 function renderPlaceChoices(){let box=$('stationResults');box.innerHTML='';PLACE_RESULTS.forEach((p,i)=>{let b=document.createElement('button');b.type='button';b.className='station-choice';b.onclick=()=>selectPlace(i);let dist=p.distance_m==null?'':` · ${p.distance_m<1000?p.distance_m+' m':fmt(p.distance_m/1000,1)+' km'}`;b.innerHTML=`<b>${esc(p.name)}${dist}</b><small>${esc(p.address||'')}</small>`;box.appendChild(b)});$('googleAttrib').style.display=PLACE_RESULTS.length?'block':'none'}
 function selectPlace(i){let p=PLACE_RESULTS[i];if(!p)return;FUEL_PLACE=p;$('fuelStation').value=p.name;$('stationResults').innerHTML='';$('googleAttrib').style.display='block';setLocationStatus(`✓ ${p.name} geselecteerd`,'ok');guideTo('fuelStepFinish',350)}
 function readReceiptFile(){return new Promise((resolve,reject)=>{let f=$('fuelReceipt')?.files?.[0];if(!f)return resolve('');if(f.size>7*1024*1024)return reject(new Error('Tankbon is groter dan 7 MB.'));let r=new FileReader();r.onload=()=>resolve(String(r.result||''));r.onerror=()=>reject(new Error('Tankbon kon niet worden gelezen.'));r.readAsDataURL(f)})}
 function receiptScanImage(){return new Promise((resolve,reject)=>{let file=$('fuelReceipt')?.files?.[0];if(!file)return resolve('');let url=URL.createObjectURL(file),img=new Image();img.onload=()=>{try{let scale=Math.min(1,1800/Math.max(img.naturalWidth,img.naturalHeight)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));let ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);URL.revokeObjectURL(url);resolve(canvas.toDataURL('image/jpeg',.88))}catch(e){URL.revokeObjectURL(url);reject(e)}};img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Foto kon niet worden voorbereid.'))};img.src=url})}
-async function scanSelectedReceipt(){let status=$('receiptScanStatus'),file=$('fuelReceipt')?.files?.[0];if(!file)return;status.textContent='Bon lokaal analyseren…';status.style.color='var(--teal)';try{let image=await receiptScanImage(),r=await api('api/receipt/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_data_url:image})}),x=r.receipt||{};if(x.liters!=null||x.price_per_liter!=null)initFuelWheels(x.liters,x.price_per_liter);if(x.station)$('fuelStation').value=x.station;if(x.date){let current=$('fuelDate').value,time=current.includes('T')?current.split('T')[1]:'12:00';$('fuelDate').value=`${x.date}T${time}`}let found=[];if(x.liters!=null)found.push(`${fmt(x.liters,1)} L`);if(x.price_per_liter!=null)found.push(`${DATA.settings.currency} ${fmt(x.price_per_liter,3)}/L`);if(x.total!=null)found.push(`totaal ${money(x.total)}`);if(x.station)found.push(x.station);status.textContent=`✓ Herkend (${x.confidence}%): ${found.join(' · ')}. Controleer de waarden.`;status.style.color='var(--teal)';toast('Tankbon herkend en vooringevuld')}catch(e){status.textContent=e.message+' Je kunt alles handmatig invullen.';status.style.color='var(--orange)'}}
+let RECEIPT_REQUEST=0,RECEIPT_SCANNING=false;
+async function scanSelectedReceipt(){let status=$('receiptScanStatus'),file=$('fuelReceipt')?.files?.[0];if(!file)return;let request=++RECEIPT_REQUEST;RECEIPT_SCANNING=true;$('fuelSaveButton').disabled=true;status.textContent='Bon lokaal analyseren…';status.style.color='var(--teal)';try{
+ let image=await receiptScanImage(),r=await api('api/receipt/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_data_url:image})});if(request!==RECEIPT_REQUEST)return;let x=r.receipt||{},current=fuelValues(),found=[];
+ if(x.liters!=null||x.price_per_liter!=null)initFuelWheels(x.liters??current.liters,x.price_per_liter??current.price);
+ if(x.station){FUEL_PLACE=null;$('fuelStation').value=x.station}
+ if(x.date){let value=$('fuelDate').value,time=value.includes('T')?value.split('T')[1]:'12:00';$('fuelDate').value=`${x.date}T${time}`}
+ if(x.liters!=null)found.push(`${fmt(x.liters,2)} L`);if(x.price_per_liter!=null)found.push(`${DATA.settings.currency} ${fmt(x.price_per_liter,3)}/L`);if(x.total!=null)found.push(`bonbedrag ${money(x.total)}`);
+ let missing=[];if(x.liters==null)missing.push('liters');if(x.price_per_liter==null)missing.push('literprijs');
+ status.textContent=(found.length?'Ingevuld: '+found.join(' · ')+'. ':'')+(missing.length?'Niet herkend: '+missing.join(' en ')+'. Vul deze zelf in.':'Controleer de waarden vóór opslaan.');status.style.color=missing.length?'var(--orange)':'var(--teal)';toast(missing.length?'Controleer de bon: niet alle waarden zijn herkend.':'Liters en literprijs ingevuld');
+ }catch(e){if(request===RECEIPT_REQUEST){status.textContent=e.message+' Je kunt alles handmatig invullen.';status.style.color='var(--orange)'}}finally{if(request===RECEIPT_REQUEST){RECEIPT_SCANNING=false;$('fuelSaveButton').disabled=false}}}
 $('fuelReceipt').addEventListener('change',scanSelectedReceipt);
-async function saveFuel(){let v=fuelValues(),payload={odometer:$('fuelOdo').value,created_at:$('fuelDate').value,liters:v.liters,price_per_liter:v.price,station:FUEL_PLACE?'':$('fuelStation').value,place_id:FUEL_PLACE?.place_id||'',latitude:FUEL_LOCATION?.latitude??null,longitude:FUEL_LOCATION?.longitude??null,location_accuracy:FUEL_LOCATION?.accuracy??null,location_source:FUEL_LOCATION?.source||'',full_tank:$('fuelFull').checked,note:$('fuelNote').value};try{payload.receipt_data_url=await readReceiptFile();let r=await api('api/fuel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('fuelModal');toast(`Tankbeurt opgeslagen · ${money(r.cost)}${r.receipt?' · bon bewaard':''}`);reloadData()}catch(e){toast(e.message,true)}}
+async function saveFuel(){if(RECEIPT_SCANNING){toast('Wacht tot de bon is gescand.',true);return}let v=fuelValues(),payload={odometer:$('fuelOdo').value,created_at:$('fuelDate').value,liters:v.liters,price_per_liter:v.price,station:FUEL_PLACE?'':$('fuelStation').value,place_id:FUEL_PLACE?.place_id||'',latitude:FUEL_LOCATION?.latitude??null,longitude:FUEL_LOCATION?.longitude??null,location_accuracy:FUEL_LOCATION?.accuracy??null,location_source:FUEL_LOCATION?.source||'',full_tank:$('fuelFull').checked,note:$('fuelNote').value};try{payload.receipt_data_url=await readReceiptFile();let r=await api('api/fuel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('fuelModal');toast(`Tankbeurt opgeslagen · ${money(r.cost)}${r.receipt?' · bon bewaard':''}`);reloadData()}catch(e){toast(e.message,true)}}
 function openKm(){$('kmDate').value=localInputNow();$('kmNote').value='';initOdometerWheel('km',DATA.current_odometer??0);openModal('kmModal');setTimeout(()=>guideTo('kmStepOdo',0),80)}
 async function saveKm(){let payload={odometer:$('kmOdo').value,created_at:$('kmDate').value,note:$('kmNote').value};try{await api('api/odometer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('kmModal');toast('Kilometerstand opgeslagen');reloadData()}catch(e){toast(e.message,true)}}
 function placeIcon(cat){return {home:'🏠',school:'🏫',work:'🏢',client:'🤝',family:'👨‍👩‍👧',private:'❤️',other:'📍'}[cat]||'📍'}
@@ -3763,10 +3920,10 @@ function editKnownPlace(id){let p=(DATA?.business?.known_places||[]).find(x=>Num
 async function saveKnownPlace(){let id=$('knownId').value,payload={name:$('knownName').value,category:$('knownCategory').value,arrival_trip_type:$('knownArrival').value,unknown_departure_trip_type:$('knownDepart').value,radius_m:$('knownRadius').value,latitude:$('knownLat').value,longitude:$('knownLon').value};try{await api(id?`api/known-places/${id}`:'api/known-places',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('knownPlaceEditModal');toast('Bekende plek opgeslagen');await reloadData();openKnownPlaces()}catch(e){toast(e.message,true)}}
 async function removeKnownPlace(id){if(!confirm('Deze bekende plek verwijderen? Bestaande ritten blijven bewaard.'))return;try{await api(`api/known-places/${id}`,{method:'DELETE'});toast('Bekende plek verwijderd');await reloadData();renderKnownPlaces()}catch(e){toast(e.message,true)}}
 
-async function loadLocationEntities(){let sel=$('setLocationEntity'),asel=$('setAssistantLocation'),saved=localStorage.getItem('rit_tank_location_entity')||'',asaved=DATA?.settings?.assistant_location_entity||'';sel.innerHTML='<option value="">Geen — alleen GPS van browser</option>';asel.innerHTML='<option value="">Kies person/device_tracker</option>';try{let r=await api('api/location/entities');(r.entities||[]).forEach(x=>{[sel,asel].forEach(target=>{let o=document.createElement('option');o.value=x.entity_id;o.textContent=`${x.name} (${x.entity_id})`;target.appendChild(o)})});sel.value=saved;asel.value=asaved}catch(e){[sel,asel].forEach(target=>{let o=document.createElement('option');o.textContent='Home Assistant locaties niet beschikbaar';o.disabled=true;target.appendChild(o)})}}
+async function loadLocationEntities(){let sel=$('setLocationEntity'),asel=$('setAssistantLocation'),saved=savedLocationFallback(),asaved=DATA?.settings?.assistant_location_entity||'';sel.innerHTML='<option value="">Geen — alleen GPS van browser</option>';asel.innerHTML='<option value="">Kies person/device_tracker</option>';let entities=[];try{entities=(await api('api/location/entities')).entities||[]}catch(e){toast('Locatielijst niet beschikbaar; opgeslagen keuzes blijven behouden.',true)}for(let [target,value] of [[sel,saved],[asel,asaved]]){for(let x of entities){let o=document.createElement('option');o.value=x.entity_id;o.textContent=`${x.name} (${x.entity_id})`;target.appendChild(o)}if(value&&!entities.some(x=>x.entity_id===value)){let o=document.createElement('option');o.value=value;o.textContent=value+' (opgeslagen; nu niet beschikbaar)';target.appendChild(o)}target.value=value}}
 async function loadNotifyServices(){let sel=$('setAssistantNotify'),saved=DATA?.settings?.assistant_notify_service||'';sel.innerHTML='<option value="">Kies mobiele meldingsservice</option>';try{let r=await api('api/notify/services');(r.services||[]).forEach(x=>{let o=document.createElement('option');o.value=x.service;o.textContent=`${x.name} (${x.service})`;sel.appendChild(o)});sel.value=saved}catch(e){let o=document.createElement('option');o.textContent='Meldingsservices niet beschikbaar';o.disabled=true;sel.appendChild(o)}}
-async function openSettings(){$('setVehicle').value=DATA.settings.vehicle_name;$('setFuel').value=DATA.settings.fuel_type;$('setCurrency').value=DATA.settings.currency;$('setDriver').value=DATA.settings.driver_name||'';$('setCompany').value=DATA.settings.company_name||'';$('setMake').value=DATA.settings.vehicle_make||'';$('setModel').value=DATA.settings.vehicle_model||'';$('setPlate').value=DATA.settings.license_plate||'';$('setPeriodFrom').value=DATA.settings.vehicle_period_from||'';$('setPeriodTo').value=DATA.settings.vehicle_period_to||'';$('setInitial').value=DATA.current_odometer??'';$('initialWrap').style.display=DATA.has_events?'none':'block';$('setAssistantEnabled').checked=String(DATA.settings.assistant_enabled||'0')==='1';$('setAssistantMode').value=DATA.settings.assistant_mode||'assistant';$('setAssistantConfidence').value=DATA.settings.assistant_auto_confidence||95;$('setAssistantSyncZones').checked=String(DATA.settings.assistant_sync_zones||'1')!=='0';$('setAssistantUnknown').checked=String(DATA.settings.assistant_unknown_stops||'1')!=='0';$('setAssistantStopMin').value=DATA.settings.assistant_unknown_stop_minutes||4;$('setAssistantFastStop').value=DATA.settings.assistant_fast_stop_seconds||30;$('setAssistantMinTrip').value=DATA.settings.assistant_min_trip_m||500;$('setDistanceLearning').checked=String(DATA.settings.distance_learning_enabled||'1')==='1';let calibration=DATA.business?.calibration||{};$('calibrationStatus').textContent=`${calibration.samples||0} gecontroleerde trajecten · ${calibration.ready?'correctie '+((calibration.factor-1)*100).toFixed(1)+'%':'nog geen stabiele correctie (minimaal 5 trajecten)'}`;let ar=DATA.business?.assistant?.runtime||{},ac=DATA.business?.assistant?.config||{},bs=DATA.app?.backup||{};$('backupStatusText').textContent=!bs.enabled?'Back-up staat uit in de add-onconfiguratie.':!bs.configured?'Vul Drive-map, service-account en een back-upwachtwoord van minimaal 12 tekens in.':bs.last_error?`Laatste fout: ${bs.last_error}`:bs.last_ok_at?`Laatste back-up: ${bs.last_ok_at} · ${bs.last_file}`:`Gereed · dagelijks vanaf ${String(bs.hour).padStart(2,'0')}:00 · ${bs.retention_days} dagen bewaren.`;$('techStatus').innerHTML=`Google Places + ritlocaties: <b class="${DATA.app.places_enabled?'badge-ok':'badge-off'}">${DATA.app.places_enabled?'API-key actief':'API-key ontbreekt'}</b><br>Voor zakelijke adressen ook Geocoding API inschakelen.<br>Zoekradius: ${DATA.app.places_radius_m} m · maximaal ${DATA.app.places_max_results} resultaten<br>Bekende plekken: ${(DATA.business?.known_places||[]).length}<br>Autonomieniveau: <b>${esc(ac.mode||'assistant')}</b> · grens ${ac.auto_confidence||95}%<br>Ritassistent WebSocket: <b class="${ar.ws_connected?'badge-ok':'badge-off'}">${ar.ws_connected?'verbonden':'niet verbonden'}</b>${ar.last_error?`<br>Laatste melding: ${esc(ar.last_error)}`:''}<br>PWA: <b class="${PWA_WORKER_READY?'badge-ok':'badge-off'}">${isStandalone()?'geïnstalleerd':PWA_WORKER_READY?'offline gereed':'HTTPS vereist'}</b><br>Versie ${DATA.app.version}`;updatePwaInstallUi();await loadLocationEntities();await loadNotifyServices();openModal('settingsModal')}
-async function saveSettings(){localStorage.setItem('rit_tank_location_entity',$('setLocationEntity').value||'');let payload={distance_learning_enabled:$('setDistanceLearning').checked?'1':'0',vehicle_name:$('setVehicle').value,fuel_type:$('setFuel').value,currency:$('setCurrency').value,driver_name:$('setDriver').value,company_name:$('setCompany').value,vehicle_make:$('setMake').value,vehicle_model:$('setModel').value,license_plate:$('setPlate').value,vehicle_period_from:$('setPeriodFrom').value,vehicle_period_to:$('setPeriodTo').value,initial_odometer:$('setInitial').value,assistant_enabled:$('setAssistantEnabled').checked?'1':'0',assistant_mode:$('setAssistantMode').value,assistant_auto_confidence:$('setAssistantConfidence').value||95,assistant_location_entity:$('setAssistantLocation').value||'',assistant_notify_service:$('setAssistantNotify').value||'',assistant_sync_zones:$('setAssistantSyncZones').checked?'1':'0',assistant_unknown_stops:$('setAssistantUnknown').checked?'1':'0',assistant_unknown_stop_minutes:$('setAssistantStopMin').value||4,assistant_fast_stop_seconds:$('setAssistantFastStop').value||30,assistant_check_seconds:'10',assistant_min_trip_m:$('setAssistantMinTrip').value||500};try{await api('api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('settingsModal');toast('Instellingen opgeslagen');reloadData()}catch(e){toast(e.message,true)}}
+async function openSettings(){$('setVehicle').value=DATA.settings.vehicle_name;$('setFuel').value=DATA.settings.fuel_type;$('setCurrency').value=DATA.settings.currency;$('setDriver').value=DATA.settings.driver_name||'';$('setCompany').value=DATA.settings.company_name||'';$('setMake').value=DATA.settings.vehicle_make||'';$('setModel').value=DATA.settings.vehicle_model||'';$('setPlate').value=DATA.settings.license_plate||'';$('setPeriodFrom').value=DATA.settings.vehicle_period_from||'';$('setPeriodTo').value=DATA.settings.vehicle_period_to||'';$('setInitial').value=DATA.current_odometer??'';$('initialWrap').style.display=DATA.has_events?'none':'block';$('setAssistantEnabled').checked=String(DATA.settings.assistant_enabled||'0')==='1';$('setAssistantMode').value=DATA.settings.assistant_mode||'assistant';$('setAssistantConfidence').value=DATA.settings.assistant_auto_confidence||95;$('setAssistantSyncZones').checked=String(DATA.settings.assistant_sync_zones||'1')!=='0';$('setAssistantUnknown').checked=String(DATA.settings.assistant_unknown_stops||'1')!=='0';$('setAssistantStopMin').value=DATA.settings.assistant_unknown_stop_minutes||4;$('setAssistantFastStop').value=DATA.settings.assistant_fast_stop_seconds||30;$('setAssistantMinTrip').value=DATA.settings.assistant_min_trip_m||500;$('setDistanceLearning').checked=String(DATA.settings.distance_learning_enabled||'1')==='1';let calibration=DATA.business?.calibration||{};$('calibrationStatus').textContent=`${calibration.samples||0} gecontroleerde trajecten · ${calibration.ready?'correctie '+((calibration.factor-1)*100).toFixed(1)+'%':'nog geen stabiele correctie (minimaal 5 trajecten)'}`;let ar=DATA.business?.assistant?.runtime||{},ac=DATA.business?.assistant?.config||{},bs=DATA.app?.backup||{};$('backupStatusText').textContent=!bs.enabled?'Back-up staat uit in de add-onconfiguratie.':!bs.configured?'Vul Drive-map, Google-inloggegevens en een back-upwachtwoord van minimaal 12 tekens in.':bs.last_error?`Laatste fout: ${bs.last_error}`:bs.last_ok_at?`Laatste back-up: ${bs.last_ok_at} · ${bs.last_file}`:`Gereed · dagelijks vanaf ${String(bs.hour).padStart(2,'0')}:00 · ${bs.retention_days===0?'onbeperkt bewaren':bs.retention_days+' dagen bewaren'}.`;$('techStatus').innerHTML=`Google Places + ritlocaties: <b class="${DATA.app.places_enabled?'badge-ok':'badge-off'}">${DATA.app.places_enabled?'API-key actief':'API-key ontbreekt'}</b><br>Voor zakelijke adressen ook Geocoding API inschakelen.<br>Zoekradius: ${DATA.app.places_radius_m} m · maximaal ${DATA.app.places_max_results} resultaten<br>Bekende plekken: ${(DATA.business?.known_places||[]).length}<br>Autonomieniveau: <b>${esc(ac.mode||'assistant')}</b> · grens ${ac.auto_confidence||95}%<br>Ritassistent WebSocket: <b class="${ar.ws_connected?'badge-ok':'badge-off'}">${ar.ws_connected?'verbonden':'niet verbonden'}</b>${ar.last_error?`<br>Laatste melding: ${esc(ar.last_error)}`:''}<br>PWA: <b class="${PWA_WORKER_READY?'badge-ok':'badge-off'}">${isStandalone()?'geïnstalleerd':PWA_WORKER_READY?'offline gereed':'HTTPS vereist'}</b><br>Versie ${DATA.app.version}`;updatePwaInstallUi();await loadLocationEntities();await loadNotifyServices();openModal('settingsModal')}
+async function saveSettings(){let payload={location_fallback_entity:$('setLocationEntity').value||'',distance_learning_enabled:$('setDistanceLearning').checked?'1':'0',vehicle_name:$('setVehicle').value,fuel_type:$('setFuel').value,currency:$('setCurrency').value,driver_name:$('setDriver').value,company_name:$('setCompany').value,vehicle_make:$('setMake').value,vehicle_model:$('setModel').value,license_plate:$('setPlate').value,vehicle_period_from:$('setPeriodFrom').value,vehicle_period_to:$('setPeriodTo').value,initial_odometer:$('setInitial').value,assistant_enabled:$('setAssistantEnabled').checked?'1':'0',assistant_mode:$('setAssistantMode').value,assistant_auto_confidence:$('setAssistantConfidence').value||95,assistant_location_entity:$('setAssistantLocation').value||'',assistant_notify_service:$('setAssistantNotify').value||'',assistant_sync_zones:$('setAssistantSyncZones').checked?'1':'0',assistant_unknown_stops:$('setAssistantUnknown').checked?'1':'0',assistant_unknown_stop_minutes:$('setAssistantStopMin').value||4,assistant_fast_stop_seconds:$('setAssistantFastStop').value||30,assistant_check_seconds:'10',assistant_min_trip_m:$('setAssistantMinTrip').value||500};try{await api('api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('settingsModal');toast('Instellingen opgeslagen');reloadData()}catch(e){toast(e.message,true)}}
 async function runBackupNow(){toast('Versleutelde Drive-back-up maken…');try{let r=await api('api/backup/run',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast(`Back-up gemaakt · ${r.last_file}`);await reloadData();openSettings()}catch(e){toast(e.message,true)}}
 async function loadDiagnosticLog(){try{let report=await api('api/assistant/diagnostics');$('diagnosticText').value=JSON.stringify(report,null,2);$('diagnosticStatus').textContent=`Opgehaald: ${report.generated_at} · ${report.events.length} gebeurtenissen. Je kunt nu kopiëren of downloaden.`}catch(e){$('diagnosticStatus').textContent='Ophalen mislukt. Controleer je verbinding en probeer opnieuw.'}}
 async function copyDiagnosticLog(){let el=$('diagnosticText');if(!el.value){toast('Klik eerst op Log ophalen / vernieuwen',true);return}try{await navigator.clipboard.writeText(el.value);$('diagnosticStatus').textContent='Log gekopieerd. Je kunt hem nu in het gesprek plakken.'}catch(e){el.focus();el.select();el.setSelectionRange(0,el.value.length);$('diagnosticStatus').textContent='Automatisch kopiëren lukt niet. Kopieer de geselecteerde tekst of kies Download log.'}}
@@ -4050,12 +4207,12 @@ class Handler(BaseHTTPRequestHandler):
                 if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
                     raise ValueError('Geen geldige huidige locatie ontvangen.')
                 return json_response(self, {'places': google_nearby(lat, lon), 'radius_m': places_radius_m()})
-            if path == '/api/location/reverse':
+            if path in ('/api/location/reverse', '/api/location/addresses'):
                 lat = to_float(payload.get('latitude'))
                 lon = to_float(payload.get('longitude'))
                 if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
                     raise ValueError('Geen geldige huidige locatie ontvangen.')
-                return json_response(self, google_reverse_geocode(lat, lon))
+                return json_response(self, nearby_house_numbers(lat, lon) if path.endswith('/addresses') else google_reverse_geocode(lat, lon))
             if path == '/api/business/suggest':
                 trip=active_business_trip()
                 if not trip or not trip.get('stops'):
@@ -4086,6 +4243,8 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, sync_all_known_place_zones())
             if path == '/api/receipt/scan':
                 return json_response(self, {'receipt': scan_receipt(str(payload.get('image_data_url') or ''))})
+            if path == '/api/backup/pdf':
+                return json_response(self, archive_pdf(payload))
             if path == '/api/backup/run':
                 return json_response(self, run_drive_backup())
             ma = re.fullmatch(r'/api/assistant/(\d+)/confirm', path)
@@ -4200,7 +4359,7 @@ class Handler(BaseHTTPRequestHandler):
         data, filename = business_pdf(period)
         self.send_response(200)
         self.send_header('Content-Type', 'application/pdf')
-        self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+        self.send_header('Content-Disposition', f'inline; filename="{filename}"')
         self.send_header('Content-Length', str(len(data)))
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()

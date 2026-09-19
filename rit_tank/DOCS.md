@@ -93,7 +93,9 @@ Kies bij een tankbeurt een scherpe foto van de bon. De add-on voert OCR volledig
 
 ## Automatische Google Drive-back-up
 
-Gebruik bij Google Workspace bij voorkeur een map in een **Gedeelde Drive**. Maak in Google Cloud een afzonderlijk service-account, activeer de Google Drive API, download de JSON-sleutel en voeg het service-account als lid/toegangsgerechtigde toe aan de doelmap.
+Zie [de actuele handleiding voor 5.0.7](UPDATE_5.0.7.md) voor PDF-delen, permanente archivering en de volledige stappen voor Google Drive.
+
+Voor een gewone Google Drive gebruik je gebruikers-OAuth via `google_drive_oauth_json`. Een service-account vereist een map in een **Gedeelde Drive** van Google Workspace. Maak daarvoor in Google Cloud een afzonderlijk service-account, activeer de Google Drive API, download de JSON-sleutel en geef het service-account toegang tot de doelmap.
 
 Stel daarna in de Home Assistant add-onconfiguratie in:
 
@@ -103,10 +105,10 @@ google_drive_folder_id: "MAP-ID-UIT-DE-DRIVE-URL"
 google_drive_service_account_json: '{"type":"service_account", ... }'
 backup_encryption_password: "een-uniek-wachtwoord-van-minimaal-12-tekens"
 backup_hour: 3
-backup_retention_days: 30
+backup_retention_days: 0
 ```
 
-Herstart de add-on en gebruik onder **Meer → Instellingen** de knop **Nu back-up maken**. Als deze test slaagt, maakt Rit & Tank dagelijks vanaf het gekozen uur één back-up en verwijdert het eigen oudere Drive-bestanden na de bewaartermijn.
+Herstart de add-on en gebruik onder **Meer → Instellingen** de knop **Nu back-up maken**. Als deze test slaagt, maakt Rit & Tank dagelijks vanaf het gekozen uur één back-up. Bij bewaartermijn `0` wordt niets automatisch verwijderd; bij 1–365 dagen worden oudere, door de app gemarkeerde back-ups opgeruimd. PDF-archieven blijven altijd behouden.
 
 De bestanden hebben extensie `.rtbackup` en bevatten een consistente kopie van de database, tankbonnen en herstelmetadata. Ze zijn versleuteld met AES-256-GCM. Bewaar het back-upwachtwoord buiten Home Assistant: zonder dat wachtwoord kan de back-up niet worden hersteld. Gebruik geen service-account met brede Workspace-beheerdersrechten en zet de JSON-sleutel nooit in e-mail of documentatie.
 
