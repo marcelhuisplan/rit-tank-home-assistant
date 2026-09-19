@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.0.2
+- Meldingslinks voor stopmeldingen, ritassistent en testmelding verwijzen naar de repository-installatie `675b3933_rit_tank`.
+- Versienummer en PWA-cache bijgewerkt. Stopdetectiegedrag blijft gelijk.
+- Deze link is specifiek voor deze repository; In zijbalk tonen moet aan staan.
+
 ## 5.0.1
 - Diagnoselog in Instellingen: ophalen, kopiëren en downloaden als tekstbestand.
 - Maximaal 500 gebeurtenissen van de laatste 48 uur, bewaard bij herstart.

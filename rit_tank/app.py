@@ -37,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '5.0.1'
+APP_VERSION = '5.0.2'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -1987,9 +1987,9 @@ def send_active_trip_stop_notification(trip: dict[str, Any], tracked_m: float, p
         'message': f'Wil je je actieve rit opslaan? Je lijkt gestopt bij {address}. Achtergrondroute: ca. {km:.1f} km. Open Rit & Tank om de tellerstand te controleren en de rit af te sluiten.',
         'data': {
             'tag': f'rit_tank_stop_{int(trip["id"])}',
-            'url': '/local_rit_tank',
+            'url': '/675b3933_rit_tank',
             'actions': [
-                {'action': 'URI', 'title': 'Open Rit & Tank', 'uri': '/local_rit_tank'},
+                {'action': 'URI', 'title': 'Open Rit & Tank', 'uri': '/675b3933_rit_tank'},
             ],
         },
     }
@@ -2023,11 +2023,11 @@ def send_assistant_notification(item: dict[str, Any]) -> bool:
         'message': message,
         'data': {
             'tag': f'rit_tank_arrival_{aid}',
-            'url': '/local_rit_tank',
+            'url': '/675b3933_rit_tank',
             'actions': [
                 {'action': f'RITTANK_PRIVATE_{aid}', 'title': 'Privé'},
                 {'action': f'RITTANK_BUSINESS_{aid}', 'title': 'Zakelijk'},
-                {'action': 'URI', 'title': 'Open Rit & Tank', 'uri': '/local_rit_tank'},
+                {'action': 'URI', 'title': 'Open Rit & Tank', 'uri': '/675b3933_rit_tank'},
             ],
         },
     }
@@ -2051,7 +2051,7 @@ def send_assistant_test_notification() -> None:
     ha_post(f'services/notify/{svc}', {
         'title': '🚗 Rit & Tank',
         'message': 'Achtergrond-ritassistent is gekoppeld. Meldingen komen op dit apparaat binnen.',
-        'data': {'url': '/local_rit_tank'},
+        'data': {'url': '/675b3933_rit_tank'},
     })
 
 
