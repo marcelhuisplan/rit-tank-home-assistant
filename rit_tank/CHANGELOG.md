@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.0.6
+- Huisplan-logo op het inlogscherm en in de kop van de website.
+- Huisplan-logo als browsericoon en beginschermicoon voor iPhone/iPad.
+- Nieuwe icoonbestandsnamen en PWA-cache zodat oude auto-iconen worden vervangen.
+- Staat het oude beginschermicoon er nog? Verwijder de snelkoppeling en voeg de website opnieuw toe.
+
 ## 5.0.5
 - Het echte Huisplan-logo wordt als beeldmerk in de PDF-kop en voettekst gebruikt.
 - Het originele transparante logo en een compacte PDF-versie worden meegeleverd.

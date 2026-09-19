@@ -1,8 +1,8 @@
-# Rit & Tank 5.0.5
+# Rit & Tank 5.0.6
 
 Ritten, tankbeurten, tellerstandsuggesties en een zelfstandige iPhone-PWA met Home Assistant als achtergrondlocatiebron.
 
-Versie 5.0.5 voegt het echte Huisplan-logo toe aan de fiscale PDF, naast de Captur-afbeelding, bedrijfsnaam en kalenderjaar-/periodekaart. iOS-achtergrondlocaties komen op wisselende momenten binnen; een stopmelding precies tien seconden na fysieke aankomst is niet gegarandeerd.
+Versie 5.0.6 toont het Huisplan-logo op het inlogscherm, in de websitekop en als browser- en beginschermicoon. De fiscale PDF behoudt het Huisplan-logo, de Captur-afbeelding, bedrijfsnaam en kalenderjaar-/periodekaart. iOS-achtergrondlocaties komen op wisselende momenten binnen; een stopmelding precies tien seconden na fysieke aankomst is niet gegarandeerd.
 
 Gebruik je al de lokale app? Lees eerst `MIGRATIE.md` in de hoofdmap van deze repository. Gegevens worden niet automatisch overgezet en de meldingslinks vragen nog aanpassing aan de nieuwe appidentiteit.
 

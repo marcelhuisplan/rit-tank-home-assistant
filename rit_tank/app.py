@@ -37,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '5.0.5'
+APP_VERSION = '5.0.6'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -3318,9 +3318,9 @@ def read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
 LOGIN_HTML = f'''<!doctype html>
 <html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0d3a30"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Rit & Tank"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icon-180.png"><title>Inloggen · Rit & Tank</title>
+<meta name="apple-mobile-web-app-title" content="Rit & Tank"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="huisplan-icon-180.png"><link rel="icon" type="image/png" href="huisplan-icon-192.png"><title>Inloggen · Rit & Tank</title>
 <style>:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:radial-gradient(circle at top,#153d34,#0c0f12 55%);color:#f5faf8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center;padding:calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom))}}main{{width:min(100%,420px);background:#151c20;border:1px solid #2f6658;border-radius:28px;padding:26px;box-shadow:0 24px 70px #0008}}.icon{{width:76px;height:76px;border-radius:22px;display:block;margin:0 auto 18px}}h1{{margin:0;text-align:center;font-size:30px}}p{{color:#aebdb8;text-align:center;line-height:1.45}}label{{font-size:12px;font-weight:800;color:#b8c7c2}}input{{width:100%;margin-top:7px;border:1px solid #3a4b50;background:#0d1215;color:white;border-radius:15px;padding:14px;font-size:17px}}button{{width:100%;margin-top:15px;border:0;border-radius:15px;background:linear-gradient(135deg,#0e78b8,#0aa684);color:white;padding:14px;font-size:17px;font-weight:900}}#message{{min-height:20px;margin-top:12px;color:#ff9ba5;text-align:center;font-size:13px}}small{{display:block;color:#778883;text-align:center;margin-top:18px}}</style></head>
-<body><main><img class="icon" src="icon-192.png" alt=""><h1>Rit & Tank</h1><p>Log in op je zelfstandige ritten-app.</p><form id="login"><label for="password">Wachtwoord</label><input id="password" type="password" autocomplete="current-password" required autofocus><button type="submit">Inloggen</button><div id="message" role="alert"></div></form><small>Versie {APP_VERSION} · beveiligde standalone-modus</small></main>
+<body><main><img class="icon" src="huisplan-icon-192.png" alt="Huisplan-logo"><h1>Rit & Tank</h1><p>Log in op je zelfstandige ritten-app.</p><form id="login"><label for="password">Wachtwoord</label><input id="password" type="password" autocomplete="current-password" required autofocus><button type="submit">Inloggen</button><div id="message" role="alert"></div></form><small>Versie {APP_VERSION} · beveiligde standalone-modus</small></main>
 <script>document.getElementById('login').addEventListener('submit',async e=>{{e.preventDefault();let m=document.getElementById('message'),b=e.currentTarget.querySelector('button');m.textContent='';b.disabled=true;try{{let r=await fetch('api/auth/login',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{password:document.getElementById('password').value}})}}),d=await r.json();if(!r.ok)throw new Error(d.error||'Inloggen mislukt');location.replace('./')}}catch(err){{m.textContent=err.message}}finally{{b.disabled=false}}}});</script></body></html>'''.encode('utf-8')
 
 
@@ -3344,19 +3344,19 @@ def pwa_manifest() -> bytes:
         'theme_color': '#0d3a30',
         'categories': ['auto', 'productivity', 'finance'],
         'icons': [
-            {'src': 'icon-180.png', 'sizes': '180x180', 'type': 'image/png'},
-            {'src': 'icon-192.png', 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any maskable'},
-            {'src': 'icon-512.png', 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any maskable'},
+            {'src': 'huisplan-icon-180.png', 'sizes': '180x180', 'type': 'image/png'},
+            {'src': 'huisplan-icon-192.png', 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any maskable'},
+            {'src': 'huisplan-icon-512.png', 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any maskable'},
         ],
         'shortcuts': [
-            {'name': 'Nieuwe rit', 'short_name': 'Rit', 'url': './?open=trip', 'icons': [{'src': 'icon-192.png', 'sizes': '192x192'}]},
-            {'name': 'Tankbeurt', 'short_name': 'Tanken', 'url': './?open=fuel', 'icons': [{'src': 'icon-192.png', 'sizes': '192x192'}]},
+            {'name': 'Nieuwe rit', 'short_name': 'Rit', 'url': './?open=trip', 'icons': [{'src': 'huisplan-icon-192.png', 'sizes': '192x192'}]},
+            {'name': 'Tankbeurt', 'short_name': 'Tanken', 'url': './?open=fuel', 'icons': [{'src': 'huisplan-icon-192.png', 'sizes': '192x192'}]},
         ],
     }, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
 
 
 SERVICE_WORKER = f'''const CACHE = "rit-tank-shell-{APP_VERSION}";
-const SHELL = ["./", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png", "captur-2014.png"];
+const SHELL = ["./", "manifest.webmanifest", "huisplan-icon-180.png", "huisplan-icon-192.png", "huisplan-icon-512.png", "captur-2014.png"];
 self.addEventListener("install", event => {{
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 }});
@@ -3385,8 +3385,8 @@ self.addEventListener("push", event => {{
   try {{ data = Object.assign(data, event.data.json()); }} catch (_) {{}}
   event.waitUntil(self.registration.showNotification(data.title, {{
     body: data.body,
-    icon: "icon-192.png",
-    badge: "icon-192.png",
+    icon: "huisplan-icon-192.png",
+    badge: "huisplan-icon-192.png",
     tag: data.tag || "rit-tank",
     data: {{url: data.url || "./"}},
   }}));
@@ -3406,47 +3406,12 @@ _ICON_CACHE: dict[int, bytes] = {}
 
 
 def app_icon_png(size: int) -> bytes:
-    """Generate the app icon without shipping extra binary files in the add-on."""
-    if size in _ICON_CACHE:
-        return _ICON_CACHE[size]
-
-    def inside_round_rect(x: float, y: float, left: float, top: float, right: float, bottom: float, radius: float) -> bool:
-        cx = min(max(x, left + radius), right - radius)
-        cy = min(max(y, top + radius), bottom - radius)
-        return (x - cx) ** 2 + (y - cy) ** 2 <= radius ** 2
-
-    rows = bytearray()
-    for py in range(size):
-        rows.append(0)
-        y = (py + 0.5) / size
-        for px in range(size):
-            x = (px + 0.5) / size
-            shade = int(28 + 24 * (1 - y) + 12 * x)
-            color = (10, max(42, shade + 31), max(38, shade + 18), 255)
-            # App-card inset and a simple white car silhouette.
-            if inside_round_rect(x, y, .08, .08, .92, .92, .20):
-                color = (12, int(78 + 42 * (1 - y)), int(66 + 30 * x), 255)
-            if inside_round_rect(x, y, .20, .43, .80, .68, .075):
-                color = (244, 250, 249, 255)
-            roof = .31 <= y <= .50 and (.34 + (y - .31) * .34) <= x <= (.66 - (y - .31) * .34)
-            if roof:
-                color = (244, 250, 249, 255)
-            if .365 <= y <= .49 and ((.39 <= x <= .495) or (.505 <= x <= .61)):
-                color = (24, 112, 102, 255)
-            for wheel_x in (.33, .67):
-                if (x - wheel_x) ** 2 + (y - .69) ** 2 <= .072 ** 2:
-                    color = (8, 17, 20, 255)
-                if (x - wheel_x) ** 2 + (y - .69) ** 2 <= .032 ** 2:
-                    color = (113, 205, 180, 255)
-            rows.extend(color)
-
-    def chunk(kind: bytes, payload: bytes) -> bytes:
-        return struct.pack('>I', len(payload)) + kind + payload + struct.pack('>I', zlib.crc32(kind + payload) & 0xffffffff)
-
-    png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0))
-    png += chunk(b'IDAT', zlib.compress(bytes(rows), 9)) + chunk(b'IEND', b'')
-    _ICON_CACHE[size] = png
-    return png
+    """Load the bundled Huisplan icon; keep legacy icon URLs compatible."""
+    if size not in (180, 192, 512):
+        raise ValueError('Unsupported icon size')
+    if size not in _ICON_CACHE:
+        _ICON_CACHE[size] = Path(__file__).with_name(f'huisplan-icon-{size}.png').read_bytes()
+    return _ICON_CACHE[size]
 
 
 APP_HTML = r'''<!doctype html>
@@ -3462,8 +3427,8 @@ APP_HTML = r'''<!doctype html>
 <meta name="format-detection" content="telephone=no">
 <meta name="color-scheme" content="dark">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
-<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="huisplan-icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="huisplan-icon-192.png">
 <title>Rit & Tank</title>
 <style>
 :root{--bg:#0c0f12;--card:#171c21;--card2:#10161b;--line:#2b3540;--text:#f4f7fa;--muted:#97a7b4;--blue:#52baff;--teal:#58dfb1;--orange:#ffb75d;--red:#ff6d7d;--gold:#ffc35f;--shadow:0 12px 34px rgba(0,0,0,.3)}
@@ -3506,7 +3471,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 <div class="app">
   <div class="offline-banner" id="offlineBanner">Geen verbinding — de app-interface blijft beschikbaar; opslaan en synchroniseren hervatten zodra je weer online bent.</div>
   <div class="topbar">
-    <div class="brand"><div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 14.5h16l-1.4-4.2a2 2 0 0 0-1.9-1.3H7.3a2 2 0 0 0-1.9 1.3L4 14.5Z"/><path d="M6.5 9 8 5.8h8L17.5 9M4 14.5v3h2m12 0h2v-3M8 14.5h8"/><circle cx="7.5" cy="17.5" r="1.5"/><circle cx="16.5" cy="17.5" r="1.5"/></svg></div><div><h1>Rit & Tank</h1><small id="fuelType">Benzine</small></div></div>
+    <div class="brand"><div class="brand-mark"><img src="huisplan-icon-192.png" alt="Huisplan-logo" width="48" height="48" style="display:block;width:100%;height:100%;border-radius:16px"></div><div><h1>Rit & Tank</h1><small id="fuelType">Benzine</small></div></div>
     <button class="iconbtn" onclick="openSettings()" aria-label="Instellingen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg></button>
   </div>
 
@@ -4006,7 +3971,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
-        mi = re.fullmatch(r'/icon-(180|192|512)\.png', path)
+        mi = re.fullmatch(r'/(?:huisplan-)?icon-(180|192|512)\.png', path)
         if mi:
             data = app_icon_png(int(mi.group(1)))
             self.send_response(200)
