@@ -6,6 +6,7 @@ WORKDIR /app
 COPY app.py /app/app.py
 COPY captur-2014.png /app/captur-2014.png
 COPY captur-2014.jpg /app/captur-2014.jpg
+COPY huisplan-logo.jpg /app/huisplan-logo.jpg
 COPY run.sh /app/run.sh
 RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-nld tesseract-ocr-data-eng
 RUN pip install --no-cache-dir websocket-client==1.8.0 cryptography google-api-python-client google-auth

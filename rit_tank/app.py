@@ -37,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '5.0.4'
+APP_VERSION = '5.0.5'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -2734,6 +2734,12 @@ def business_pdf(period: str = 'month') -> tuple[bytes, str]:
             pdf_images['ImCaptur'] = (1200, 800, captur_path.read_bytes())
     except OSError:
         pass
+    logo_path = Path(__file__).with_name('huisplan-logo.jpg')
+    try:
+        if logo_path.exists():
+            pdf_images['ImLogo'] = (900, 827, logo_path.read_bytes())
+    except OSError:
+        pass
 
     def new_page():
         page = _SimplePdfPage('Fiscale rittenregistratie')
@@ -2741,8 +2747,15 @@ def business_pdf(period: str = 'month') -> tuple[bytes, str]:
         return page
 
     page = new_page()
-    page.text(company_name.upper(), 36, page.y, 8.5, bold=True, gray=.35)
-    page.y -= 16
+    if 'ImLogo' in pdf_images:
+        page.rect(34, 738, 38, 38, gray=.96)
+        page.image('ImLogo', 36, 740, 34, 34)
+        page.text(company_name.upper(), 82, 764, 8.5, bold=True, gray=.35)
+        page.text('Rittenregistratie', 82, 751, 7.3, gray=.45)
+        page.y = 728.0
+    else:
+        page.text(company_name.upper(), 36, page.y, 8.5, bold=True, gray=.35)
+        page.y -= 16
     card_top = page.y
     page.rect(36, card_top - 65, 335, 65, gray=.94)
     page.text('KALENDERJAAR', 48, card_top - 17, 7.2, bold=True, gray=.42)
@@ -2834,7 +2847,10 @@ def business_pdf(period: str = 'month') -> tuple[bytes, str]:
     footer_label = f'{company_name} · Rit & Tank · {label}'
     for n, pg in enumerate(pages, start=1):
         pg.line(36, 30, 559, 30, .35, .85)
-        pg.text(footer_label, 36, 18, 7, gray=.45)
+        footer_x = 56 if 'ImLogo' in pdf_images else 36
+        if 'ImLogo' in pdf_images:
+            pg.image('ImLogo', 38, 7, 13, 13)
+        pg.text(footer_label, footer_x, 18, 7, gray=.45)
         pg.text(f'Pagina {n} van {total_pages}', 493, 18, 7, gray=.45)
     return _build_pdf(pages, pdf_images), f'rittenregistratie_{filename_label}.pdf'
 

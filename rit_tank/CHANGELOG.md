@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.0.5
+- Het echte Huisplan-logo wordt als beeldmerk in de PDF-kop en voettekst gebruikt.
+- Het originele transparante logo en een compacte PDF-versie worden meegeleverd.
+- Versienummer en installatie-image bijgewerkt.
+
 ## 5.0.4
 - Fiscale PDF-uitdraai vernieuwd met een kalenderjaar- en periodekaart linksboven.
 - Zilvergrijze Renault Captur-afbeelding toegevoegd aan de PDF-kop.
