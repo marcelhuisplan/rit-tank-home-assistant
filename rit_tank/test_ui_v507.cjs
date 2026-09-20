@@ -13,6 +13,7 @@ function single(name){const line=script.split('\n').find(x=>x.startsWith('functi
 const flush=()=>{while(frames.length)frames.shift()();for(const f of timers.values())f();timers.clear()};
 section('function createWheel(', 'function initOdometerWheel(');
 single('initFuelWheels');single('fuelValues');single('updateFuelTotal');
+ctx.LAST_FUEL_PRICE=null;single('preferredFuelPrice');single('rememberFuelPrice');
 section('async function scanSelectedReceipt(', "$('fuelReceipt').addEventListener");
 single('savedLocationFallback');single('migrateLocationFallback');single('loadLocationEntities');
 (async()=>{
@@ -40,5 +41,31 @@ single('savedLocationFallback');single('migrateLocationFallback');single('loadLo
  ctx.PDF_EXPORT={file:{name:'test.pdf'}};let shared;ctx.navigator={share:async x=>{shared=x}};
  single('sharePdf');await ctx.sharePdf();assert.equal(shared.files[0].name,'test.pdf');
  assert(html.indexOf('id="fuelStepScan"')<html.indexOf('id="fuelStepOdo"'));
+ // 5.0.8: remember actual selections, but explicit scan values take priority.
+ let remembered={};ctx.localStorage={getItem:k=>remembered[k]??null,setItem:(k,v)=>remembered[k]=v};
+ ctx.wheels.priceD3.select(5,true);flush();let chosen=ctx.fuelValues().price;
+ ctx.initFuelWheels();flush();assert.equal(ctx.fuelValues().price,chosen);
+ ctx.LAST_FUEL_PRICE=null;ctx.initFuelWheels();flush();assert.equal(ctx.fuelValues().price,chosen);
+ ctx.initFuelWheels(32.45,2.019);flush();assert.equal(ctx.fuelValues().price,2.019);
+ assert(!html.slice(0,html.indexOf('id="fuelModal"')).includes('class="scan-card"'));
+ assert(html.includes('class="wheelbox liters"'));
+ assert(html.includes('grid-template-columns:minmax(0,1.2fr) auto minmax(0,1fr) minmax(0,1fr)'));
+ assert(script.includes("$('tripPurpose').value='klantbezoek'"));
+ // Address confirmation scrolls immediately, even while a suggestion is pending.
+ let target;ctx.guideTo=id=>target=id;ctx.TRIP_MODE='start';ctx.TRIP_SEGMENT_TYPE='';
+ single('advanceTripAfterLocation');single('confirmTripAddress');
+ await ctx.confirmTripAddress('Voorbeeldstraat 4',{latitude:52,longitude:5});
+ assert.equal(target,'tripSaveButton');
+ let finishSuggestion;ctx.TRIP_MODE='stop';ctx.showTripSuggestion=()=>{};ctx.api=()=>new Promise(r=>finishSuggestion=r);
+ let confirmation=ctx.confirmTripAddress('Voorbeeldstraat 6',{latitude:52,longitude:5});
+ assert.equal(target,'tripSuggestionBox');ctx.TRIP_SEGMENT_TYPE='business';ctx.advanceTripAfterLocation();assert.equal(target,'tripSaveButton');
+ finishSuggestion({suggested_type:'private'});await confirmation;assert.equal(ctx.TRIP_SEGMENT_TYPE,'business');
+ // Scrolling targets the open sheet, not the underlying welcome screen.
+ const sheet={scrollTop:100,getBoundingClientRect:()=>({top:100}),scrollTo:o=>{sheet.result=o.top}};
+ const modal={classList:{contains:()=>true},querySelectorAll:()=>[]};
+ get('tripSaveButton').closest=selector=>selector==='.modal'?modal:sheet;
+ get('tripSaveButton').getBoundingClientRect=()=>({top:500});ctx.GUIDE_TIMER=null;
+ single('guideTo');ctx.guideTo('tripSaveButton',0);flush();assert.equal(sheet.result,476);
  console.log('PASS: wheel races/rounding, repeated/partial/stale OCR responses, fallback migration/outage/clear, prepared PDF share.');
+ console.log('PASS 5.0.8: price memory and OCR priority, scanner placement, single-row liters, default purpose and immediate sheet scrolling.');
 })().catch(e=>{console.error(e);process.exitCode=1});

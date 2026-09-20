@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.0.8
+- Tankboncamera uitsluitend bovenaan Tanken; verwijderd van het overzicht.
+- Vaste uitleg onder de scanner verwijderd; scanresultaten en foutmeldingen blijven zichtbaar.
+- Liters en beide decimalen staan op één rij, ook op een smal telefoonscherm.
+- Laatst gekozen literprijs wordt op het apparaat onthouden, ook zonder opslaan van de tankbeurt. Een herkende bonprijs heeft voorrang.
+- Doel/afspraak staat bij een nieuwe rit standaard op 'klantbezoek' en blijft aanpasbaar.
+- Na adresbevestiging direct doorscrollen binnen het formulier: naar Registratie starten of naar de ritsoort bij een tussenstop. Na ritsoortkeuze naar opslaan.
+- Een trage locatiesuggestie blokkeert doorscrollen niet en overschrijft geen handmatig gekozen ritsoort.
+- JavaScript-regressietests geslaagd voor prijsgeheugen, scanvoorrang en scrollgedrag. Echte iPhone-weergave nog op het apparaat controleren.
+
 ## 5.0.7
 - Grote tankboncamera bovenaan het overzicht en als eerste onderdeel bij tanken.
 - Herstel automatisch invullen van liters/literprijs bij herhaalde scans; liters behouden twee decimalen. Niet herkende waarden worden expliciet gemeld en niet overschreven.

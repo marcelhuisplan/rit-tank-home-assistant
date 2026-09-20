@@ -1,4 +1,6 @@
-# Rit & Tank 5.0.7
+# Rit & Tank 5.0.8
+
+Versie 5.0.8 plaatst de scanner alleen bij Tanken, zet liters op één rij, onthoudt de gekozen literprijs en scrolt na adresbevestiging automatisch verder. Nieuwe ritten krijgen standaard het aanpasbare doel 'klantbezoek'.
 
 Ritten, tankbeurten, tellerstandsuggesties en een zelfstandige iPhone-PWA met Home Assistant als achtergrondlocatiebron.
 
