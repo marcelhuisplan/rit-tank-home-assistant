@@ -1,4 +1,6 @@
-# Rit & Tank 5.0.8
+# Rit & Tank 5.0.9
+
+PDF-ritregistratie staat als grote knop op het beginscherm. Kies maand en jaar, of Heel jaar, en druk op OK. Een jaarrapport bevat alleen maanden met ritten, chronologisch en per maand gegroepeerd. Ritten horen bij hun vertrekmaand, ook als de aankomst in de volgende maand valt. Opgeslagen adressen worden gebruikt zonder externe adresopvraging; ontbrekende adressen worden als coördinaten getoond. Openen/afdrukken, downloaden en delen blijven beschikbaar (delen afhankelijk van apparaat/browser).
 
 Versie 5.0.8 plaatst de scanner alleen bij Tanken, zet liters op één rij, onthoudt de gekozen literprijs en scrolt na adresbevestiging automatisch verder. Nieuwe ritten krijgen standaard het aanpasbare doel 'klantbezoek'.
 

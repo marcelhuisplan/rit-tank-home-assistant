@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.0.9
+- Grote PDF-ritregistratieknop op het beginscherm, met maand- en kalenderjaarkeuze.
+- Jaarexport bevat de aanwezige maanden chronologisch, met maandtotalen en een nieuwe pagina per volgende maand.
+- Ritten worden op vertrekdatum ingedeeld, zonder dubbeltelling over maandgrenzen.
+- PDF-generatie vraagt geen externe geocoding op; opgeslagen adressen blijven behouden, anders worden coördinaten getoond.
+- Duidelijke exportfouten en time-out; openen/afdrukken gebruikt rechtstreeks de beveiligde PDF-route.
+- Onbeschikbare bestandsdeling blokkeert openen of downloaden niet.
+
 ## 5.0.8
 - Tankboncamera uitsluitend bovenaan Tanken; verwijderd van het overzicht.
 - Vaste uitleg onder de scanner verwijderd; scanresultaten en foutmeldingen blijven zichtbaar.

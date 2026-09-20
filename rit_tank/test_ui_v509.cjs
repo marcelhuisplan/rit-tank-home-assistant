@@ -1,0 +1,13 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const source=fs.readFileSync(__dirname+'/app.py','utf8');
+const elements={};const get=id=>elements[id]??=( {value:'',hidden:false,textContent:'',innerHTML:''});
+let opened,closed,url;
+const ctx={Date,Number,$:get,openModal:id=>opened=id,closeModal:id=>closed=id,openPdfExport:u=>url=u};
+vm.createContext(ctx);
+for(const name of ['openPdfSelector','confirmPdfPeriod'])vm.runInContext(source.split('\n').find(line=>line.startsWith('function '+name+'(')),ctx);
+ctx.openPdfSelector();assert.equal(opened,'pdfPeriodModal');assert.equal(get('pdfRange').value,'month');
+get('pdfYear').value='2026';get('pdfMonth').value='9';ctx.confirmPdfPeriod();assert.equal(url,'api/business.pdf?period=month&year=2026&month=9');
+get('pdfRange').value='year';get('pdfYear').value='2027';ctx.confirmPdfPeriod();assert.equal(url,'api/business.pdf?period=year&year=2027');
+url=null;get('pdfYear').value='oops';ctx.confirmPdfPeriod();assert.equal(url,null);assert(get('pdfPeriodError').textContent);
+assert(source.includes('class="trip-primary" style="margin-bottom:10px" onclick="openPdfSelector()"'));
+console.log('PASS: PDF selector, selected month/year URLs, invalid year, full-width dashboard button.');

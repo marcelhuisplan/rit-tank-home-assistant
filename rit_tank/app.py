@@ -37,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '5.0.8'
+APP_VERSION = '5.0.9'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -710,7 +710,7 @@ def nearby_house_numbers(lat: float, lon: float) -> dict[str, Any]:
         raise ValueError('Huisnummers konden niet worden opgehaald. Probeer opnieuw of vul het adres handmatig in.') from None
 
 
-def trip_location_details(stop: dict[str, Any]) -> dict[str, Any]:
+def trip_location_details(stop: dict[str, Any], resolve: bool = True) -> dict[str, Any]:
     # A confirmed address must not be replaced by a nearby HA zone or geocoder.
     manual = str(stop.get('manual_label') or '').strip()
     if manual:
@@ -721,13 +721,13 @@ def trip_location_details(stop: dict[str, Any]) -> dict[str, Any]:
         maps = f'https://www.google.com/maps/search/?api=1&query={lat},{lon}' if lat is not None and lon is not None else ''
         return {'label': str(kp.get('name') or 'Bekende plek'), 'address': str(kp.get('name') or ''), 'google_maps_uri': maps}
     place_id = str(stop.get('place_id') or '').strip()
-    if place_id:
+    if place_id and resolve:
         details = google_place_details(place_id)
         if details:
             label = details.get('address') or details.get('name') or 'Locatie'
             return {'label': label, 'address': details.get('address') or '', 'google_maps_uri': details.get('google_maps_uri') or ''}
     if lat is not None and lon is not None:
-        details = google_reverse_geocode(lat, lon)
+        details = google_reverse_geocode(lat, lon) if resolve else {}
         return {'label': details.get('address') or f'{lat:.5f}, {lon:.5f}', 'address': details.get('address') or '', 'google_maps_uri': details.get('google_maps_uri') or ''}
     return {'label': 'Locatie onbekend', 'address': '', 'google_maps_uri': ''}
 
@@ -2588,7 +2588,7 @@ def business_trip_by_id(trip_id: int) -> dict[str, Any] | None:
     return enrich_business_trip(dict(row), stops)
 
 
-def enrich_business_trip(trip: dict[str, Any], stops: list[dict[str, Any]]) -> dict[str, Any]:
+def enrich_business_trip(trip: dict[str, Any], stops: list[dict[str, Any]], resolve: bool = True) -> dict[str, Any]:
     out = dict(trip)
     enriched = []
     prev_odo = None
@@ -2611,7 +2611,7 @@ def enrich_business_trip(trip: dict[str, Any], stops: list[dict[str, Any]]) -> d
             else: business_km += km
         kp=known_place_by_id(x.get('known_place_id'))
         x['known_place_name']=kp.get('name') if kp else ''
-        loc = trip_location_details(x)
+        loc = trip_location_details(x, resolve=resolve)
         x['location_label'] = loc['label']
         x['location_address'] = loc['address']
         x['google_maps_uri'] = loc['google_maps_uri']
@@ -2814,9 +2814,27 @@ def _build_pdf(pages: list[_SimplePdfPage], images: dict[str, tuple[int, int, by
     return bytes(out)
 
 
-def business_pdf(period: str = 'month') -> tuple[bytes, str]:
+def business_pdf(period: str = 'month', year: str | None = None, month: str | None = None) -> tuple[bytes, str]:
     settings = get_settings()
-    trips = business_trips_for_period(period)
+    ref = now_local()
+    try:
+        if year is not None:
+            if period not in {'month', 'year'}:
+                raise ValueError()
+            ref = ref.replace(year=int(year), month=int(month or 1), day=1)
+        elif month is not None:
+            raise ValueError()
+        if not 1900 <= ref.year <= 9998:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise ValueError('Kies een geldig jaar (1900-9998) en een maand (1-12).') from None
+    safe_period = period if period in {'day', 'week', 'month', 'year'} else 'month'
+    selection_start, selection_end = period_bounds(safe_period, ref)
+    trips = []
+    for trip, stops in business_trips_raw():
+        if stops and (period == 'all' or selection_start <= parse_dt(stops[0]['created_at']) < selection_end):
+            trips.append(enrich_business_trip(trip, stops, resolve=False))
+    trips.sort(key=lambda trip: parse_dt(trip['stops'][0]['created_at']))
     if period == 'all':
         label = 'Alle geregistreerde ritten'
         filename_label = 'alles'
@@ -2830,9 +2848,9 @@ def business_pdf(period: str = 'month') -> tuple[bytes, str]:
         period_end = max(period_stops) if period_stops else None
     else:
         safe_period = period if period in {'day', 'week', 'month', 'year'} else 'month'
-        period_start, period_end_exclusive = period_bounds(safe_period)
+        period_start, period_end_exclusive = selection_start, selection_end
         label = period_label(safe_period, period_start)
-        filename_label = safe_period
+        filename_label = period_start.strftime('%Y') if safe_period == 'year' else period_start.strftime('%Y-%m') if safe_period == 'month' else safe_period
         period_end = period_end_exclusive - timedelta(days=1)
     if period_start and period_end:
         year_label = str(period_start.year) if period_start.year == period_end.year else f'{period_start.year}-{period_end.year}'
@@ -2910,6 +2928,8 @@ def business_pdf(period: str = 'month') -> tuple[bytes, str]:
     page.y -= 18
     page.wrapped('Rit & Tank legt datum, begin- en eindstand, vertrek- en aankomstlocatie, ritsoort, afwijkende route en prive-omrijkilometers vast. Controleer dit rapport voor gebruik in uw administratie.', 36, 523, 7.5)
     page.y -= 6
+    page.wrapped('Ritten zijn ingedeeld op vertrekdatum. Een rit over een maandgrens staat volledig in de vertrekmaand.', 36, 523, 7.5)
+    page.y -= 6
     if not trips:
         page.text('Geen ritten in deze periode.', 36, page.y, 10)
     day_counts = {}
@@ -2920,8 +2940,20 @@ def business_pdf(period: str = 'month') -> tuple[bytes, str]:
         dkey = parse_dt(stops[0].get('created_at')).strftime('%Y-%m-%d')
         day_counts[dkey] = day_counts.get(dkey, 0) + 1
         trip['day_trip_no'] = day_counts[dkey]
+    previous_month = None
     for idx, trip in enumerate(trips, start=1):
         stops = trip.get('stops') or []
+        start_dt = parse_dt(stops[0]['created_at'])
+        month_key = start_dt.strftime('%Y-%m')
+        if period == 'year' and month_key != previous_month:
+            if previous_month is not None or page.need(160):
+                page = new_page()
+            month_trips = [t for t in trips if parse_dt(t['stops'][0]['created_at']).strftime('%Y-%m') == month_key]
+            page.text(period_label('month', start_dt).capitalize(), 36, page.y, 13, bold=True)
+            page.y -= 17
+            page.text(f'{len(month_trips)} ritten | Totaal: {sum(t["km"] for t in month_trips):.1f} km | Zakelijk: {sum(t["business_km"] for t in month_trips):.1f} km | Prive: {sum(t["private_km"] for t in month_trips):.1f} km', 36, page.y, 8)
+            page.y -= 24
+            previous_month = month_key
         estimated = 118 + 20 * max(1, len(stops))
         if page.need(estimated):
             page = new_page()
@@ -3554,6 +3586,7 @@ APP_HTML = r'''<!doctype html>
 <link rel="icon" type="image/png" sizes="192x192" href="huisplan-icon-192.png">
 <title>Rit & Tank</title>
 <style>
+#pdfPeriodModal label{display:block;margin-top:16px;color:var(--muted)}#pdfPeriodModal input,#pdfPeriodModal select{display:block;width:100%;margin-top:6px;padding:14px;border:1px solid #34404a;border-radius:14px;background:#0e1216;color:white;font-size:17px}#pdfPeriodModal p{line-height:1.5}
 :root{--bg:#0c0f12;--card:#171c21;--card2:#10161b;--line:#2b3540;--text:#f4f7fa;--muted:#97a7b4;--blue:#52baff;--teal:#58dfb1;--orange:#ffb75d;--red:#ff6d7d;--gold:#ffc35f;--shadow:0 12px 34px rgba(0,0,0,.3)}
 *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}body{min-height:100vh;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}button,input,textarea,select{font:inherit}.app{max-width:900px;margin:auto;padding:13px 13px 42px}.topbar{display:flex;align-items:center;justify-content:space-between;padding:7px 3px 13px}.brand{display:flex;gap:10px;align-items:center}.brand-icon{font-size:29px}.brand h1{font-size:21px;margin:0}.brand small{color:var(--muted)}.iconbtn{width:46px;height:46px;border-radius:15px;background:var(--card);border:1px solid var(--line);color:var(--text);font-size:20px}.hero{background:linear-gradient(145deg,#0d3a30,#102921 58%,#141b1a);border:1px solid #277762;border-radius:25px;padding:19px;box-shadow:var(--shadow);display:grid;grid-template-columns:1fr auto;gap:12px}.hero .eyebrow{color:var(--teal);font-weight:900;text-transform:uppercase;font-size:11px;letter-spacing:.08em}.hero h2{font-size:29px;line-height:1.05;margin:4px 0}.odo{font-size:17px;color:#d9e3ea}.hero-stat{text-align:right;align-self:center}.hero-stat strong{font-size:31px;display:block}.hero-stat span{color:var(--muted);font-size:11px}.since-full{margin-top:5px;color:#bad9cc;font-size:11px}.quick{display:grid;grid-template-columns:1.3fr 1fr;gap:9px;margin:11px 0}.quick button{border:0;border-radius:18px;padding:17px 12px;color:white;font-weight:900;font-size:16px}.primary{background:linear-gradient(135deg,#0d78ba,#0ca58d)}.secondary{background:#1b2229;border:1px solid var(--line)!important}.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:5px;background:#12171b;border:1px solid var(--line);border-radius:17px;margin:13px 0}.tab{border:0;background:transparent;color:var(--muted);padding:11px 3px;border-radius:12px;font-weight:900}.tab.active{background:#25323c;color:white;box-shadow:inset 0 0 0 1px #344552}.period-title{display:flex;align-items:end;justify-content:space-between;margin:17px 2px 8px}.period-title h3{margin:0;font-size:21px}.period-title span{font-size:12px;color:var(--muted)}.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.kpi{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:13px;min-width:0}.kpi .ico{font-size:19px}.kpi b{display:block;font-size:21px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.kpi span{display:block;font-size:11px;color:var(--muted);margin-top:4px}.kpi.em{border-color:#2d6a5b;background:#12251f}.fullavg{margin-top:10px;background:linear-gradient(135deg,#241d10,#1c1812);border:1px solid #725122;border-radius:18px;padding:14px;display:flex;justify-content:space-between;gap:12px}.fullavg b{font-size:25px;color:var(--gold)}.fullavg div:last-child{text-align:right;color:var(--muted);font-size:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:20px;margin-top:12px;padding:15px}.cardhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.cardhead h3{margin:0;font-size:18px}.seg{display:flex;background:#10161a;border-radius:10px;padding:3px;overflow:auto}.seg button{border:0;background:transparent;color:var(--muted);padding:6px 8px;border-radius:8px;font-size:11px;white-space:nowrap}.seg button.active{background:#29343e;color:white}.chart-scroll{overflow-x:auto;padding-bottom:5px}.chart{height:190px;display:flex;align-items:flex-end;gap:7px;min-width:100%;padding:15px 4px 0;border-bottom:1px solid #2c343c}.bar-wrap{flex:1;min-width:27px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center}.bar{width:min(28px,80%);min-height:2px;background:linear-gradient(180deg,#63c9ff,#1977bb);border-radius:8px 8px 2px 2px}.bar.orange{background:linear-gradient(180deg,#ffd27e,#d88920)}.bar-val{font-size:9px;color:#aab8c3;margin-bottom:4px;white-space:nowrap}.bar-label{font-size:10px;color:#8e9ba6;margin-top:7px}.station-list,.history{display:flex;flex-direction:column;gap:8px}.station-row{display:grid;grid-template-columns:43px 1fr auto;gap:10px;align-items:center;background:#10161b;border:1px solid #26313a;border-radius:15px;padding:11px}.station-icon{width:42px;height:42px;border-radius:13px;background:#142a26;display:flex;align-items:center;justify-content:center;font-size:21px}.station-row strong{display:block}.station-row small{display:block;color:var(--muted);margin-top:3px;line-height:1.25}.maplink{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;color:#8dd2ff;background:#142635;border:1px solid #25455d;border-radius:11px;padding:8px 9px}.event{display:grid;grid-template-columns:45px 1fr auto;gap:10px;align-items:center;padding:11px;border-radius:14px;background:#10161b;border:1px solid #252e36}.event-icon{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;background:#1b2b34;font-size:20px}.event strong{display:block;font-size:14px}.event small{display:block;color:var(--muted);margin-top:3px;line-height:1.3}.event .right{text-align:right}.event .right b{display:block}.event-actions{display:flex;justify-content:flex-end;gap:4px;margin-top:3px}.trash{background:none;border:0;color:#84919d;font-size:17px;padding:4px}.empty{text-align:center;color:var(--muted);padding:25px 8px}.toast{position:fixed;left:50%;bottom:calc(25px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(120px);opacity:0;background:#e8f7f1;color:#0b3126;padding:11px 16px;border-radius:14px;font-weight:800;transition:.25s;z-index:80;box-shadow:var(--shadow);max-width:90vw;text-align:center}.toast.show{transform:translateX(-50%) translateY(0);opacity:1}.toast.error{background:#ffe2e5;color:#59131a}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:30;display:none;align-items:flex-end;justify-content:center}.modal.show{display:flex}.sheet{width:min(100%,640px);max-height:94vh;overflow:auto;background:#14191e;border:1px solid #303943;border-radius:27px 27px 0 0;padding:12px 16px calc(21px + env(safe-area-inset-bottom));box-shadow:0 -20px 55px rgba(0,0,0,.45)}.grab{width:44px;height:5px;border-radius:5px;background:#4a5259;margin:0 auto 13px}.sheethead{display:flex;align-items:center;justify-content:space-between}.sheethead h2{margin:0;font-size:22px}.close{background:#222a31;border:0;color:white;width:38px;height:38px;border-radius:12px}.field{margin-top:13px}.field label{display:block;color:#afbac3;font-size:12px;font-weight:800;margin:0 0 6px 3px}.field input,.field textarea,.field select{width:100%;border:1px solid #34404a;background:#0e1216;color:white;border-radius:14px;padding:13px;font-size:17px;outline:none}.field input:focus,.field textarea:focus,.field select:focus{border-color:#4faee8}.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.wheel-title{text-align:center;color:#aeb9c2;font-size:12px;font-weight:900;margin-top:14px}.wheelbox{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:4px;margin-top:5px}.wheelbox.liters{grid-template-columns:minmax(0,1.2fr) auto minmax(0,1fr) minmax(0,1fr)}.wheelbox.liters .wheel{min-width:0}#receiptScanStatus:empty{display:none}.wheelbox.price{grid-template-columns:.8fr auto .7fr .7fr .7fr}.wheel-sep{font-size:30px;color:#71808d}.wheel{height:150px;overflow-y:auto;scroll-snap-type:y mandatory;border-radius:16px;background:#0d1115;border:1px solid #303a43;position:relative;scrollbar-width:none;padding:50px 0}.wheel::-webkit-scrollbar{display:none}.wheel:after{content:"";position:absolute;left:5px;right:5px;top:50px;height:50px;border-top:1px solid #4b5965;border-bottom:1px solid #4b5965;pointer-events:none}.wheel-item{height:50px;scroll-snap-align:center;display:flex;align-items:center;justify-content:center;font-size:22px;color:#7f8d99;transition:.15s}.wheel-item.sel{font-size:29px;font-weight:900;color:white}.live-total{text-align:center;font-size:15px;color:#b7c4cd;margin-top:9px}.live-total b{color:var(--teal);font-size:21px}.station-input{display:grid;grid-template-columns:1fr 54px;gap:8px}.locate{border:1px solid #2f6685;background:#132938;color:#80cfff;border-radius:14px;font-size:23px}.location-status{font-size:11px;color:var(--muted);margin:7px 3px 0}.location-status.ok{color:#75d7b5}.location-status.err{color:#ff9aa4}.station-results{display:flex;flex-direction:column;gap:7px;margin-top:8px}.station-choice{width:100%;text-align:left;background:#10171c;border:1px solid #2d3943;border-radius:14px;padding:11px;color:white}.station-choice b{display:block;font-size:14px}.station-choice small{display:block;color:#9caab5;margin-top:3px;line-height:1.25}.google-attrib{text-align:right;color:#83929e;font-size:10px;margin:7px 4px 0}.google-attrib b{color:#dfe5ea;letter-spacing:.02em}.toggle{display:flex;align-items:center;justify-content:space-between;background:#0f1418;border:1px solid #303943;padding:12px 13px;border-radius:14px;margin-top:13px}.switch{position:relative;width:50px;height:29px}.switch input{display:none}.slider{position:absolute;inset:0;background:#343c44;border-radius:20px}.slider:before{content:"";position:absolute;width:23px;height:23px;left:3px;top:3px;background:white;border-radius:50%;transition:.2s}.switch input:checked + .slider{background:#19a883}.switch input:checked + .slider:before{transform:translateX(21px)}.save{width:100%;margin-top:15px;border:0;border-radius:16px;background:linear-gradient(135deg,#0e78b8,#0aa684);color:white;padding:15px;font-size:17px;font-weight:900}.settings-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:14px}.linkbtn{display:block;text-align:center;text-decoration:none;color:white;background:#20272e;border:1px solid #34404a;padding:12px;border-radius:14px;font-weight:800}.tech{background:#10161a;border:1px solid #2a343d;border-radius:14px;padding:11px;margin-top:14px;color:#a7b5bf;font-size:12px;line-height:1.45}.badge-ok{color:#67d7ae}.badge-off{color:#ffbe72}
@@ -3605,6 +3638,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   </section>
 
   <div class="dashboard-actions">
+    <button class="trip-primary" style="margin-bottom:10px" onclick="openPdfSelector()">📄 PDF-ritregistratie</button>
     <button class="trip-primary" onclick="smartTripAction()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m9 6 9 6-9 6V6Z"/></svg><span id="tripPrimaryLabel">Rit starten</span></button>
     <div class="action-row"><button class="action-secondary" onclick="openFuel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 21V4h10v17M3 21h14M7 7h6v5H7zM15 8h2l2 2v7a2 2 0 0 0 4 0v-5l-2-2"/></svg><span>Tankbeurt</span></button><button class="action-secondary" onclick="openKm()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19a8 8 0 1 1 16 0H4Z"/><path d="m12 17 4-5M7 16l-1-1m11-1 1-1m-6-2V9"/></svg><span>KM bijwerken</span></button></div>
   </div>
@@ -3641,7 +3675,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
     </section>
     <div class="smart-place-bar"><button onclick="openKnownPlaces()">📌 Bekende plekken & slimme regels</button></div>
     <div class="tax-note">Slimme modus: iedere etappe tussen twee locaties krijgt apart een voorstel Zakelijk/Privé. Je bevestigt met één tik; de app onthoudt terugkerende routes. Voor een volledige rittenregistratie zijn o.a. datum, begin/eindstand, vertrek- en aankomstadres, ritsoort, eventuele afwijkende route en privé-omrijkilometers relevant. Controleer altijd of dit past bij jouw fiscale situatie.</div>
-    <section class="card"><div class="cardhead"><h3>Ritten in deze periode</h3><div class="export-actions"><a class="maplink" id="bizCsvLink" href="api/business.csv">CSV</a><a class="maplink pdf-link" id="bizPdfLink" onclick="openPdfExport(event)" href="api/business.pdf?period=month">PDF</a></div></div><div id="businessHistory"></div></section>
+    <section class="card"><div class="cardhead"><h3>Ritten in deze periode</h3><div class="export-actions"><a class="maplink" id="bizCsvLink" href="api/business.csv">CSV</a><a class="maplink pdf-link" id="bizPdfLink" onclick="openPdfSelector(event)" href="api/business.pdf?period=month">PDF</a></div></div><div id="businessHistory"></div></section>
     <section class="card"><div class="cardhead"><h3>🧾 Wijzigingslogboek</h3><span style="color:var(--muted);font-size:11px">laatste 24</span></div><div class="audit-list" id="auditHistory"></div></section>
   </div>
 </div>
@@ -3652,6 +3686,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <button class="nav-item" onclick="openSettings()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0ZM12 2v3m0 14v3M2 12h3m14 0h3"/></svg><span>Meer</span></button>
 </nav>
 <div class="toast" id="toast"></div>
+<div class="modal" id="pdfPeriodModal"><div class="sheet"><div class="sheethead"><h2>PDF-ritregistratie</h2><button class="close" onclick="closeModal('pdfPeriodModal')">✕</button></div><label>Periode<select id="pdfRange" onchange="$('pdfMonthLabel').hidden=this.value==='year'"><option value="month">Eén maand</option><option value="year">Heel jaar</option></select></label><label>Jaar<input id="pdfYear" type="number" min="1900" max="9998" step="1" list="pdfYears"></label><datalist id="pdfYears"></datalist><label id="pdfMonthLabel">Maand<select id="pdfMonth"></select></label><p>Bij een heel jaar worden alle maanden met ritten op volgorde in één PDF opgenomen. Ritten worden ingedeeld op vertrekdatum.</p><button class="save" onclick="confirmPdfPeriod()">OK — PDF maken</button><p id="pdfPeriodError" role="alert"></p></div></div>
 <div class="modal" id="pdfModal"><div class="sheet"><div class="sheethead"><h2>PDF-export</h2><button class="close" onclick="closeModal('pdfModal')">✕</button></div><p id="pdfStatus" role="status">PDF voorbereiden…</p><div class="settings-actions"><button class="linkbtn" id="pdfShare" onclick="sharePdf()" disabled>Delen / andere app</button><a class="linkbtn" id="pdfOpen" target="_blank" rel="noopener" hidden>Openen / afdrukken</a><a class="linkbtn" id="pdfDownload" hidden>Downloaden</a><button class="linkbtn" id="pdfDrive" onclick="archivePdf()" disabled>Bewaren in Google Drive</button></div><p class="tax-note">Open de PDF en gebruik het deel- of printmenu van je apparaat om af te drukken. Op iPhone/iPad kun je via Delen ook een andere app kiezen.</p></div></div>
 
 <div class="modal" id="fuelModal"><div class="sheet" id="fuelSheet"><div class="grab"></div><div class="sheethead"><h2>⛽ Tankbeurt</h2><button class="close" onclick="closeModal('fuelModal')">✕</button></div>
@@ -3748,7 +3783,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
       <button type="button" class="btn" onclick="downloadDiagnosticLog()">Download log</button>
     </div>
   </section>
-  <button class="save" onclick="saveSettings()">Instellingen opslaan</button><div class="settings-actions"><a class="linkbtn" href="api/export.csv">⬇️ Tank/auto CSV</a><a class="linkbtn" id="settingsBusinessCsv" href="api/business.csv">🧾 Ritten CSV</a><a class="linkbtn" id="settingsBusinessPdf" onclick="openPdfExport(event)" href="api/business.pdf?period=month">📄 Fiscale PDF</a><button class="linkbtn" style="font:inherit" onclick="reloadData()">↻ Vernieuwen</button></div>
+  <button class="save" onclick="saveSettings()">Instellingen opslaan</button><div class="settings-actions"><a class="linkbtn" href="api/export.csv">⬇️ Tank/auto CSV</a><a class="linkbtn" id="settingsBusinessCsv" href="api/business.csv">🧾 Ritten CSV</a><a class="linkbtn" id="settingsBusinessPdf" onclick="openPdfSelector(event)" href="api/business.pdf?period=month">📄 Fiscale PDF</a><button class="linkbtn" style="font:inherit" onclick="reloadData()">↻ Vernieuwen</button></div>
 </div></div>
 
 <script>
@@ -3868,7 +3903,9 @@ function esc(s){let d=document.createElement('div');d.textContent=s||'';return d
 async function removeEvent(id){if(!confirm('Deze registratie verwijderen?'))return;try{await api(`api/events/${id}`,{method:'DELETE'});toast('Registratie verwijderd');reloadData()}catch(e){toast(e.message,true)}}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{PERIOD=b.dataset.period;reloadData()});document.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{METRIC=b.dataset.metric;renderChart();document.querySelectorAll('.seg button').forEach(x=>x.classList.toggle('active',x===b))});document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)closeModal(m.id)}));
 let PDF_EXPORT=null,PDF_REQUEST=0;
-async function openPdfExport(event){event.preventDefault();let url=event.currentTarget.href,request=++PDF_REQUEST;if(PDF_EXPORT)URL.revokeObjectURL(PDF_EXPORT.url);PDF_EXPORT=null;openModal('pdfModal');$('pdfStatus').textContent='PDF voorbereiden…';$('pdfShare').disabled=true;$('pdfDrive').disabled=true;$('pdfOpen').hidden=true;$('pdfDownload').hidden=true;try{let response=await fetch(url,{cache:'no-store'});if(!response.ok)throw new Error('PDF maken mislukt. Log zo nodig opnieuw in.');if(!(response.headers.get('Content-Type')||'').includes('application/pdf'))throw new Error('Geen PDF ontvangen. Log opnieuw in.');let blob=await response.blob();if(request!==PDF_REQUEST)return;let name=(response.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/)?.[1]||'rittenregistratie.pdf',file=new File([blob],name,{type:'application/pdf'}),objectUrl=URL.createObjectURL(blob);PDF_EXPORT={file,url:objectUrl,period:new URL(url,location.href).searchParams.get('period')||'month'};$('pdfOpen').href=objectUrl;$('pdfDownload').href=objectUrl;$('pdfDownload').download=name;$('pdfOpen').hidden=false;$('pdfDownload').hidden=false;$('pdfShare').disabled=!(navigator.canShare&&navigator.canShare({files:[file]}));$('pdfDrive').disabled=!DATA.app?.backup?.configured;$('pdfStatus').textContent='PDF gereed: '+name+(DATA.app?.backup?.configured?'':' · Stel Google Drive-back-up in via Meer → Instellingen.')}catch(e){$('pdfStatus').textContent=e.message}}
+function openPdfSelector(event){event?.preventDefault();let now=new Date();$('pdfRange').value='month';$('pdfMonthLabel').hidden=false;$('pdfYear').value=now.getFullYear();$('pdfYears').innerHTML=Array.from({length:12},(_,i)=>`<option value="${now.getFullYear()-5+i}"></option>`).join('');$('pdfMonth').innerHTML=['Januari','Februari','Maart','April','Mei','Juni','Juli','Augustus','September','Oktober','November','December'].map((m,i)=>`<option value="${i+1}">${m}</option>`).join('');$('pdfMonth').value=now.getMonth()+1;$('pdfPeriodError').textContent='';openModal('pdfPeriodModal')}
+function confirmPdfPeriod(){let year=Number($('pdfYear').value),month=Number($('pdfMonth').value),period=$('pdfRange').value;if(!Number.isInteger(year)||year<1900||year>9998){$('pdfPeriodError').textContent='Kies een geldig jaar.';return}let url=`api/business.pdf?period=${period}&year=${year}`+(period==='month'?`&month=${month}`:'');closeModal('pdfPeriodModal');openPdfExport(url)}
+async function openPdfExport(source){let url;if(typeof source==='string')url=source;else{source.preventDefault();url=source.currentTarget.href}let request=++PDF_REQUEST;if(PDF_EXPORT)URL.revokeObjectURL(PDF_EXPORT.url);PDF_EXPORT=null;openModal('pdfModal');$('pdfStatus').textContent='PDF voorbereiden…';$('pdfShare').disabled=true;$('pdfDrive').disabled=true;$('pdfOpen').hidden=true;$('pdfDownload').hidden=true;let controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);try{let response=await fetch(url,{cache:'no-store',signal:controller.signal});if(!response.ok){let error=await response.json().catch(()=>({}));throw new Error(error.error||'PDF maken mislukt. Log zo nodig opnieuw in.')}if(!(response.headers.get('Content-Type')||'').includes('application/pdf'))throw new Error('Geen PDF ontvangen. Log opnieuw in.');let blob=await response.blob();if(request!==PDF_REQUEST)return;let name=(response.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/)?.[1]||'rittenregistratie.pdf',file=new File([blob],name,{type:'application/pdf'}),objectUrl=URL.createObjectURL(blob);PDF_EXPORT={file,url:objectUrl,period:new URL(url,location.href).searchParams.get('period')||'month'};$('pdfOpen').href=url;$('pdfDownload').href=objectUrl;$('pdfDownload').download=name;$('pdfOpen').hidden=false;$('pdfDownload').hidden=false;try{$('pdfShare').disabled=!(navigator.canShare&&navigator.canShare({files:[file]}))}catch(e){$('pdfShare').disabled=true}$('pdfDrive').disabled=!DATA.app?.backup?.configured;$('pdfStatus').textContent='PDF gereed: '+name}catch(e){if(request===PDF_REQUEST)$('pdfStatus').textContent=e.name==='AbortError'?'PDF maken duurt te lang. Probeer één maand of controleer het logboek.':e.message}finally{clearTimeout(timer)}}
 async function sharePdf(){if(!PDF_EXPORT)return;try{await navigator.share({files:[PDF_EXPORT.file],title:'Rittenregistratie'})}catch(e){if(e.name!=='AbortError')toast('Delen niet beschikbaar. Gebruik Openen of Downloaden.',true)}}
 async function archivePdf(){if(!PDF_EXPORT)return;let exported=PDF_EXPORT;$('pdfDrive').disabled=true;try{let encoded=await new Promise((resolve,reject)=>{let reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('PDF kon niet worden gelezen.'));reader.readAsDataURL(exported.file)});let result=await api('api/backup/pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pdf_base64:encoded,filename:exported.file.name})});if(PDF_EXPORT===exported)$('pdfStatus').textContent='Permanent in Google Drive bewaard: '+result.name}catch(e){toast(e.message,true)}finally{if(PDF_EXPORT===exported)$('pdfDrive').disabled=false}}
 let wheels={};
@@ -4187,10 +4224,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.export_business_csv(period)
         if path == '/api/business.pdf':
             period = (q.get('period') or ['month'])[0]
-            return self.export_business_pdf(period)
+            return self.export_business_pdf(period, (q.get('year') or [None])[0], (q.get('month') or [None])[0])
         if path == '/api/export/pdf':
             period = (q.get('period') or ['month'])[0]
-            return self.export_business_pdf(period)
+            return self.export_business_pdf(period, (q.get('year') or [None])[0], (q.get('month') or [None])[0])
         mr = re.fullmatch(r'/api/receipt/(\d+)', path)
         if mr:
             return self.serve_receipt(int(mr.group(1)))
@@ -4360,8 +4397,14 @@ class Handler(BaseHTTPRequestHandler):
                 writer.writerow([enriched['id'],enriched.get('trip_type_label') or '',enriched['status'],enriched.get('purpose') or '',enriched.get('client') or '',enriched.get('started_at') or '',enriched.get('ended_at') or '',enriched.get('km') or 0,enriched.get('business_km') or 0,enriched.get('private_km') or 0,enriched.get('private_detour_km') or 0,enriched.get('deviating_route') or '',stop.get('sequence_no'),stop.get('created_at'),stop.get('odometer'),stop.get('segment_km') or 0,stop.get('segment_trip_type_label') or '',stop.get('segment_classification_source') or '',stop.get('segment_suggested_type') or '',stop.get('segment_suggestion_reason') or '',stop.get('latitude') if stop.get('latitude') is not None else '',stop.get('longitude') if stop.get('longitude') is not None else '',stop.get('place_id') or '',stop.get('known_place_name') or '',stop.get('location_label') or '',stop.get('note') or ''])
         data=output.getvalue().encode('utf-8-sig'); self.send_response(200); self.send_header('Content-Type','text/csv; charset=utf-8'); self.send_header('Content-Disposition','attachment; filename="rittenregistratie_export.csv"'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
 
-    def export_business_pdf(self, period: str = 'month') -> None:
-        data, filename = business_pdf(period)
+    def export_business_pdf(self, period: str = 'month', year: str | None = None, month: str | None = None) -> None:
+        try:
+            data, filename = business_pdf(period, year, month)
+        except ValueError as exc:
+            return json_response(self, {'error': str(exc)}, 400)
+        except Exception as exc:
+            print(f'PDF export mislukt: {type(exc).__name__}', flush=True)
+            return json_response(self, {'error': 'PDF maken mislukt. Controleer het app-logboek.'}, 500)
         self.send_response(200)
         self.send_header('Content-Type', 'application/pdf')
         self.send_header('Content-Disposition', f'inline; filename="{filename}"')
