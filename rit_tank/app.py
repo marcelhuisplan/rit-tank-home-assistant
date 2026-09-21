@@ -21,7 +21,6 @@ import time
 import textwrap
 import urllib.error
 import urllib.request
-import websocket
 import zipfile
 import zlib
 from dataclasses import dataclass
@@ -550,6 +549,11 @@ try:
 except ImportError:
     import routing
 
+try:
+    from . import home_assistant
+except ImportError:
+    import home_assistant
+
 
 def _places_dependencies() -> dict[str, Any]:
     return {
@@ -655,143 +659,42 @@ def get_route_distance(origin_lat: float, origin_lon: float, dest_lat: float, de
 
 
 def ha_request(method: str, path: str, payload: dict[str, Any] | None = None, timeout: int = 8) -> Any:
-    token = os.getenv('SUPERVISOR_TOKEN', '')
-    if not token:
-        raise ValueError('Home Assistant API-token is niet beschikbaar.')
-    body = None if payload is None else json.dumps(payload).encode('utf-8')
-    headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
-    if body is not None:
-        headers['Content-Type'] = 'application/json'
-    req = urllib.request.Request(
-        f'http://supervisor/core/api/{path.lstrip("/")}',
-        data=body,
-        method=method.upper(),
-        headers=headers,
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            raw = response.read()
-            if not raw:
-                return {}
-            return json.loads(raw.decode('utf-8'))
-    except Exception as exc:
-        detail = str(exc)
-        if token:
-            detail = detail.replace(token, '[redacted]')
-        raise ValueError(f'Home Assistant API niet beschikbaar: {detail}')
+    return home_assistant.ha_request(method, path, payload, timeout)
 
 
 def ha_get(path: str) -> Any:
-    return ha_request('GET', path)
+    return home_assistant.ha_get(path, dependencies={'ha_request': ha_request})
 
 
 def ha_post(path: str, payload: dict[str, Any]) -> Any:
-    return ha_request('POST', path, payload)
+    return home_assistant.ha_post(path, payload, dependencies={'ha_request': ha_request})
 
 
 def ha_notify_services() -> list[dict[str, str]]:
-    try:
-        domains = ha_get('services')
-    except Exception:
-        return []
-    out: list[dict[str, str]] = []
-    for domain in domains if isinstance(domains, list) else []:
-        if str(domain.get('domain') or '') != 'notify':
-            continue
-        services = domain.get('services') or {}
-        for service_name in services:
-            if str(service_name).startswith('mobile_app_'):
-                out.append({
-                    'service': f'notify.{service_name}',
-                    'name': str(service_name).replace('mobile_app_', '').replace('_', ' ').title(),
-                })
-    out.sort(key=lambda x: x['name'].lower())
-    return out
+    return home_assistant.ha_notify_services(dependencies={'ha_get': ha_get})
 
 
 def _ha_ws_open(timeout: int = 10):
-    token = os.getenv('SUPERVISOR_TOKEN', '')
-    if not token:
-        raise ValueError('Home Assistant API-token is niet beschikbaar.')
-    ws = websocket.create_connection('ws://supervisor/core/websocket', timeout=timeout)
-    first = json.loads(ws.recv())
-    if first.get('type') != 'auth_required':
-        ws.close()
-        raise ValueError('Onverwachte Home Assistant WebSocket-handshake.')
-    ws.send(json.dumps({'type': 'auth', 'access_token': token}))
-    auth = json.loads(ws.recv())
-    if auth.get('type') != 'auth_ok':
-        ws.close()
-        raise ValueError('Home Assistant WebSocket-authenticatie mislukt.')
-    return ws
+    return home_assistant._ha_ws_open(timeout)
 
 
 def ha_ws_command(command: dict[str, Any], timeout: int = 10) -> Any:
-    ws = _ha_ws_open(timeout)
-    try:
-        payload = dict(command)
-        payload['id'] = 1
-        ws.send(json.dumps(payload))
-        while True:
-            msg = json.loads(ws.recv())
-            if msg.get('id') != 1:
-                continue
-            if msg.get('type') == 'result':
-                if not msg.get('success'):
-                    err = msg.get('error') or {}
-                    raise ValueError(str(err.get('message') or 'WebSocket-opdracht mislukt.'))
-                return msg.get('result')
-    finally:
-        try:
-            ws.close()
-        except Exception:
-            pass
+    return home_assistant.ha_ws_command(
+        command,
+        timeout,
+        dependencies={'ha_ws_open': _ha_ws_open},
+    )
 
 
 def location_entities() -> list[dict[str, Any]]:
-    rows = ha_get('states')
-    out = []
-    for item in rows if isinstance(rows, list) else []:
-        entity_id = str(item.get('entity_id') or '')
-        if not (entity_id.startswith('person.') or entity_id.startswith('device_tracker.')):
-            continue
-        attrs = item.get('attributes') or {}
-        lat, lon = to_float(attrs.get('latitude')), to_float(attrs.get('longitude'))
-        if lat is None or lon is None:
-            continue
-        out.append({
-            'entity_id': entity_id,
-            'name': str(attrs.get('friendly_name') or entity_id),
-            'state': str(item.get('state') or ''),
-            'latitude': lat,
-            'longitude': lon,
-            'gps_accuracy': to_float(attrs.get('gps_accuracy')),
-        })
-    out.sort(key=lambda x: (0 if x['entity_id'].startswith('person.') else 1, x['name'].lower()))
-    return out
+    return home_assistant.location_entities(dependencies={'ha_get': ha_get, 'to_float': to_float})
 
 
 def location_from_entity(entity_id: str) -> dict[str, Any]:
-    entity_id = (entity_id or '').strip()
-    if not (entity_id.startswith('person.') or entity_id.startswith('device_tracker.')):
-        raise ValueError('Kies een geldige person- of device_tracker-entiteit.')
-    item = ha_get(f'states/{quote(entity_id, safe="._")}')
-    attrs = item.get('attributes') or {}
-    lat, lon = to_float(attrs.get('latitude')), to_float(attrs.get('longitude'))
-    if lat is None or lon is None:
-        raise ValueError('Deze Home Assistant-entiteit heeft geen GPS-coördinaten.')
-    return {
-        'entity_id': entity_id,
-        'name': str(attrs.get('friendly_name') or entity_id),
-        'latitude': lat,
-        'longitude': lon,
-        'accuracy': to_float(attrs.get('gps_accuracy')),
-        'speed': to_float(attrs.get('speed')),
-        'course': to_float(attrs.get('course')),
-        'state': str(item.get('state') or ''),
-        'source': 'home_assistant',
-        'ha_last_updated': item.get('last_updated'),
-    }
+    return home_assistant.location_from_entity(
+        entity_id,
+        dependencies={'ha_get': ha_get, 'to_float': to_float},
+    )
 
 def rows_events() -> list[dict[str, Any]]:
     with DB_LOCK, db() as con:
@@ -3332,72 +3235,26 @@ def summary(period: str = 'month') -> dict[str, Any]:
     }
 
 def ha_post_state(entity_id: str, state: Any, attrs: dict[str, Any]) -> None:
-    token = os.getenv('SUPERVISOR_TOKEN', '')
-    if not token:
-        return
-    url = f'http://supervisor/core/api/states/{entity_id}'
-    body = json.dumps({'state': state, 'attributes': attrs}).encode('utf-8')
-    req = urllib.request.Request(url, data=body, method='POST', headers={
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/json',
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=4) as _:
-            pass
-    except Exception:
-        pass
+    return home_assistant.ha_post_state(entity_id, state, attrs)
 
 
 def publish_sensors() -> None:
-    try:
-        rows = rows_events()
-        settings = get_settings()
-        prefix = sanitize_prefix(str(load_options().get('entity_prefix') or 'auto'))
-        odo = current_odometer(rows)
-        if odo is not None:
-            ha_post_state(f'sensor.{prefix}_kilometerstand', round(odo,1), {
-                'friendly_name': f"{settings['vehicle_name']} kilometerstand",
-                'unit_of_measurement': 'km', 'icon': 'mdi:counter', 'state_class': 'measurement'
-            })
-        for p, label in [('week','week'),('month','maand'),('year','jaar')]:
-            st = stats_for_period(p, rows)
-            ft = full_tank_period_average(p, rows)
-            ha_post_state(f'sensor.{prefix}_kilometers_{label}', st['km'], {
-                'friendly_name': f"{settings['vehicle_name']} kilometers {label}", 'unit_of_measurement': 'km', 'icon': 'mdi:road-variant'
-            })
-            ha_post_state(f'sensor.{prefix}_verbruik_{label}', ft['l100'] if ft and ft['l100'] is not None else 'unknown', {
-                'friendly_name': f"{settings['vehicle_name']} werkelijk verbruik {label}",
-                'unit_of_measurement': 'L/100 km', 'icon': 'mdi:gas-station',
-                'measurement_method': 'full_tank', 'cycles': ft['cycles'] if ft else 0
-            })
-        overall = overall_full_tank_average(rows)
-        ha_post_state(f'sensor.{prefix}_verbruik_gemiddeld', overall['l100'] if overall and overall['l100'] is not None else 'unknown', {
-            'friendly_name': f"{settings['vehicle_name']} gemiddeld verbruik",
-            'unit_of_measurement': 'L/100 km', 'icon': 'mdi:gauge',
-            'measurement_method': 'full_tank', 'cycles': overall['cycles'] if overall else 0
-        })
-        st = stats_for_period('month', rows)
-        ha_post_state(f'sensor.{prefix}_brandstofkosten_maand', st['cost'], {
-            'friendly_name': f"{settings['vehicle_name']} brandstofkosten maand", 'unit_of_measurement': settings['currency'], 'icon': 'mdi:cash'
-        })
-        for p, label in [('week','week'),('month','maand'),('year','jaar')]:
-            bs = business_stats_for_period(p)
-            ha_post_state(f'sensor.{prefix}_zakelijke_km_{label}', bs['business_km'], {
-                'friendly_name': f"{settings['vehicle_name']} zakelijke kilometers {label}",
-                'unit_of_measurement': 'km', 'icon': 'mdi:briefcase-outline'
-            })
-        active = active_business_trip()
-        ha_post_state(f'sensor.{prefix}_zakelijke_rit_status', 'actief' if active else 'geen', {
-            'friendly_name': f"{settings['vehicle_name']} zakelijke rit status",
-            'icon': 'mdi:car-clock',
-            'trip_id': active['id'] if active else None,
-            'kilometers': active['km'] if active else 0,
-        })
-    except Exception:
-        pass
+    return home_assistant.publish_sensors(dependencies={
+        'rows_events': rows_events,
+        'get_settings': get_settings,
+        'sanitize_prefix': sanitize_prefix,
+        'load_options': load_options,
+        'current_odometer': current_odometer,
+        'stats_for_period': stats_for_period,
+        'full_tank_period_average': full_tank_period_average,
+        'overall_full_tank_average': overall_full_tank_average,
+        'business_stats_for_period': business_stats_for_period,
+        'active_business_trip': active_business_trip,
+        'ha_post_state': ha_post_state,
+    })
 
 def publish_sensors_async() -> None:
-    threading.Thread(target=publish_sensors, daemon=True).start()
+    return home_assistant.publish_sensors_async(dependencies={'publish_sensors': publish_sensors})
 
 
 def json_response(handler: BaseHTTPRequestHandler, payload: Any, status: int = 200, headers: dict[str, str] | None = None) -> None:
