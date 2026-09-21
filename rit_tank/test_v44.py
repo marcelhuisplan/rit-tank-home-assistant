@@ -1,12 +1,14 @@
 """Offline regression tests; no Home Assistant, OCR or Drive calls."""
 import importlib.util
+import json
+import re
 import sys
 import tempfile
 import types
 import unittest
 from pathlib import Path
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 try:
     import websocket
@@ -42,6 +44,92 @@ class AutonomyTests(unittest.TestCase):
     def learn(self, source, actual=10.2, checked=True, gps=10, samples=10):
         with app.db() as con:
             app.learn_distance(source, gps, actual, samples, checked, con=con)
+
+    def test_database_context_commits_and_closes_connection(self):
+        with app.db() as con:
+            con.execute("INSERT INTO settings(key,value) VALUES('context_test','committed')")
+        with self.assertRaisesRegex(Exception, 'closed'):
+            con.execute("SELECT value FROM settings WHERE key='context_test'")
+        with app.db() as con:
+            self.assertEqual(con.execute("SELECT value FROM settings WHERE key='context_test'").fetchone()[0], 'committed')
+
+    def test_database_context_rolls_back_and_closes_on_exception(self):
+        with self.assertRaisesRegex(RuntimeError, 'context failure'):
+            with app.db() as con:
+                con.execute("INSERT INTO settings(key,value) VALUES('context_test_rollback','discarded')")
+                raise RuntimeError('context failure')
+        with self.assertRaisesRegex(Exception, 'closed'):
+            con.execute("SELECT 1")
+        with app.db() as con:
+            self.assertIsNone(con.execute("SELECT value FROM settings WHERE key='context_test_rollback'").fetchone())
+
+    def test_home_assistant_rest_auth_uses_bearer_token_and_redacts_errors(self):
+        token = 'secret-supervisor-token'
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"state": "ok"}'
+        with patch.dict(app.os.environ, {'SUPERVISOR_TOKEN': token}), \
+                patch.object(app.urllib.request, 'urlopen', return_value=response) as urlopen:
+            self.assertEqual(app.ha_request('GET', 'states'), {'state': 'ok'})
+            request = urlopen.call_args.args[0]
+            self.assertEqual(request.get_header('Authorization'), f'Bearer {token}')
+
+        with patch.dict(app.os.environ, {'SUPERVISOR_TOKEN': token}), \
+                patch.object(app.urllib.request, 'urlopen', side_effect=RuntimeError(token)):
+            with self.assertRaises(ValueError) as caught:
+                app.ha_request('GET', 'states')
+        self.assertNotIn(token, str(caught.exception))
+        self.assertIn('[redacted]', str(caught.exception))
+
+        with patch.dict(app.os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, '^Home Assistant API-token is niet beschikbaar\\.$') as caught:
+                app.ha_request('GET', 'states')
+        self.assertEqual(str(caught.exception), 'Home Assistant API-token is niet beschikbaar.')
+
+        state_response = MagicMock()
+        state_response.__enter__.return_value = state_response
+        with patch.dict(app.os.environ, {'SUPERVISOR_TOKEN': token}), \
+                patch.object(app.urllib.request, 'urlopen', return_value=state_response) as urlopen:
+            app.ha_post_state('sensor.test', 'ok', {})
+            request = urlopen.call_args.args[0]
+            self.assertEqual(request.get_header('Authorization'), f'Bearer {token}')
+
+    def test_delete_business_trip_removes_events_and_keeps_audit_snapshot(self):
+        result = app.start_business_trip({
+            'odometer': 10000,
+            'created_at': app.iso_local(),
+            'latitude': 52,
+            'longitude': 6,
+            'purpose': 'Testrit',
+        })
+        trip_id = int(result['trip']['id'])
+        with app.db() as con:
+            event_ids = [row['event_id'] for row in con.execute(
+                'SELECT event_id FROM trip_stops WHERE trip_id=?', (trip_id,)
+            )]
+        app.delete_business_trip(trip_id)
+        with app.db() as con:
+            self.assertIsNone(con.execute('SELECT id FROM business_trips WHERE id=?', (trip_id,)).fetchone())
+            for event_id in event_ids:
+                self.assertIsNone(con.execute('SELECT id FROM events WHERE id=?', (event_id,)).fetchone())
+            audit_row = con.execute(
+                "SELECT details FROM audit_log WHERE action='delete' AND entity_type='trip' AND entity_id=?",
+                (trip_id,)
+            ).fetchone()
+        self.assertIsNotNone(audit_row)
+        snapshot = json.loads(audit_row['details'])
+        self.assertEqual(snapshot['trip']['id'], trip_id)
+        self.assertEqual(len(snapshot['stops']), len(event_ids))
+
+    def test_current_version_is_consistent_across_runtime_and_docs(self):
+        version = '5.0.11'
+        root = Path(__file__).parent
+        self.assertEqual(app.APP_VERSION, version)
+        self.assertRegex((root / 'config.yaml').read_text(encoding='utf-8'), rf"(?m)^version: ['\"]{re.escape(version)}['\"]$")
+        self.assertTrue((root / 'README.md').read_text(encoding='utf-8').startswith(f'# Rit & Tank {version}'))
+        self.assertTrue((root / 'CHANGELOG.md').read_text(encoding='utf-8').startswith(f'# Changelog\n\n## {version}'))
+        self.assertIn(f'rit-tank-shell-{version}'.encode('utf-8'), app.SERVICE_WORKER)
+        self.assertEqual(app.summary()['app']['version'], version)
 
     def test_diagnostic_log_is_bounded_and_excludes_sensitive_fields(self):
         for i in range(505):

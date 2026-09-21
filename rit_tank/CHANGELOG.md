@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.0.11
+- SQLite-verbindingen worden correct gecommit of teruggedraaid en daarna gesloten.
+- Home Assistant API-foutmeldingen lekken de Supervisor-token niet.
+- Dubbele `delete_business_trip()` is geconsolideerd met behoud van snapshot, auditlogging en gekoppelde event-verwijdering.
+- Runtime- en documentatieversies zijn gelijkgetrokken naar 5.0.11.
+
 ## 5.0.9
 - Grote PDF-ritregistratieknop op het beginscherm, met maand- en kalenderjaarkeuze.
 - Jaarexport bevat de aanwezige maanden chronologisch, met maandtotalen en een nieuwe pagina per volgende maand.
