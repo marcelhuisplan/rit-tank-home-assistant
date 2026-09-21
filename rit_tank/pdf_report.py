@@ -584,5 +584,3 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     if preview:
         return {'filename': filename, 'pdf_base64': base64.b64encode(data).decode('ascii'), 'pages': [p.svg(pdf_images) for p in pages]}
     return data, filename
-
-
