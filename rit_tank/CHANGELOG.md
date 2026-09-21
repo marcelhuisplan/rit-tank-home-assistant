@@ -3,7 +3,7 @@
 ## 9.00
 - PDF-bovenmarge aangepast naar exact 25 mm vanaf bovenkant pagina.
 - Privé- en Zakelijk-badges in kolom Soort hebben nu dezelfde vaste breedte van 65 pt.
-- Rapportperiodevakinten meer verticale ruimte met betere leesbaarheid (drie duidelijke niveaus: label, maand, datumrange).
+- Rapportperiodevak heeft meer verticale ruimte met betere leesbaarheid (drie duidelijke niveaus: label, maand, datumrange).
 - Overige PDF-layout, functionaliteit en database-integriteit blijven ongewijzigd.
 
 ## 8.00
