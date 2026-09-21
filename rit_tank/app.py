@@ -2939,56 +2939,110 @@ def _pdf_escape(value: Any) -> bytes:
 
 
 class _SimplePdfPage:
-    def __init__(self, title: str):
+    def __init__(self, title: str = ''):
         self.commands: list[bytes] = []
         self.preview: list[str] = []
         self.images: set[str] = set()
         self.y = 806.0
         self.title = title
-        self.text(title, 36, self.y, 15, bold=True)
-        self.y -= 12
-        self.line(36, self.y, 559, self.y, 0.75)
-        self.y -= 18
+        if title:
+            self.text(title, 36, self.y, 15, bold=True)
+            self.y -= 12
+            self.line(36, self.y, 559, self.y, 0.75)
+            self.y -= 18
 
-    def text(self, value: Any, x: float, y: float, size: float = 9, bold: bool = False, gray: float = 0.08):
-        color = round(gray * 255)
-        self.preview.append(f'<text x="{x}" y="{842-y}" font-size="{size}" font-weight="{700 if bold else 400}" fill="rgb({color},{color},{color})">{html.escape(_pdf_text(value))}</text>')
+    @staticmethod
+    def _normalize_rgb(rgb: tuple[int, int, int] | None) -> tuple[int, int, int] | None:
+        if rgb is None:
+            return None
+        return tuple(max(0, min(255, int(v))) for v in rgb)
+
+    @classmethod
+    def _svg_color(cls, gray: float | None = None, rgb: tuple[int, int, int] | None = None) -> str:
+        norm = cls._normalize_rgb(rgb)
+        if norm is not None:
+            return f'rgb({norm[0]},{norm[1]},{norm[2]})'
+        level = round((0.08 if gray is None else gray) * 255)
+        return f'rgb({level},{level},{level})'
+
+    @classmethod
+    def _fill_command(cls, gray: float | None = None, rgb: tuple[int, int, int] | None = None) -> str:
+        norm = cls._normalize_rgb(rgb)
+        if norm is not None:
+            r, g, b = [v / 255 for v in norm]
+            return f'{r:.3f} {g:.3f} {b:.3f} rg'
+        return f'{(0.08 if gray is None else gray):.3f} g'
+
+    @classmethod
+    def _stroke_command(cls, gray: float | None = None, rgb: tuple[int, int, int] | None = None) -> str:
+        norm = cls._normalize_rgb(rgb)
+        if norm is not None:
+            r, g, b = [v / 255 for v in norm]
+            return f'{r:.3f} {g:.3f} {b:.3f} RG'
+        return f'{(0.75 if gray is None else gray):.3f} G'
+
+    def text(self, value: Any, x: float, y: float, size: float = 9, bold: bool = False,
+             gray: float | None = 0.08, rgb: tuple[int, int, int] | None = None):
+        color = self._svg_color(gray, rgb)
+        self.preview.append(f'<text x="{x}" y="{842-y}" font-size="{size}" font-weight="{700 if bold else 400}" fill="{color}">{html.escape(_pdf_text(value))}</text>')
         font = 'F2' if bold else 'F1'
         esc = _pdf_escape(value)
         self.commands.append(
-            f'{gray:.3f} g BT /{font} {size:.2f} Tf 1 0 0 1 {x:.2f} {y:.2f} Tm '.encode('ascii')
+            (self._fill_command(gray, rgb) + f' BT /{font} {size:.2f} Tf 1 0 0 1 {x:.2f} {y:.2f} Tm ').encode('ascii')
             + b'(' + esc + b') Tj ET\n'
         )
 
-    def line(self, x1: float, y1: float, x2: float, y2: float, width: float = 0.5, gray: float = 0.75):
-        color = round(gray * 255)
-        self.preview.append(f'<line x1="{x1}" y1="{842-y1}" x2="{x2}" y2="{842-y2}" stroke="rgb({color},{color},{color})" stroke-width="{width}"/>')
+    def line(self, x1: float, y1: float, x2: float, y2: float, width: float = 0.5,
+             gray: float | None = 0.75, rgb: tuple[int, int, int] | None = None):
+        color = self._svg_color(gray, rgb)
+        self.preview.append(f'<line x1="{x1}" y1="{842-y1}" x2="{x2}" y2="{842-y2}" stroke="{color}" stroke-width="{width}"/>')
         self.commands.append(
-            f'{gray:.3f} G {width:.2f} w {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S\n'.encode('ascii')
+            f'{self._stroke_command(gray, rgb)} {width:.2f} w {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S\n'.encode('ascii')
         )
 
-    def rect(self, x: float, y: float, width: float, height: float, gray: float = 0.94):
-        """Draw a filled, lightly shaded rectangle used for report cards."""
-        color = round(gray * 255)
-        self.preview.append(f'<rect x="{x}" y="{842-y-height}" width="{width}" height="{height}" fill="rgb({color},{color},{color})"/>')
+    def rect(self, x: float, y: float, width: float, height: float,
+             gray: float | None = 0.94, rgb: tuple[int, int, int] | None = None):
+        color = self._svg_color(gray, rgb)
+        self.preview.append(f'<rect x="{x}" y="{842-y-height}" width="{width}" height="{height}" fill="{color}"/>')
         self.commands.append(
-            f'{gray:.3f} g {x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n'.encode('ascii')
+            f'{self._fill_command(gray, rgb)} {x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n'.encode('ascii')
+        )
+
+    def circle(self, x: float, y: float, radius: float,
+               gray: float | None = 0.75, rgb: tuple[int, int, int] | None = None):
+        color = self._svg_color(gray, rgb)
+        self.preview.append(f'<circle cx="{x}" cy="{842-y}" r="{radius}" fill="{color}"/>')
+        c = radius * 0.5522847498
+        self.commands.append(
+            (
+                f'{self._fill_command(gray, rgb)} '
+                f'{x + radius:.2f} {y:.2f} m '
+                f'{x + radius:.2f} {y + c:.2f} {x + c:.2f} {y + radius:.2f} {x:.2f} {y + radius:.2f} c '
+                f'{x - c:.2f} {y + radius:.2f} {x - radius:.2f} {y + c:.2f} {x - radius:.2f} {y:.2f} c '
+                f'{x - radius:.2f} {y - c:.2f} {x - c:.2f} {y - radius:.2f} {x:.2f} {y - radius:.2f} c '
+                f'{x + c:.2f} {y - radius:.2f} {x + radius:.2f} {y - c:.2f} {x + radius:.2f} {y:.2f} c f\n'
+            ).encode('ascii')
         )
 
     def image(self, name: str, x: float, y: float, width: float, height: float):
-        """Place a registered PDF image XObject at the given position."""
         self.images.add(name)
         self.preview.append(f'<image x="{x}" y="{842-y-height}" width="{width}" height="{height}" preserveAspectRatio="none" href="IMAGE_{name}"/>')
         self.commands.append(
             f'q {width:.2f} 0 0 {height:.2f} {x:.2f} {y:.2f} cm /{name} Do Q\n'.encode('ascii')
         )
 
-    def wrapped(self, value: Any, x: float, width: float, size: float = 8.5, bold: bool = False, leading: float | None = None, indent: float = 0):
-        leading = leading or (size + 3)
+    @staticmethod
+    def wrap_lines(value: Any, width: float, size: float = 8.5) -> list[str]:
         chars = max(18, int(width / max(3.7, size * 0.52)))
-        lines = textwrap.wrap(_pdf_text(value), width=chars, break_long_words=False, break_on_hyphens=False) or ['']
+        return textwrap.wrap(_pdf_text(value), width=chars, break_long_words=False, break_on_hyphens=False) or ['']
+
+    def wrapped(self, value: Any, x: float, width: float, size: float = 8.5, bold: bool = False,
+                leading: float | None = None, indent: float = 0,
+                gray: float | None = 0.08, rgb: tuple[int, int, int] | None = None):
+        leading = leading or (size + 3)
+        lines = self.wrap_lines(value, width, size)
         for line in lines:
-            self.text(line, x + indent, self.y, size, bold=bold)
+            self.text(line, x + indent, self.y, size, bold=bold, gray=gray, rgb=rgb)
             self.y -= leading
         return len(lines)
 
@@ -3071,6 +3125,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             raise ValueError()
     except (ValueError, TypeError):
         raise ValueError('Kies een geldig jaar (1900-9998) en een maand (1-12).') from None
+
     safe_period = period if period in {'day', 'week', 'month', 'year'} else 'month'
     selection_start, selection_end = period_bounds(safe_period, ref)
     trips = []
@@ -3078,6 +3133,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         if stops and (period == 'all' or selection_start <= parse_dt(stops[0]['created_at']) < selection_end):
             trips.append(enrich_business_trip(trip, stops, resolve=False))
     trips.sort(key=lambda trip: parse_dt(trip['stops'][0]['created_at']))
+
     if period == 'all':
         label = 'Alle geregistreerde ritten'
         filename_label = 'alles'
@@ -3090,34 +3146,70 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         period_start = min(period_stops) if period_stops else None
         period_end = max(period_stops) if period_stops else None
     else:
-        safe_period = period if period in {'day', 'week', 'month', 'year'} else 'month'
         period_start, period_end_exclusive = selection_start, selection_end
         label = period_label(safe_period, period_start)
-        filename_label = period_start.strftime('%Y') if safe_period == 'year' else period_start.strftime('%Y-%m') if safe_period == 'month' else safe_period
+        if safe_period == 'year':
+            filename_label = period_start.strftime('%Y')
+        elif safe_period == 'month':
+            filename_label = period_start.strftime('%Y-%m')
+        else:
+            filename_label = safe_period
         period_end = period_end_exclusive - timedelta(days=1)
+
     if period_start and period_end:
         year_label = str(period_start.year) if period_start.year == period_end.year else f'{period_start.year}-{period_end.year}'
         date_range = f'{period_start:%d-%m-%Y} - {period_end:%d-%m-%Y}'
     else:
         year_label = '-'
         date_range = 'Geen geregistreerde datums'
+
     total_km = round(sum(float(t.get('km') or 0) for t in trips), 1)
     business_km = round(sum(float(t.get('business_km') or 0) for t in trips), 1)
     private_km = round(sum(float(t.get('private_km') or 0) for t in trips), 1)
-    pages = []
 
-    company_name = str(settings.get('company_name') or 'Huisplan B.V.').strip() or 'Huisplan B.V.'
+    company_name = str(settings.get('company_name') or 'Huisplan BV').strip() or 'Huisplan BV'
+    footer_company = 'Huisplan BV'
     vehicle_bits = [x for x in [settings.get('vehicle_make'), settings.get('vehicle_model')] if x]
-    vehicle_name = ' '.join(vehicle_bits) or settings.get('vehicle_name') or '-'
-    used_period = ' - '.join(x for x in [settings.get('vehicle_period_from'), settings.get('vehicle_period_to')] if x) or '-'
+    vehicle_name = ' '.join(str(x).strip() for x in vehicle_bits if str(x).strip()) or str(settings.get('vehicle_name') or '-').strip() or '-'
+    driver_name = str(settings.get('driver_name') or '-').strip() or '-'
+    license_plate = str(settings.get('license_plate') or '-').strip() or '-'
+    generated_label = now_local().strftime('%d-%m-%Y %H:%M')
+    footer_period_label = label.capitalize() if label else '-'
+    report_period_label = f'{label.capitalize()} [{date_range}]' if date_range else label.capitalize()
+
+    palette = {
+        'text': (12, 15, 18),
+        'muted': (151, 167, 180),
+        'line': (43, 53, 64),
+        'blue': (82, 186, 255),
+        'teal': (88, 223, 177),
+        'card': (244, 247, 250),
+        'card2': (236, 243, 247),
+    }
+
+    def tint(rgb: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
+        return tuple(max(0, min(255, int(round(v + (255 - v) * ratio)))) for v in rgb)
+
+    def fmt_km(value: Any) -> str:
+        number = round(float(value or 0), 1)
+        if abs(number - round(number)) < 0.05:
+            return f'{int(round(number))}'
+        return f'{number:.1f}'
+
+    def address_parts(value: Any) -> tuple[str, str]:
+        text = str(value or '').strip() or 'Locatie onbekend'
+        parts = [part.strip() for part in text.split(',') if part.strip()]
+        if len(parts) >= 2:
+            return parts[0], ', '.join(parts[1:])
+        match = re.search(r'(\b\d{4}\s?[A-Za-z]{2}\b.*)$', text)
+        if match and match.start() > 0:
+            return text[:match.start()].strip(' ,'), match.group(1).strip(' ,')
+        return text, ''
+
+    def month_heading(dt: datetime) -> str:
+        return period_label('month', dt).capitalize()
 
     pdf_images: dict[str, tuple[int, int, bytes]] = {}
-    captur_path = Path(__file__).with_name('captur-2014.jpg')
-    try:
-        if captur_path.exists():
-            pdf_images['ImCaptur'] = (1200, 800, captur_path.read_bytes())
-    except OSError:
-        pass
     logo_path = Path(__file__).with_name('huisplan-logo.jpg')
     try:
         if logo_path.exists():
@@ -3125,143 +3217,201 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     except OSError:
         pass
 
-    def column_labels(page):
-        # Repeat semantic column labels on every page, including continuations.
-        page.text('RIT / DATUM / ADRES EN TELLERSTAND', 36, page.y, 7.5, bold=True, gray=.35)
-        page.text('RITAFSTAND (KM)', 463, page.y, 7.5, bold=True, gray=.35)
-        page.y -= 20
+    pages: list[_SimplePdfPage] = []
 
-    def new_page():
-        page = _SimplePdfPage('Fiscale rittenregistratie')
-        if pages:
-            column_labels(page)
+    def draw_header(page: _SimplePdfPage, compact: bool = False) -> None:
+        title_y = 806
+        subtitle_y = 788 if not compact else 790
+        logo_w = 70 if not compact else 42
+        logo_h = 64 if not compact else 38
+        logo_x = 489 if not compact else 515
+        logo_y = 760 if not compact else 770
+        page.text('Rittenregistratie', 36, title_y, 20 if not compact else 15, bold=True, rgb=palette['text'])
+        page.text('Fiscale kilometeradministratie', 36, subtitle_y, 9.3 if not compact else 8.4, rgb=palette['muted'])
+        if 'ImLogo' in pdf_images:
+            page.image('ImLogo', logo_x, logo_y, logo_w, logo_h)
+        header_line_y = 754 if not compact else 760
+        page.line(36, header_line_y, 559, header_line_y, 0.8, rgb=tint(palette['line'], 0.35))
+        page.y = 734 if not compact else 742
+
+    def draw_report_table(page: _SimplePdfPage) -> None:
+        table_top = page.y
+        row_h = 32
+        left_x, right_x = 48, 304
+        page.rect(36, table_top - row_h * 3, 523, row_h * 3, rgb=palette['card'])
+        for i in range(4):
+            y = table_top - i * row_h
+            page.line(36, y, 559, y, 0.5, rgb=tint(palette['line'], 0.72))
+        page.line(292, table_top, 292, table_top - row_h * 3, 0.5, rgb=tint(palette['line'], 0.72))
+        cells = [
+            (('Kalenderjaar', year_label), ('Rapportperiode', report_period_label)),
+            (('Bestuurder', driver_name), ('Auto', vehicle_name)),
+            (('Kenteken', license_plate), ('Gegenereerd op', generated_label)),
+        ]
+        for row_idx, (left_cell, right_cell) in enumerate(cells):
+            baseline = table_top - row_idx * row_h - 12
+            for x, width, (key, value) in ((left_x, 218, left_cell), (right_x, 215, right_cell)):
+                page.text(key.upper(), x, baseline, 7.2, bold=True, rgb=palette['muted'])
+                value_lines = _SimplePdfPage.wrap_lines(value, width, 9.2)[:2]
+                for line_idx, line in enumerate(value_lines):
+                    page.text(line, x, baseline - 12 - line_idx * 10, 9.2, bold=(row_idx == 0 and x == left_x), rgb=palette['text'])
+        page.y = table_top - row_h * 3 - 18
+
+    def draw_summary_cards(page: _SimplePdfPage) -> None:
+        card_y = page.y - 58
+        width = 165
+        gap = 14
+        cards = [
+            ('TOTAAL', fmt_km(total_km), palette['card2'], None),
+            ('ZAKELIJK', fmt_km(business_km), tint(palette['teal'], 0.85), palette['teal']),
+            ('PRIVÉ', fmt_km(private_km), tint(palette['blue'], 0.88), palette['blue']),
+        ]
+        for idx, (title, value, bg, bullet) in enumerate(cards):
+            x = 36 + idx * (width + gap)
+            page.rect(x, card_y, width, 58, rgb=bg)
+            label_x = x + 14
+            if bullet is not None:
+                page.circle(x + 16, card_y + 42, 3.2, rgb=bullet)
+                label_x = x + 26
+            page.text(title, label_x, card_y + 40, 8.2, bold=True, rgb=palette['muted'])
+            page.text(f'{value} km', x + 14, card_y + 18, 18, bold=True, rgb=palette['text'])
+        page.y = card_y - 22
+
+    def new_page(*, compact: bool = False, section_label: str | None = None) -> _SimplePdfPage:
+        page = _SimplePdfPage()
+        draw_header(page, compact=compact)
+        if section_label:
+            page.text(section_label, 36, page.y, 9.5, bold=True, rgb=palette['muted'])
+            page.y -= 18
         pages.append(page)
         return page
 
-    page = new_page()
-    if 'ImLogo' in pdf_images:
-        page.rect(34, 738, 38, 38, gray=.96)
-        page.image('ImLogo', 36, 740, 34, 34)
-        page.text(company_name.upper(), 82, 764, 8.5, bold=True, gray=.35)
-        page.text('Rittenregistratie', 82, 751, 7.3, gray=.45)
-        page.y = 728.0
-    else:
-        page.text(company_name.upper(), 36, page.y, 8.5, bold=True, gray=.35)
-        page.y -= 16
-    card_top = page.y
-    page.rect(36, card_top - 65, 335, 65, gray=.94)
-    page.text('KALENDERJAAR', 48, card_top - 17, 7.2, bold=True, gray=.42)
-    page.text(year_label, 48, card_top - 40, 16, bold=True)
-    page.text('RAPPORTPERIODE', 160, card_top - 17, 7.2, bold=True, gray=.42)
-    page.text(label, 160, card_top - 36, 10.2, bold=True)
-    page.text(date_range, 160, card_top - 52, 7.3, gray=.30)
-    if 'ImCaptur' in pdf_images:
-        page.rect(385, card_top - 105, 174, 105, gray=1)
-        page.image('ImCaptur', 387, card_top - 103, 170, 102)
-    page.y = card_top - 122
-    metadata_rows = [
-        (('Bestuurder', settings.get('driver_name') or '-'), ('Auto', vehicle_name)),
-        (('Bedrijf', company_name), ('Kenteken', settings.get('license_plate') or '-')),
-        (('Beschikkingsperiode', used_period), ('Gegenereerd', now_local().strftime('%d-%m-%Y %H:%M'))),
-    ]
-    for (left_key, left_value), (right_key, right_value) in metadata_rows:
-        page.text(f'{left_key}:', 36, page.y, 8, bold=True)
-        page.text(left_value, 122, page.y, 8)
-        page.text(f'{right_key}:', 304, page.y, 8, bold=True)
-        page.text(right_value, 386, page.y, 8)
-        page.y -= 14
-    page.y -= 2
-    page.line(36, page.y, 559, page.y, .5)
-    page.y -= 16
-    page.text(f'Totaal: {total_km:.1f} km', 36, page.y, 9.5, bold=True)
-    page.text(f'Zakelijk: {business_km:.1f} km', 190, page.y, 9.5, bold=True)
-    page.text(f'Prive: {private_km:.1f} km', 370, page.y, 9.5, bold=True)
-    page.y -= 18
-    page.wrapped('Rit & Tank legt datum, begin- en eindstand, vertrek- en aankomstlocatie, ritsoort, afwijkende route en prive-omrijkilometers vast. Controleer dit rapport voor gebruik in uw administratie.', 36, 523, 7.5)
-    page.y -= 6
-    page.wrapped('Ritten zijn ingedeeld op vertrekdatum. Een rit over een maandgrens staat volledig in de vertrekmaand.', 36, 523, 7.5)
-    page.y -= 6
-    column_labels(page)
+    def stop_height(stop: dict[str, Any]) -> float:
+        primary, secondary = address_parts(stop.get('location_address') or stop.get('location_label') or stop.get('manual_label') or '')
+        primary_lines = _SimplePdfPage.wrap_lines(primary, 415, 10.7)
+        secondary_lines = _SimplePdfPage.wrap_lines(secondary, 415, 8.4) if secondary else []
+        note_lines = _SimplePdfPage.wrap_lines(f'Notitie: {stop.get("note")}', 415, 7.8) if stop.get('note') else []
+        height = 14 + len(primary_lines) * 12 + len(secondary_lines) * 10 + 11
+        if note_lines:
+            height += len(note_lines) * 9 + 4
+        return height
+
+    def draw_segment(page: _SimplePdfPage, distance_km: float) -> None:
+        page.line(58, page.y + 4, 58, page.y - 8, 0.8, rgb=tint(palette['line'], 0.45))
+        page.text(f'{fmt_km(distance_km)} km', 72, page.y - 2, 8.4, bold=True, rgb=palette['muted'])
+        page.y -= 20
+
+    def draw_stop(page: _SimplePdfPage, stop: dict[str, Any], role: str) -> None:
+        primary, secondary = address_parts(stop.get('location_address') or stop.get('location_label') or stop.get('manual_label') or '')
+        page.text(f'{role} · {stop.get("time_label") or "-"}', 48, page.y, 8.4, bold=True, rgb=palette['muted'])
+        page.y -= 13
+        for line in _SimplePdfPage.wrap_lines(primary, 415, 10.7):
+            page.text(line, 48, page.y, 10.7, bold=True, rgb=palette['text'])
+            page.y -= 12
+        if secondary:
+            for line in _SimplePdfPage.wrap_lines(secondary, 415, 8.4):
+                page.text(line, 48, page.y, 8.4, rgb=palette['muted'])
+                page.y -= 10
+        page.text(f'Tellerstand: {fmt_km(stop.get("odometer"))} km', 48, page.y, 8.4, rgb=palette['text'])
+        page.y -= 11
+        if stop.get('note'):
+            for line in _SimplePdfPage.wrap_lines(f'Notitie: {stop.get("note")}', 415, 7.8):
+                page.text(line, 48, page.y, 7.8, rgb=palette['muted'])
+                page.y -= 9
+            page.y -= 1
+
+    def trip_badge(trip: dict[str, Any]) -> tuple[str, tuple[int, int, int]]:
+        has_business = float(trip.get('business_km') or 0) > 0
+        has_private = float(trip.get('private_km') or 0) > 0
+        if has_business and has_private:
+            return 'PRIVÉ/ZAKELIJK', palette['line']
+        if has_private:
+            return 'PRIVÉ', palette['blue']
+        return 'ZAKELIJK', palette['teal']
+
+    page = new_page(compact=False)
+    draw_report_table(page)
+    draw_summary_cards(page)
+    page.text('Rittenoverzicht', 36, page.y, 14, bold=True, rgb=palette['text'])
+    page.y -= 20
+
     if not trips:
-        page.text('Geen ritten in deze periode.', 36, page.y, 10)
-    day_counts = {}
-    for trip in trips:
-        stops = trip.get('stops') or []
-        if not stops:
-            continue
-        dkey = parse_dt(stops[0].get('created_at')).strftime('%Y-%m-%d')
-        day_counts[dkey] = day_counts.get(dkey, 0) + 1
-        trip['day_trip_no'] = day_counts[dkey]
+        page.text('Geen ritten in deze periode.', 36, page.y, 10.5, rgb=palette['text'])
+
     previous_month = None
     for idx, trip in enumerate(trips, start=1):
         stops = trip.get('stops') or []
+        if not stops:
+            continue
         start_dt = parse_dt(stops[0]['created_at'])
         month_key = start_dt.strftime('%Y-%m')
-        if period == 'year' and month_key != previous_month:
-            if previous_month is not None or page.need(160):
-                page = new_page()
-            month_trips = [t for t in trips if parse_dt(t['stops'][0]['created_at']).strftime('%Y-%m') == month_key]
-            page.text(period_label('month', start_dt).capitalize(), 36, page.y, 13, bold=True)
-            page.y -= 17
-            page.text(f'{len(month_trips)} ritten | Totaal: {sum(t["km"] for t in month_trips):.1f} km | Zakelijk: {sum(t["business_km"] for t in month_trips):.1f} km | Prive: {sum(t["private_km"] for t in month_trips):.1f} km', 36, page.y, 8)
-            page.y -= 24
+        if safe_period == 'year' and month_key != previous_month:
+            if previous_month is not None and page.need(62):
+                page = new_page(compact=True)
+            page.text(month_heading(start_dt), 36, page.y, 12.5, bold=True, rgb=palette['text'])
+            page.y -= 18
+            page.line(36, page.y, 559, page.y, 0.6, rgb=tint(palette['line'], 0.55))
+            page.y -= 16
             previous_month = month_key
-        estimated = 118 + 20 * max(1, len(stops))
-        if page.need(estimated):
-            page = new_page()
-        start_dt = parse_dt(stops[0]['created_at']) if stops else parse_dt(trip.get('started_at'))
-        page.text(f'Rit {trip.get("day_trip_no", idx):02d} - {dutch_date(start_dt)}', 36, page.y, 10.5, bold=True)
-        page.text(f'{float(trip.get("km") or 0):.1f} km', 500, page.y, 9, bold=True)
-        page.y -= 14
-        page.text(f'Ritsoort: {trip.get("trip_type_label") or "Zakelijk"}', 48, page.y, 8.5, bold=True)
-        page.text(f'Beginstand: {float(trip.get("start_odometer") or 0):.0f} km', 220, page.y, 8.2)
-        page.text(f'Eindstand: {float(trip.get("last_odometer") or 0):.0f} km', 390, page.y, 8.2)
-        page.y -= 12
-        page.text(f'Zakelijk: {float(trip.get("business_km") or 0):.1f} km', 48, page.y, 8)
-        page.text(f'Prive: {float(trip.get("private_km") or 0):.1f} km', 220, page.y, 8)
-        page.text(f'Prive omrij: {float(trip.get("private_detour_km") or 0):.1f} km', 390, page.y, 8)
-        page.y -= 12
-        purpose = trip.get('purpose') or '-'
-        client = trip.get('client') or ''
-        page.wrapped(f'Doel: {purpose}' + (f' | Klant/opdracht: {client}' if client else ''), 48, 500, 8.2)
-        if trip.get('deviating_route'):
-            page.wrapped(f'Afwijkende route: {trip.get("deviating_route")}', 48, 500, 8)
-        if trip.get('note'):
-            page.wrapped(f'Toelichting: {trip.get("note")}', 48, 500, 8)
-        prev_odo = None
-        for j,stop in enumerate(stops):
-            dt = parse_dt(stop.get('created_at'))
-            odo = float(stop.get('odometer') or 0)
-            seg = 0.0 if prev_odo is None else max(0.0, odo - prev_odo)
-            role = 'Vertrek' if j == 0 else ('Aankomst' if j == len(stops) - 1 and trip.get('status') == 'completed' else f'Tussenstop {j}')
-            loc = stop.get('location_address') or stop.get('location_label') or stop.get('manual_label') or 'Locatie onbekend'
-            seg_type = stop.get('segment_trip_type_label') or ''
-            header = f'{role}: {dt.strftime("%H:%M")} | Tellerstand: {odo:.0f} km' + (f' | Etappe: {seg:.1f} km' if j else '') + (f' | {seg_type}' if j and seg_type else '')
-            if page.need(65):
-                page = new_page()
-                page.text(f'Rit {trip.get("day_trip_no", idx):02d} - {dutch_date(start_dt)} - vervolg', 36, page.y, 9, bold=True)
-                page.y -= 15
-            page.text(dutch_date(dt), 54, page.y, 7.5, gray=.35)
-            page.y -= 11
-            page.text(header, 54, page.y, 8.2, bold=True)
-            page.y -= 11
-            page.wrapped(loc, 66, 475, 8)
-            if stop.get('note'):
-                page.wrapped(f'Notitie: {stop.get("note")}', 66, 475, 7.5)
-            prev_odo = odo
+
+        if page.need(72):
+            page = new_page(compact=True)
+            if safe_period == 'year':
+                page.text(month_heading(start_dt), 36, page.y, 12.5, bold=True, rgb=palette['text'])
+                page.y -= 18
+                page.line(36, page.y, 559, page.y, 0.6, rgb=tint(palette['line'], 0.55))
+                page.y -= 16
+
+        trip_label, trip_color = trip_badge(trip)
+        page.circle(40, page.y - 3, 3.6, rgb=trip_color)
+        page.text(trip_label, 52, page.y, 10.4, bold=True, rgb=palette['text'])
+        page.text(f'{fmt_km(trip.get("km"))} km', 498, page.y, 10.4, bold=True, rgb=palette['text'])
+        page.y -= 15
+        page.text(f'Rit {idx:02d} · {dutch_date(start_dt)}', 52, page.y, 9, rgb=palette['muted'])
+        page.y -= 16
+
+        for stop_index, stop in enumerate(stops):
+            role = 'VERTREK' if stop_index == 0 else ('AANKOMST' if stop_index == len(stops) - 1 and trip.get('status') == 'completed' else 'TUSSENSTOP')
+            required = stop_height(stop) + (24 if stop_index > 0 else 0)
+            if page.need(required):
+                page = new_page(compact=True, section_label=f'Rit {idx:02d} · vervolg')
+            if stop_index > 0:
+                draw_segment(page, float(stop.get('segment_km') or 0))
+            draw_stop(page, stop, role)
+
+        if float(trip.get('business_km') or 0) > 0 and (trip.get('purpose') or trip.get('client')):
+            purpose = str(trip.get('purpose') or '').strip()
+            client = str(trip.get('client') or '').strip()
+            detail = f'Doel: {purpose or "-"}' + (f' · Klant/opdracht: {client}' if client else '')
+            for line in _SimplePdfPage.wrap_lines(detail, 475, 8.2):
+                if page.need(12):
+                    page = new_page(compact=True, section_label=f'Rit {idx:02d} · vervolg')
+                page.text(line, 48, page.y, 8.2, rgb=palette['text'])
+                page.y -= 10
+        for extra in [
+            f'Afwijkende route: {trip.get("deviating_route")}' if trip.get('deviating_route') else '',
+            f'Toelichting: {trip.get("note")}' if trip.get('note') else '',
+        ]:
+            if not extra:
+                continue
+            for line in _SimplePdfPage.wrap_lines(extra, 475, 7.8):
+                if page.need(11):
+                    page = new_page(compact=True, section_label=f'Rit {idx:02d} · vervolg')
+                page.text(line, 48, page.y, 7.8, rgb=palette['muted'])
+                page.y -= 9
         page.y -= 4
-        page.line(36, page.y, 559, page.y, .35, .82)
-        page.y -= 14
+        page.line(36, page.y, 559, page.y, 0.45, rgb=tint(palette['line'], 0.65))
+        page.y -= 16
+
     total_pages = len(pages)
-    footer_label = f'{company_name} · Rit & Tank · {label}'
     for n, pg in enumerate(pages, start=1):
-        pg.line(36, 30, 559, 30, .35, .85)
-        footer_x = 56 if 'ImLogo' in pdf_images else 36
-        if 'ImLogo' in pdf_images:
-            pg.image('ImLogo', 38, 7, 13, 13)
-        pg.text(footer_label, footer_x, 18, 7, gray=.45)
-        pg.text(f'Pagina {n} van {total_pages}', 493, 18, 7, gray=.45)
-    data, filename = _build_pdf(pages, pdf_images), f'rittenregistratie_{filename_label}.pdf'
+        pg.line(36, 34, 559, 34, 0.45, rgb=tint(palette['line'], 0.65))
+        pg.text(footer_company, 36, 20, 7.4, bold=True, rgb=palette['muted'])
+        pg.text(footer_period_label, 262, 20, 7.4, rgb=palette['muted'])
+        pg.text(f'Pagina {n} van {total_pages}', 475, 20, 7.4, rgb=palette['muted'])
+
+    data = _build_pdf(pages, pdf_images)
+    filename = f'rittenregistratie_{filename_label}.pdf'
     if preview:
         return {'filename': filename, 'pdf_base64': base64.b64encode(data).decode('ascii'), 'pages': [p.svg(pdf_images) for p in pages]}
     return data, filename
