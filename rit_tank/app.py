@@ -515,29 +515,6 @@ def parse_dt(value: str | None) -> datetime:
         return now_local()
 
 
-
-_PLACE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_PLACE_CACHE_TTL = 300.0
-
-
-def places_key() -> str:
-    return str(load_options().get('google_places_api_key') or '').strip()
-
-
-def places_radius_m() -> int:
-    try:
-        return max(100, min(5000, int(load_options().get('places_radius_m') or 1800)))
-    except Exception:
-        return 1800
-
-
-def places_max_results() -> int:
-    try:
-        return max(1, min(20, int(load_options().get('places_max_results') or 8)))
-    except Exception:
-        return 8
-
-
 def http_json(url: str, *, method: str = 'GET', payload: dict[str, Any] | None = None, headers: dict[str, str] | None = None, timeout: int = 10) -> dict[str, Any]:
     body = json.dumps(payload).encode('utf-8') if payload is not None else None
     req_headers = {'Accept': 'application/json'}
@@ -561,277 +538,67 @@ def http_json(url: str, *, method: str = 'GET', payload: dict[str, Any] | None =
         raise ValueError(f'Externe dienst niet bereikbaar: {exc.reason}')
 
 
-def google_nearby(lat: float, lon: float) -> list[dict[str, Any]]:
-    key = places_key()
-    if not key:
-        raise ValueError('Google Places API-key ontbreekt. Vul hem in bij de app-configuratie.')
-    payload = {
-        'includedTypes': ['gas_station'],
-        'maxResultCount': places_max_results(),
-        'rankPreference': 'DISTANCE',
-        'locationRestriction': {
-            'circle': {
-                'center': {'latitude': lat, 'longitude': lon},
-                'radius': float(places_radius_m()),
-            }
-        },
-        'languageCode': 'nl',
-        'regionCode': 'NL',
+
+
+try:
+    from . import google_places
+except ImportError:
+    import google_places
+
+
+def _places_dependencies() -> dict[str, Any]:
+    return {
+        'load_options': load_options,
+        'http_json': http_json,
+        'haversine_m': haversine_m,
+        'to_float': to_float,
+        'db': db,
+        'DB_LOCK': DB_LOCK,
     }
-    data = http_json(
-        'https://places.googleapis.com/v1/places:searchNearby',
-        method='POST', payload=payload,
-        headers={
-            'X-Goog-Api-Key': key,
-            'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
-        }, timeout=12,
-    )
-    out = []
-    for p in data.get('places', []) or []:
-        loc = p.get('location') or {}
-        plat = to_float(loc.get('latitude'))
-        plon = to_float(loc.get('longitude'))
-        distance = None
-        if plat is not None and plon is not None:
-            distance = haversine_m(lat, lon, plat, plon)
-        out.append({
-            'place_id': str(p.get('id') or ''),
-            'name': str((p.get('displayName') or {}).get('text') or 'Tankstation'),
-            'address': str(p.get('formattedAddress') or ''),
-            'latitude': plat,
-            'longitude': plon,
-            'distance_m': round(distance) if distance is not None else None,
-            'google_maps_uri': (f"https://www.google.com/maps/search/?api=1&query={plat},{plon}&query_place_id={quote(str(p.get('id') or ''), safe='')}" if plat is not None and plon is not None else ''),
-        })
-    return out
+
+
+def places_key() -> str:
+    return google_places.places_key(dependencies=_places_dependencies())
+
+
+def places_radius_m() -> int:
+    return google_places.places_radius_m(dependencies=_places_dependencies())
+
+
+def places_max_results() -> int:
+    return google_places.places_max_results(dependencies=_places_dependencies())
+
+
+def google_nearby(lat: float, lon: float) -> list[dict[str, Any]]:
+    return google_places.google_nearby(lat, lon, dependencies=_places_dependencies())
 
 
 def google_places_text_search(query: str) -> list[dict[str, Any]]:
-    """
-    Zoek adressen op vrije tekst (voor handmatige adrescorrectie).
-    Gebruikt Places API v1 Text Search en levert kandidaten met
-    place_id, naam, adres en coördinaten voor een selectielijst in de UI.
-    """
-    q = (query or '').strip()
-    if not q:
-        return []
-    key = places_key()
-    if not key:
-        raise ValueError('Google Places API-key ontbreekt. Vul hem in bij de app-configuratie.')
-    payload = {
-        'textQuery': q,
-        'languageCode': 'nl',
-        'regionCode': 'NL',
-        'maxResultCount': 8,
-    }
-    data = http_json(
-        'https://places.googleapis.com/v1/places:searchText',
-        method='POST', payload=payload,
-        headers={
-            'X-Goog-Api-Key': key,
-            'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
-        }, timeout=10,
-    )
-    out = []
-    for p in data.get('places', []) or []:
-        loc = p.get('location') or {}
-        lat = to_float(loc.get('latitude'))
-        lon = to_float(loc.get('longitude'))
-        if lat is None or lon is None:
-            continue
-        out.append({
-            'place_id': str(p.get('id') or ''),
-            'name': str((p.get('displayName') or {}).get('text') or ''),
-            'address': str(p.get('formattedAddress') or ''),
-            'latitude': lat,
-            'longitude': lon,
-        })
-    return out
+    return google_places.google_places_text_search(query, dependencies=_places_dependencies())
 
 
 def google_place_details(place_id: str) -> dict[str, Any] | None:
-    place_id = (place_id or '').strip()
-    key = places_key()
-    if not place_id or not key:
-        return None
-    cached = _PLACE_CACHE.get(place_id)
-    if cached and time.monotonic() - cached[0] < _PLACE_CACHE_TTL:
-        return cached[1]
-    try:
-        data = http_json(
-            f'https://places.googleapis.com/v1/places/{quote(place_id, safe="")}',
-            headers={
-                'X-Goog-Api-Key': key,
-                'X-Goog-FieldMask': 'id,displayName,formattedAddress,location',
-            }, timeout=8,
-        )
-        loc = data.get('location') or {}
-        result = {
-            'place_id': str(data.get('id') or place_id),
-            'name': str((data.get('displayName') or {}).get('text') or 'Tankstation'),
-            'address': str(data.get('formattedAddress') or ''),
-            'latitude': to_float(loc.get('latitude')),
-            'longitude': to_float(loc.get('longitude')),
-            'google_maps_uri': (f"https://www.google.com/maps/search/?api=1&query={to_float(loc.get('latitude'))},{to_float(loc.get('longitude'))}&query_place_id={quote(str(data.get('id') or place_id), safe='')}" if to_float(loc.get('latitude')) is not None and to_float(loc.get('longitude')) is not None else ''),
-        }
-        _PLACE_CACHE[place_id] = (time.monotonic(), result)
-        return result
-    except Exception:
-        return None
-
-
-_GEOCODE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_GEOCODE_CACHE_TTL = 300.0
+    return google_places.google_place_details(place_id, dependencies=_places_dependencies())
 
 
 def google_reverse_geocode(lat: float, lon: float) -> dict[str, Any]:
-    key = places_key()
-    if not key:
-        return {
-            'place_id': '',
-            'address': f'{lat:.6f}, {lon:.6f}',
-            'province': '',
-            'latitude': lat,
-            'longitude': lon,
-            'google_maps_uri': f'https://www.google.com/maps/search/?api=1&query={lat},{lon}',
-            'source': 'coordinates',
-        }
-    cache_key = f'{lat:.5f},{lon:.5f}'
-    cached = _GEOCODE_CACHE.get(cache_key)
-    if cached and time.monotonic() - cached[0] < _GEOCODE_CACHE_TTL:
-        return cached[1]
-    try:
-        url = (
-            'https://maps.googleapis.com/maps/api/geocode/json?'
-            f'latlng={quote(f"{lat},{lon}", safe=",")}&language=nl&region=nl&key={quote(key, safe="")}'
-        )
-        data = http_json(url, timeout=10)
-        if str(data.get('status') or '') not in ('OK', 'ZERO_RESULTS'):
-            raise ValueError(str(data.get('error_message') or data.get('status') or 'Geocoding mislukt'))
-        results = data.get('results') or []
-        province = ''
-        if results:
-            first = results[0]
-            place_id = str(first.get('place_id') or '')
-            address = str(first.get('formatted_address') or f'{lat:.6f}, {lon:.6f}')
-            for comp in first.get('address_components') or []:
-                types = set(comp.get('types') or [])
-                if 'administrative_area_level_1' in types:
-                    province = str(comp.get('long_name') or comp.get('short_name') or '').strip()
-                    break
-        else:
-            place_id = ''
-            address = f'{lat:.6f}, {lon:.6f}'
-        result = {
-            'place_id': place_id,
-            'address': address,
-            'province': province,
-            'latitude': lat,
-            'longitude': lon,
-            'google_maps_uri': (
-                f'https://www.google.com/maps/search/?api=1&query={lat},{lon}'
-                + (f'&query_place_id={quote(place_id, safe="")}' if place_id else '')
-            ),
-            'source': 'google' if results else 'coordinates',
-        }
-        _GEOCODE_CACHE[cache_key] = (time.monotonic(), result)
-        return result
-    except Exception:
-        return {
-            'place_id': '',
-            'address': f'{lat:.6f}, {lon:.6f}',
-            'province': '',
-            'latitude': lat,
-            'longitude': lon,
-            'google_maps_uri': f'https://www.google.com/maps/search/?api=1&query={lat},{lon}',
-            'source': 'coordinates',
-        }
+    return google_places.google_reverse_geocode(lat, lon, dependencies=_places_dependencies())
 
 
 def nearby_house_numbers(lat: float, lon: float) -> dict[str, Any]:
-    """Use real BAG addresses, never manufacture house numbers from GPS."""
-    base = 'https://api.pdok.nl/bzk/locatieserver/search/v3_1/'
-    fields = 'id,weergavenaam,straatnaam,woonplaatsnaam,openbareruimte_id,huis_nlt,centroide_ll,afstand'
-    try:
-        nearest = http_json(base + 'reverse?' + urlencode({
-            'lat': lat, 'lon': lon, 'type': 'adres', 'distance': 250,
-            'rows': 1, 'fl': fields,
-        }), timeout=10).get('response', {}).get('docs', [])
-        if not nearest:
-            return {'addresses': [], 'street': '', 'source': 'PDOK / BAG'}
-        street_id = str(nearest[0].get('openbareruimte_id') or '')
-        if not re.fullmatch(r'\d+', street_id):
-            return {'addresses': [], 'street': '', 'source': 'PDOK / BAG'}
-        docs = http_json(base + 'free?' + urlencode({
-            'q': '*:*', 'fq': f'type:adres AND openbareruimte_id:{street_id}',
-            'lat': lat, 'lon': lon, 'rows': 10, 'fl': fields,
-        }), timeout=10).get('response', {}).get('docs', [])
-        addresses, seen = [], set()
-        for doc in docs:
-            if str(doc.get('openbareruimte_id')) != street_id:
-                continue
-            point = re.fullmatch(r'POINT\(([\d.\-]+) ([\d.\-]+)\)', str(doc.get('centroide_ll') or ''))
-            label = str(doc.get('weergavenaam') or '')
-            if not point or not label or label in seen:
-                continue
-            lng, latitude = map(float, point.groups())
-            seen.add(label)
-            addresses.append({'address': label, 'house_number': doc.get('huis_nlt') or '',
-                              'latitude': latitude, 'longitude': lng,
-                              'distance_m': round(haversine_m(lat, lon, latitude, lng))})
-        addresses.sort(key=lambda item: item['distance_m'])
-        return {'addresses': addresses[:10], 'street': nearest[0].get('straatnaam') or '', 'source': 'PDOK / BAG'}
-    except Exception:
-        raise ValueError('Huisnummers konden niet worden opgehaald. Probeer opnieuw of vul het adres handmatig in.') from None
+    return google_places.nearby_house_numbers(lat, lon, dependencies=_places_dependencies())
 
 
 def cached_report_address(lat: float, lon: float) -> str:
-    try:
-        with DB_LOCK, db() as con:
-            row = con.execute('SELECT address FROM report_addresses WHERE coordinate_key=?', (f'{lat:.5f},{lon:.5f}',)).fetchone()
-        return str(row['address']) if row else ''
-    except sqlite3.OperationalError:
-        # Offline/unit-test databases created before the migration simply have no cache yet.
-        return ''
+    return google_places.cached_report_address(lat, lon, dependencies=_places_dependencies())
 
 
 def refresh_report_addresses() -> None:
-    """Resolve old GPS-only records in the background; never delay PDF requests."""
-    with DB_LOCK, db() as con:
-        stops = [dict(r) for r in con.execute('SELECT latitude,longitude FROM trip_stops WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY id DESC')]
-        cached = {r['coordinate_key']: dict(r) for r in con.execute('SELECT * FROM report_addresses')}
-    pending = {}
-    for stop in stops:
-        lat, lon = float(stop['latitude']), float(stop['longitude'])
-        key = f'{lat:.5f},{lon:.5f}'
-        prior = cached.get(key)
-        if prior and (prior['address'] or time.time() - prior['checked_at'] < 86400):
-            continue
-        pending[key] = (lat, lon)
-    for key, (lat, lon) in list(pending.items())[:50]:
-        address = ''
-        try:
-            url = 'https://api.pdok.nl/bzk/locatieserver/search/v3_1/reverse?' + urlencode({
-                'lat': lat, 'lon': lon, 'type': 'adres', 'distance': 100, 'rows': 1,
-                'fl': 'straatnaam,huis_nlt,postcode,woonplaatsnaam',
-            })
-            docs = http_json(url, timeout=6).get('response', {}).get('docs', [])
-            if docs and all(docs[0].get(k) for k in ('straatnaam', 'huis_nlt', 'postcode', 'woonplaatsnaam')):
-                d = docs[0]
-                address = f'{d["straatnaam"]} {d["huis_nlt"]}, {d["postcode"]} {d["woonplaatsnaam"]}'
-        except Exception:
-            pass
-        with DB_LOCK, db() as con:
-            con.execute('INSERT OR REPLACE INTO report_addresses(coordinate_key,address,checked_at) VALUES(?,?,?)', (key, address, time.time()))
+    return google_places.refresh_report_addresses(dependencies=_places_dependencies())
 
 
 def _report_address_worker() -> None:
-    while True:
-        try:
-            refresh_report_addresses()
-        except Exception as exc:
-            print(f'Adresaanvulling: {type(exc).__name__}', flush=True)
-        time.sleep(30)
+    return google_places._report_address_worker(dependencies=_places_dependencies())
 
 
 def dutch_date(value: Any) -> str:
