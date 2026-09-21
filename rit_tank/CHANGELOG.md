@@ -1,5 +1,16 @@
 # Changelog
 
+## 10.00
+- PDF-generator geëxtraheerd naar `pdf_report.py`.
+- Google Places en geocoding geëxtraheerd naar `google_places.py`.
+- Route-afstandsberekening geëxtraheerd naar `routing.py`.
+- Home Assistant-integratie geëxtraheerd naar `home_assistant.py`.
+- Zakelijke ritlogica geëxtraheerd naar `trips.py`.
+- Ritassistent geëxtraheerd naar `assistant.py`.
+- `app.py` teruggebracht van circa 5.240 naar circa 3.100 regels.
+- Bestaande `app.*` compatibility-wrappers behouden.
+- Geen functionele, database-, API- of PDF-layoutwijzigingen bedoeld.
+
 ## 9.00
 - PDF-bovenmarge aangepast naar exact 25 mm vanaf bovenkant pagina.
 - Privé- en Zakelijk-badges in kolom Soort hebben nu dezelfde vaste breedte van 65 pt.

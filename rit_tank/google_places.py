@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 from urllib.parse import quote, urlencode
 
 
@@ -13,32 +13,32 @@ _GEOCODE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _GEOCODE_CACHE_TTL = 300.0
 
 
-def _provider(dependencies: Mapping[str, Callable[..., Any]], name: str) -> Callable[..., Any]:
+def _provider(dependencies: Mapping[str, Any], name: str) -> Any:
     provider = dependencies.get(name)
     if provider is None:
         raise RuntimeError(f'Google Places dependency ontbreekt: {name}')
     return provider
 
 
-def places_key(*, dependencies: Mapping[str, Callable[..., Any]]) -> str:
+def places_key(*, dependencies: Mapping[str, Any]) -> str:
     return str(_provider(dependencies, 'load_options')().get('google_places_api_key') or '').strip()
 
 
-def places_radius_m(*, dependencies: Mapping[str, Callable[..., Any]]) -> int:
+def places_radius_m(*, dependencies: Mapping[str, Any]) -> int:
     try:
         return max(100, min(5000, int(_provider(dependencies, 'load_options')().get('places_radius_m') or 1800)))
     except Exception:
         return 1800
 
 
-def places_max_results(*, dependencies: Mapping[str, Callable[..., Any]]) -> int:
+def places_max_results(*, dependencies: Mapping[str, Any]) -> int:
     try:
         return max(1, min(20, int(_provider(dependencies, 'load_options')().get('places_max_results') or 8)))
     except Exception:
         return 8
 
 
-def google_nearby(lat: float, lon: float, *, dependencies: Mapping[str, Callable[..., Any]]) -> list[dict[str, Any]]:
+def google_nearby(lat: float, lon: float, *, dependencies: Mapping[str, Any]) -> list[dict[str, Any]]:
     key = places_key(dependencies=dependencies)
     if not key:
         raise ValueError('Google Places API-key ontbreekt. Vul hem in bij de app-configuratie.')
@@ -83,7 +83,7 @@ def google_nearby(lat: float, lon: float, *, dependencies: Mapping[str, Callable
     return out
 
 
-def google_places_text_search(query: str, *, dependencies: Mapping[str, Callable[..., Any]]) -> list[dict[str, Any]]:
+def google_places_text_search(query: str, *, dependencies: Mapping[str, Any]) -> list[dict[str, Any]]:
     """
     Zoek adressen op vrije tekst (voor handmatige adrescorrectie).
     Gebruikt Places API v1 Text Search en levert kandidaten met
@@ -126,7 +126,7 @@ def google_places_text_search(query: str, *, dependencies: Mapping[str, Callable
     return out
 
 
-def google_place_details(place_id: str, *, dependencies: Mapping[str, Callable[..., Any]]) -> dict[str, Any] | None:
+def google_place_details(place_id: str, *, dependencies: Mapping[str, Any]) -> dict[str, Any] | None:
     place_id = (place_id or '').strip()
     key = places_key(dependencies=dependencies)
     if not place_id or not key:
@@ -159,7 +159,7 @@ def google_place_details(place_id: str, *, dependencies: Mapping[str, Callable[.
 
 
 
-def google_reverse_geocode(lat: float, lon: float, *, dependencies: Mapping[str, Callable[..., Any]]) -> dict[str, Any]:
+def google_reverse_geocode(lat: float, lon: float, *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
     key = places_key(dependencies=dependencies)
     if not key:
         return {
@@ -223,7 +223,7 @@ def google_reverse_geocode(lat: float, lon: float, *, dependencies: Mapping[str,
         }
 
 
-def nearby_house_numbers(lat: float, lon: float, *, dependencies: Mapping[str, Callable[..., Any]]) -> dict[str, Any]:
+def nearby_house_numbers(lat: float, lon: float, *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
     """Use real BAG addresses, never manufacture house numbers from GPS."""
     base = 'https://api.pdok.nl/bzk/locatieserver/search/v3_1/'
     fields = 'id,weergavenaam,straatnaam,woonplaatsnaam,openbareruimte_id,huis_nlt,centroide_ll,afstand'
@@ -260,7 +260,7 @@ def nearby_house_numbers(lat: float, lon: float, *, dependencies: Mapping[str, C
         raise ValueError('Huisnummers konden niet worden opgehaald. Probeer opnieuw of vul het adres handmatig in.') from None
 
 
-def cached_report_address(lat: float, lon: float, *, dependencies: Mapping[str, Callable[..., Any]]) -> str:
+def cached_report_address(lat: float, lon: float, *, dependencies: Mapping[str, Any]) -> str:
     try:
         with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
             row = con.execute('SELECT address FROM report_addresses WHERE coordinate_key=?', (f'{lat:.5f},{lon:.5f}',)).fetchone()
@@ -270,7 +270,7 @@ def cached_report_address(lat: float, lon: float, *, dependencies: Mapping[str, 
         return ''
 
 
-def refresh_report_addresses(*, dependencies: Mapping[str, Callable[..., Any]]) -> None:
+def refresh_report_addresses(*, dependencies: Mapping[str, Any]) -> None:
     """Resolve old GPS-only records in the background; never delay PDF requests."""
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
         stops = [dict(r) for r in con.execute('SELECT latitude,longitude FROM trip_stops WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY id DESC')]
@@ -300,11 +300,10 @@ def refresh_report_addresses(*, dependencies: Mapping[str, Callable[..., Any]]) 
             con.execute('INSERT OR REPLACE INTO report_addresses(coordinate_key,address,checked_at) VALUES(?,?,?)', (key, address, time.time()))
 
 
-def _report_address_worker(*, dependencies: Mapping[str, Callable[..., Any]]) -> None:
+def _report_address_worker(*, dependencies: Mapping[str, Any]) -> None:
     while True:
         try:
             refresh_report_addresses(dependencies=dependencies)
         except Exception as exc:
             print(f'Adresaanvulling: {type(exc).__name__}', flush=True)
         time.sleep(30)
-
