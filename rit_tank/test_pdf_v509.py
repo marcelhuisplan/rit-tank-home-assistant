@@ -33,23 +33,25 @@ class PdfTests(unittest.TestCase):
     def test_month_and_boundary(self):
         data, name = app.business_pdf('month', '2026', '1')
         self.assertEqual(name, 'rittenregistratie_2026-01.pdf')
-        self.assertIn(b'Grensrit', data)
-        self.assertNotIn(b'Septemberbezoek', data)
+        # 'Grensrit' (purpose) is no longer rendered in the compact 8.00 table;
+        # use the trip's own rendered date to confirm period filtering instead.
+        self.assertIn(b'31-01-2026', data)
+        self.assertNotIn(b'19-09-2026', data)
         data, _ = app.business_pdf('month', '2026', '2')
         self.assertIn(b'Geen ritten', data)
 
     def test_year_sorted_unique(self):
         data, name = app.business_pdf('year', '2026')
         self.assertEqual(name, 'rittenregistratie_2026.pdf')
-        self.assertLess(data.index(b'Grensrit'), data.index(b'Septemberbezoek'))
-        self.assertEqual(data.count(b'Grensrit'), 1)
-        self.assertNotIn(b'Nieuwjaar', data)
-        self.assertIn(b'Januari 2026', data)
-        self.assertIn(b'September 2026', data)
-        self.assertNotIn(b'Februari 2026', data)
+        self.assertLess(data.index(b'31-01-2026'), data.index(b'19-09-2026'))
+        self.assertEqual(data.count(b'31-01-2026'), 1)
+        self.assertNotIn(b'01-01-2027', data)
+        # The 8.00 redesign renders a single continuous table (no per-month section
+        # headings), so 'Januari 2026'/'September 2026'/'Februari 2026' heading
+        # checks no longer apply; date-based filtering is verified above instead.
 
     def test_other_year_and_empty(self):
-        self.assertIn(b'Nieuwjaar', app.business_pdf('year', '2027')[0])
+        self.assertIn(b'01-01-2027', app.business_pdf('year', '2027')[0])
         self.assertIn(b'Geen ritten', app.business_pdf('year', '2028')[0])
 
     def test_invalid_period_parameters(self):
