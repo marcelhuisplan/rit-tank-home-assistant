@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import csv
+from contextlib import contextmanager
 import hashlib
 import html
 import hmac
@@ -37,7 +38,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '5.0.10'
+APP_VERSION = '5.0.11'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -204,13 +205,21 @@ def iso_local(dt: datetime | None = None) -> str:
     return (dt or now_local()).replace(microsecond=0).isoformat()
 
 
-def db() -> sqlite3.Connection:
+@contextmanager
+def db():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_PATH, timeout=15)
     con.row_factory = sqlite3.Row
     con.execute('PRAGMA journal_mode=WAL')
     con.execute('PRAGMA foreign_keys=ON')
-    return con
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def init_db() -> None:
@@ -827,7 +836,10 @@ def ha_request(method: str, path: str, payload: dict[str, Any] | None = None, ti
                 return {}
             return json.loads(raw.decode('utf-8'))
     except Exception as exc:
-        raise ValueError(f'Home Assistant API niet beschikbaar: {exc}')
+        detail = str(exc)
+        if token:
+            detail = detail.replace(token, '[redacted]')
+        raise ValueError(f'Home Assistant API niet beschikbaar: {detail}')
 
 
 def ha_get(path: str) -> Any:
@@ -3122,17 +3134,15 @@ def edit_business_trip(trip_id: int, payload: dict[str, Any]) -> dict[str, Any]:
 
 def delete_business_trip(trip_id: int) -> None:
     with DB_LOCK, db() as con:
-        snapshot=_snapshot_trip(con,trip_id); ids=[r['event_id'] for r in con.execute('SELECT event_id FROM trip_stops WHERE trip_id=? AND event_id IS NOT NULL',(trip_id,))]
-        for event_id in ids: con.execute('DELETE FROM events WHERE id=?',(event_id,))
-        con.execute('DELETE FROM business_trips WHERE id=?',(trip_id,)); audit('delete','trip',trip_id,snapshot,con=con); con.commit()
-    publish_sensors_async()
-
-def delete_business_trip(trip_id: int) -> None:
-    with DB_LOCK, db() as con:
-        ids = [r['event_id'] for r in con.execute('SELECT event_id FROM trip_stops WHERE trip_id=? AND event_id IS NOT NULL', (trip_id,))]
+        snapshot = _snapshot_trip(con, trip_id)
+        ids = [r['event_id'] for r in con.execute(
+            'SELECT event_id FROM trip_stops WHERE trip_id=? AND event_id IS NOT NULL',
+            (trip_id,)
+        )]
         for event_id in ids:
             con.execute('DELETE FROM events WHERE id=?', (event_id,))
         con.execute('DELETE FROM business_trips WHERE id=?', (trip_id,))
+        audit('delete', 'trip', trip_id, snapshot, con=con)
         con.commit()
     publish_sensors_async()
 

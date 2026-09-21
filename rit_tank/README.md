@@ -1,4 +1,4 @@
-# Rit & Tank 5.0.9
+# Rit & Tank 5.0.11
 
 PDF-ritregistratie staat als grote knop op het beginscherm. Kies maand en jaar, of Heel jaar, en druk op OK. Een jaarrapport bevat alleen maanden met ritten, chronologisch en per maand gegroepeerd. Ritten horen bij hun vertrekmaand, ook als de aankomst in de volgende maand valt. Opgeslagen adressen worden gebruikt zonder externe adresopvraging; ontbrekende adressen worden als coördinaten getoond. Openen/afdrukken, downloaden en delen blijven beschikbaar (delen afhankelijk van apparaat/browser).
 
@@ -10,6 +10,6 @@ Versie 5.0.7 verbetert tankbonscans, voegt huisnummerkeuze toe, bewaart de locat
 
 iOS-achtergrondlocaties komen op wisselende momenten binnen; een stopmelding precies tien seconden na fysieke aankomst is niet gegarandeerd.
 
-Gebruik je al de lokale app? Lees eerst `MIGRATIE.md` in de hoofdmap van deze repository. Gegevens worden niet automatisch overgezet en de meldingslinks vragen nog aanpassing aan de nieuwe appidentiteit.
+Gebruik je al de lokale app? Lees eerst [`DOCS.md`](DOCS.md) voor de installatie- en update-instructies. Gegevens worden niet automatisch overgezet en de meldingslinks vragen nog aanpassing aan de nieuwe appidentiteit.
 
 Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijzigingen. Er zijn 18 offline backendtests en JavaScript-logicatests; een installatie- en iPhone-test volgen op het doelapparaat.
