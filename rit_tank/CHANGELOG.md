@@ -1,5 +1,10 @@
 # Changelog
 
+## 11.00
+- Home Assistant Docker-image bevat nu alle in 10.00 geëxtraheerde runtime-modules.
+- Hierdoor kan app.py de nieuwe modules tijdens add-on startup importeren.
+- Geen functionele wijzigingen.
+
 ## 10.00
 - PDF-generator geëxtraheerd naar `pdf_report.py`.
 - Google Places en geocoding geëxtraheerd naar `google_places.py`.

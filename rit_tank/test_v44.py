@@ -122,7 +122,7 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(len(snapshot['stops']), len(event_ids))
 
     def test_current_version_is_consistent_across_runtime_and_docs(self):
-        version = '10.00'
+        version = '11.00'
         root = Path(__file__).parent
         self.assertEqual(app.APP_VERSION, version)
         self.assertRegex((root / 'config.yaml').read_text(encoding='utf-8'), rf"(?m)^version: ['\"]{re.escape(version)}['\"]$")
