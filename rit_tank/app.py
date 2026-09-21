@@ -808,7 +808,7 @@ def trip_location_details(stop: dict[str, Any], resolve: bool = True) -> dict[st
     if address:
         name = str(kp.get('name') or '') if kp else ''
         label = (name + ' - ' if name else '') + address
-        return {'label': label, 'address': label + ' (GPS-adres; huisnummer controleren)', 'google_maps_uri': f'https://www.google.com/maps/search/?api=1&query={lat},{lon}'}
+        return {'label': label, 'address': label, 'google_maps_uri': f'https://www.google.com/maps/search/?api=1&query={lat},{lon}'}
     if kp:
         maps = f'https://www.google.com/maps/search/?api=1&query={lat},{lon}' if lat is not None and lon is not None else ''
         return {'label': str(kp.get('name') or 'Bekende plek'), 'address': str(kp.get('name') or ''), 'google_maps_uri': maps}
