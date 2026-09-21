@@ -1,5 +1,8 @@
 # Changelog
 
+## 6.0.0
+- Nieuwe major release op basis van de reeds gemergede runtime-, database-, ritverwijderings- en versieconsistentieverbeteringen.
+
 ## 5.0.11
 - SQLite-verbindingen worden correct gecommit of teruggedraaid en daarna gesloten.
 - Home Assistant API-foutmeldingen lekken de Supervisor-token niet.
