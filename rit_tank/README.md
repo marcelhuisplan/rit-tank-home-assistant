@@ -1,4 +1,4 @@
-# Rit & Tank 10.00
+# Rit & Tank 11.00
 
 De applicatie is intern opgesplitst in featuremodules voor PDF, Google Places, routing, Home Assistant, zakelijke ritten en ritassistent.
 
@@ -20,7 +20,7 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **10.00**.
-- Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
-- Volgende release: **11.00**, daarna 12.00, 13.00, enzovoort.
+- Huidige release: **11.00**.
+- Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
+- Volgende release: **12.00**, daarna 13.00, enzovoort.
 - Dit is een **handmatig** releasebeleid: het versienummer (`APP_VERSION` in `app.py`, `version` in `config.yaml`, de titels in `README.md`/`DOCS.md`) wordt alleen door een expliciete, door de eigenaar aangevraagde wijziging opgehoogd. De applicatie verhoogt dit nummer nooit automatisch tijdens runtime.
