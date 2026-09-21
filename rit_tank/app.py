@@ -38,7 +38,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '8.00'
+APP_VERSION = '9.00'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -3494,6 +3494,14 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     report_period_main = label if label else '-'
     report_period_range = f'{period_start:%d-%m-%Y} t/m {period_end:%d-%m-%Y}' if period_start and period_end else ''
 
+    MM_TO_PT = 72 / 25.4
+    TOP_MARGIN_MM = 25
+    TOP_MARGIN_PT = TOP_MARGIN_MM * MM_TO_PT
+    PAGE_HEIGHT_PT = 842
+    HEADER_TOP_Y = PAGE_HEIGHT_PT - TOP_MARGIN_PT
+
+    BADGE_WIDTH = 65
+
     palette = {
         'text': (12, 15, 18),
         'muted': (151, 167, 180),
@@ -3524,19 +3532,27 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     pages: list[_SimplePdfPage] = []
 
     def draw_header(page: _SimplePdfPage, compact: bool = False) -> None:
-        title_y = 688 if not compact else 691
-        subtitle_y = 670 if not compact else 672
+        if not compact:
+            title_y = HEADER_TOP_Y
+            subtitle_y = HEADER_TOP_Y - 18
+            logo_y = HEADER_TOP_Y - 43
+            header_line_y = HEADER_TOP_Y - 52
+            page_y_after = HEADER_TOP_Y - 72
+        else:
+            title_y = 691
+            subtitle_y = 672
+            logo_y = 653
+            header_line_y = 642
+            page_y_after = 624
         logo_w = 46 if not compact else 40
         logo_h = 42 if not compact else 36
         logo_x = 489 if not compact else 515
-        logo_y = 645 if not compact else 653
         page.text('Rittenregistratie', 36, title_y, 26 if not compact else 15, bold=True, rgb=palette['text'])
         page.text('Fiscale kilometeradministratie', 36, subtitle_y, 9.3 if not compact else 8.4, rgb=palette['muted'])
         if 'ImLogo' in pdf_images:
             page.image('ImLogo', logo_x, logo_y, logo_w, logo_h)
-        header_line_y = 636 if not compact else 642
         page.line(36, header_line_y, 559, header_line_y, 0.8, rgb=tint(palette['line'], 0.35))
-        page.y = 616 if not compact else 624
+        page.y = page_y_after
 
     def draw_field_icon(page: _SimplePdfPage, kind: str, x: float, y: float) -> None:
         """Draw a small (~9x9pt) vector glyph to the left of a report-info label."""
@@ -3564,7 +3580,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
 
     def draw_report_table(page: _SimplePdfPage) -> None:
         table_top = page.y
-        row_h = 38
+        row_h = 44
         left_x, right_x = 48, 304
         page.rounded_rect(36, table_top - row_h * 3, 523, row_h * 3, radius=5, rgb=palette['card'])
         for i in range(4):
@@ -3584,8 +3600,8 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
                 draw_field_icon(page, icon, icon_x, baseline + 11)
                 page.text(key.upper(), text_x, baseline, 7.2, bold=True, rgb=palette['muted'])
                 if key == 'Rapportperiode':
-                    page.text(report_period_main, text_x, baseline - 13, 9.2, bold=(row_idx == 0), rgb=palette['text'])
-                    page.text(report_period_range, text_x, baseline - 24, 7.6, rgb=palette['muted'])
+                    page.text(report_period_main, text_x, baseline - 12, 9.2, bold=(row_idx == 0), rgb=palette['text'])
+                    page.text(report_period_range, text_x, baseline - 26, 7, rgb=palette['muted'])
                     continue
                 value_lines = _SimplePdfPage.wrap_lines(value, width - 14, 9.2)[:2]
                 for line_idx, line in enumerate(value_lines):
@@ -3700,7 +3716,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         page.circle(182, y_top - 26, 4.3, rgb=(244, 67, 54))
         page.text(end_addr[:44], 202, y_top - 29, 9.5, rgb=palette['text'])
 
-        badge_w = 15 + _SimplePdfPage.text_width(trip_label, 8.5, bold=False)
+        badge_w = BADGE_WIDTH
         page.rounded_rect(423, mid_y - 8, badge_w, 16, radius=8, rgb=tint(trip_color, 0.87))
         page.circle(432, mid_y, 3.4, rgb=trip_color)
         page.text(trip_label, 449, mid_y - 2.9, 8.5, rgb=trip_color)
