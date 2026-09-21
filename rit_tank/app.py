@@ -406,6 +406,7 @@ def init_db() -> None:
             ('corrected_destination_longitude', 'REAL'),
             ('corrected_destination_label', 'TEXT'),
             ('corrected_destination_distance_m', 'REAL'),
+            ('corrected_destination_place_id', 'TEXT'),
             ('destination_distance_source', 'TEXT'),
             ('destination_manually_corrected', 'INTEGER DEFAULT 0')
         ):
@@ -601,6 +602,49 @@ def google_nearby(lat: float, lon: float) -> list[dict[str, Any]]:
             'longitude': plon,
             'distance_m': round(distance) if distance is not None else None,
             'google_maps_uri': (f"https://www.google.com/maps/search/?api=1&query={plat},{plon}&query_place_id={quote(str(p.get('id') or ''), safe='')}" if plat is not None and plon is not None else ''),
+        })
+    return out
+
+
+def google_places_text_search(query: str) -> list[dict[str, Any]]:
+    """
+    Zoek adressen op vrije tekst (voor handmatige adrescorrectie).
+    Gebruikt Places API v1 Text Search en levert kandidaten met
+    place_id, naam, adres en coördinaten voor een selectielijst in de UI.
+    """
+    q = (query or '').strip()
+    if not q:
+        return []
+    key = places_key()
+    if not key:
+        raise ValueError('Google Places API-key ontbreekt. Vul hem in bij de app-configuratie.')
+    payload = {
+        'textQuery': q,
+        'languageCode': 'nl',
+        'regionCode': 'NL',
+        'maxResultCount': 8,
+    }
+    data = http_json(
+        'https://places.googleapis.com/v1/places:searchText',
+        method='POST', payload=payload,
+        headers={
+            'X-Goog-Api-Key': key,
+            'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
+        }, timeout=10,
+    )
+    out = []
+    for p in data.get('places', []) or []:
+        loc = p.get('location') or {}
+        lat = to_float(loc.get('latitude'))
+        lon = to_float(loc.get('longitude'))
+        if lat is None or lon is None:
+            continue
+        out.append({
+            'place_id': str(p.get('id') or ''),
+            'name': str((p.get('displayName') or {}).get('text') or ''),
+            'address': str(p.get('formattedAddress') or ''),
+            'latitude': lat,
+            'longitude': lon,
         })
     return out
 
@@ -1705,14 +1749,38 @@ def advance_draft_route(runtime: dict[str, Any], lat: float, lon: float, accurac
 
 
 def arrival_proposal(row: dict[str, Any]) -> dict[str, Any]:
-    snapshot = assistant_state_get(f'arrival_route_{row["id"]}', {}) or {}
+    """
+    Voorstel voor eindtellerstand van dit ritvoorstel.
+
+    Als de bestemming handmatig is gecorrigeerd (destination_manually_corrected)
+    en er een corrected_destination_distance_m bekend is, wordt DIE afstand
+    gebruikt in plaats van de oorspronkelijke (mogelijk foutieve) GPS-tracking
+    naar de oude bestemming:
+      - bron 'route' (echte Google-wegafstand): GEEN GPS-kalibratiefactor
+        toepassen, die factor is alleen bedoeld om ruwe telefoon-GPS-afstand
+        te corrigeren, niet een al nauwkeurige wegafstand;
+      - bron 'gps': de bestaande GPS-kalibratie/leerlogica blijft gelden.
+    """
     base = latest_odometer_before(row.get('departure_at') or row['detected_at'])
-    raw_km = float(snapshot.get('route_m') or 0) / 1000
     calibration = distance_calibration()
+    corrected_m = to_float(row.get('corrected_destination_distance_m'))
+    if row.get('destination_manually_corrected') and corrected_m is not None:
+        corrected_km = corrected_m / 1000
+        source = str(row.get('destination_distance_source') or 'gps')
+        usable = bool(base is not None and corrected_km > 0)
+        if source == 'route':
+            suggested = round(base + corrected_km) if usable else None
+        else:
+            suggested = round(base + corrected_km * calibration['factor']) if usable else None
+        return {'start_odometer': base, 'gps_km': round(corrected_km, 2),
+                'suggested_odometer': suggested, 'route_complete': usable,
+                'calibration': calibration, 'distance_source': source}
+    snapshot = assistant_state_get(f'arrival_route_{row["id"]}', {}) or {}
+    raw_km = float(snapshot.get('route_m') or 0) / 1000
     usable = bool(base is not None and raw_km > 0 and int(snapshot.get('route_samples') or 0) >= 3 and not snapshot.get('route_incomplete'))
     return {'start_odometer': base, 'gps_km': round(raw_km, 2),
             'suggested_odometer': round(base + raw_km * calibration['factor']) if usable else None,
-            'route_complete': usable, 'calibration': calibration}
+            'route_complete': usable, 'calibration': calibration, 'distance_source': 'gps'}
 
 
 def zone_icon(category: str) -> str:
@@ -1816,7 +1884,14 @@ def assistant_arrivals(limit: int = 12, include_done: bool = False) -> list[dict
         origin = known_place_by_id(r.get('origin_known_place_id'))
         dest = known_place_by_id(r.get('destination_known_place_id'))
         r['origin_name'] = (origin or {}).get('name') or 'Onbekende vertrekplek'
-        r['destination_name'] = (dest or {}).get('name') or r.get('destination_label') or 'Onbekende bestemming'
+        effective = _assistant_arrival_effective_destination(r)
+        # Zodra de bestemming handmatig is gecorrigeerd, is DIE bestemming de
+        # actuele/hoofdbestemming in de UI (bv. "Thuis → Eikenlaan 8, Rijssen").
+        # De oorspronkelijke GPS-bestemming blijft alleen als audit-info
+        # beschikbaar via destination_label/destination_latitude/longitude.
+        r['destination_name'] = effective['label'] if effective['manually_corrected'] else (
+            (dest or {}).get('name') or r.get('destination_label') or 'Onbekende bestemming'
+        )
         r['suggested_type_label'] = trip_type_label(str(r.get('suggested_type') or '')) if r.get('suggested_type') else ''
         r['confirmed_type_label'] = trip_type_label(str(r.get('confirmed_type') or '')) if r.get('confirmed_type') else ''
         r['date_label'] = parse_dt(r['detected_at']).strftime('%d-%m %H:%M')
@@ -1958,71 +2033,232 @@ def dismiss_assistant_arrival(arrival_id: int) -> None:
         con.commit()
 
 
+def _assistant_arrival_effective_destination(r: dict[str, Any]) -> dict[str, Any]:
+    """
+    Bepaal de EFFECTIEVE bestemming van dit ritvoorstel: de bestemming die
+    consequent gebruikt moet worden bij het definitief opslaan (nieuwe
+    automatische rit, aankomst aan actieve rit, trip_stop, PDF,
+    rittenoverzicht, ...).
+
+    Als de gebruiker de bestemming handmatig heeft gecorrigeerd
+    (destination_manually_corrected=1 met geldige corrected_destination_*
+    coördinaten), is de gecorrigeerde bestemming leidend. De oorspronkelijke
+    (mogelijk foutieve) GPS-bestemming wordt uitsluitend als audit-informatie
+    teruggegeven (original_latitude/original_longitude/original_label) en
+    NOOIT opnieuw als actuele aankomst opgeslagen.
+    """
+    corrected_lat = to_float(r.get('corrected_destination_latitude'))
+    corrected_lon = to_float(r.get('corrected_destination_longitude'))
+    original_lat = to_float(r.get('destination_latitude'))
+    original_lon = to_float(r.get('destination_longitude'))
+    original_label = str(r.get('destination_label') or '').strip() or None
+    manually_corrected = bool(r.get('destination_manually_corrected')) and corrected_lat is not None and corrected_lon is not None
+    if manually_corrected:
+        return {
+            'latitude': corrected_lat,
+            'longitude': corrected_lon,
+            'label': str(r.get('corrected_destination_label') or '').strip() or original_label,
+            'place_id': str(r.get('corrected_destination_place_id') or '').strip() or None,
+            'distance_m': to_float(r.get('corrected_destination_distance_m')),
+            'distance_source': str(r.get('destination_distance_source') or 'gps'),
+            'manually_corrected': True,
+            'original_latitude': original_lat,
+            'original_longitude': original_lon,
+            'original_label': original_label,
+        }
+    return {
+        'latitude': original_lat,
+        'longitude': original_lon,
+        'label': original_label,
+        'place_id': None,
+        'distance_m': None,
+        'distance_source': None,
+        'manually_corrected': False,
+        'original_latitude': None,
+        'original_longitude': None,
+        'original_label': None,
+    }
+
+
+def _assistant_arrival_origin_coords(r: dict[str, Any]) -> tuple[float, float] | None:
+    """
+    Bepaal de meest betrouwbare vertreklocatie die bij dit ritvoorstel hoort.
+    Dit is dezelfde bron die _complete_assistant_arrival() gebruikt om het
+    startpunt van de rit vast te leggen, zodat de route-oorsprong hier
+    consistent is met de uiteindelijk opgeslagen rit:
+      1. De laatste stop van een nog actieve zakelijke rit (indien aanwezig).
+      2. De bekende vertrekplek (origin_known_place_id) die bij het
+         voorstel is vastgelegd toen het werd aangemaakt.
+    Er wordt bewust GEEN gebruik gemaakt van een timestamp-match op
+    trip_stops.created_at<=departure_at: in echte data valt dat niet
+    gegarandeerd samen met de daadwerkelijke vertrekstop.
+    Retourneert None als er geen betrouwbare vertreklocatie is; de aanroeper
+    mag dan NOOIT (0,0) of de oude bestemming als origin gebruiken.
+    """
+    active = active_business_trip()
+    if active and active.get('stops'):
+        last_stop = active['stops'][-1]
+        lat = to_float(last_stop.get('latitude'))
+        lon = to_float(last_stop.get('longitude'))
+        if lat is not None and lon is not None:
+            return lat, lon
+    origin_place = known_place_by_id(r.get('origin_known_place_id'))
+    if origin_place:
+        lat = to_float(origin_place.get('latitude'))
+        lon = to_float(origin_place.get('longitude'))
+        if lat is not None and lon is not None:
+            return lat, lon
+    return None
+
+
+def _assistant_arrival_destination_distance(r: dict[str, Any], arrival_id: int, dest_lat: float, dest_lon: float) -> dict[str, Any]:
+    """
+    Bereken de routeafstand van de betrouwbare vertreklocatie van dit
+    ritvoorstel naar de (nieuw gekozen) bestemming. Gedeelde logica voor
+    zowel de niet-muterende preview als de daadwerkelijke correctie, zodat
+    beide gegarandeerd dezelfde oorsprong (nooit de oude bestemming, nooit
+    (0,0)) en dezelfde afstand opleveren.
+
+    Als de Google Routes-call mislukt of niet beschikbaar is, wordt de
+    hemelsbrede (haversine) afstand die get_route_distance() dan intern
+    berekent NOOIT gebruikt als vervanging voor een werkelijk gereden
+    GPS-routeafstand. In plaats daarvan wordt teruggevallen op de al bekende,
+    door de telefoon gemeten afstand (arrival_route_<id>.route_m); is die er
+    niet, dan is de afstand expliciet onbekend (None) met bron 'gps'.
+    """
+    origin_coords = _assistant_arrival_origin_coords(r)
+    if origin_coords is not None:
+        origin_lat, origin_lon = origin_coords
+        route_info = get_route_distance(origin_lat, origin_lon, dest_lat, dest_lon)
+        if route_info.get('type') == 'route':
+            distance_m = route_info.get('distance_m')
+            distance_source = 'route'
+        else:
+            # De Google Routes-call is mislukt of niet beschikbaar. get_route_distance()
+            # valt dan intern terug op een hemelsbrede (haversine) afstand tussen origin
+            # en bestemming — dat is GEEN werkelijk gereden afstand en mag NOOIT als
+            # GPS-routeafstand worden gepresenteerd. Gebruik in plaats daarvan de al
+            # bekende, door de telefoon gemeten GPS-afstand voor dit voorstel (dezelfde
+            # bron als arrival_proposal()). Is die er niet, dan is de afstand onbekend.
+            snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
+            distance_m = to_float(snapshot.get('route_m'))
+            distance_source = 'gps'
+    else:
+        origin_lat = origin_lon = None
+        # Geen betrouwbare vertreklocatie beschikbaar: bereken GEEN fictieve
+        # route vanaf (0,0) en gebruik de oude bestemming NIET als vertrekpunt.
+        # Val terug op de al bekende, door de telefoon gemeten GPS-afstand
+        # voor dit voorstel (dezelfde bron als arrival_proposal()), en
+        # markeer de bron expliciet als 'gps'.
+        snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
+        distance_m = to_float(snapshot.get('route_m'))
+        distance_source = 'gps'
+    return {
+        'distance_m': distance_m,
+        'distance_source': distance_source,
+        'origin_latitude': origin_lat,
+        'origin_longitude': origin_lon,
+        'origin_available': origin_coords is not None,
+    }
+
+
+def preview_assistant_arrival_destination(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Niet-muterende preview van een bestemmingscorrectie. Berekent de
+    routeafstand (oorspronkelijke vertreklocatie -> nieuw gekozen bestemming,
+    NOOIT vanaf de oude bestemming) en de bijbehorende voorgestelde
+    eindtellerstand, zonder enig databaseveld te wijzigen.
+    """
+    with DB_LOCK, db() as con:
+        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
+    if not row:
+        raise ValueError('Ritsuggestie niet gevonden.')
+    r = dict(row)
+    if r.get('status') not in ('pending', 'confirmed'):
+        raise ValueError('Deze ritsuggestie kan niet meer worden aangepast.')
+
+    dest_lat = to_float(payload.get('latitude'))
+    dest_lon = to_float(payload.get('longitude'))
+    if dest_lat is None or dest_lon is None:
+        raise ValueError('Ongeldige doelcoördinaten.')
+    if not (-90 <= dest_lat <= 90) or not (-180 <= dest_lon <= 180):
+        raise ValueError('Doelcoördinaten buiten bereik.')
+
+    distance = _assistant_arrival_destination_distance(r, arrival_id, dest_lat, dest_lon)
+    distance_m = distance['distance_m']
+    distance_source = distance['distance_source']
+
+    base = latest_odometer_before(r.get('departure_at') or r.get('detected_at'))
+    calibration = distance_calibration()
+    suggested_odometer = None
+    if base is not None and distance_m is not None and distance_m > 0:
+        km = distance_m / 1000
+        if distance_source == 'route':
+            suggested_odometer = round(base + km)
+        else:
+            suggested_odometer = round(base + km * calibration['factor'])
+
+    return {
+        'distance_m': round(distance_m) if distance_m is not None else None,
+        'distance_source': distance_source,
+        'start_odometer': base,
+        'suggested_odometer': suggested_odometer,
+        'origin_available': distance['origin_available'],
+    }
+
+
 def correct_assistant_arrival_destination(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     """
     Handmatig corrigeer de gesuggeerde bestemming van een automatisch voorstel.
     Recalculeer de afstand en bijgewerkte tellerstand.
+
+    BELANGRIJK: de routeafstand loopt ALTIJD van de oorspronkelijke
+    vertreklocatie van het ritvoorstel naar de NIEUW gekozen bestemming.
+    De oude (foutieve) voorgestelde bestemming wordt nooit als route-origin
+    gebruikt — die dient uitsluitend als audit-informatie ('original_destination').
     """
     with DB_LOCK, db() as con:
         row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
-    
+
     if not row:
         raise ValueError('Ritsuggestie niet gevonden.')
-    
+
     r = dict(row)
+    # 'confirmed' betekent alleen dat privé/zakelijk is gekozen; er is dan nog
+    # GEEN business_trips/trip_stops-record aangemaakt (dat gebeurt pas bij
+    # complete_assistant_arrival(), waarna status 'completed' wordt). Zolang
+    # de rit niet 'completed' (definitief/fiscaal opgeslagen) is, mag de
+    # bestemming dus nog worden gecorrigeerd.
     if r.get('status') not in ('pending', 'confirmed'):
         raise ValueError('Deze ritsuggestie kan niet meer worden aangepast.')
-    
+
     # Parse corrected destination
     dest_lat = to_float(payload.get('latitude'))
     dest_lon = to_float(payload.get('longitude'))
     dest_label = str(payload.get('address') or '').strip()[:180]
-    dest_place_id = payload.get('place_id')
-    
+    dest_place_id = str(payload.get('place_id') or '').strip()[:255] or None
+
     if dest_lat is None or dest_lon is None:
         raise ValueError('Ongeldige doelcoördinaten.')
-    
+
     if not (-90 <= dest_lat <= 90) or not (-180 <= dest_lon <= 180):
         raise ValueError('Doelcoördinaten buiten bereik.')
-    
-    # Store original destination before correction
-    origin_lat = to_float(r.get('destination_latitude'))
-    origin_lon = to_float(r.get('destination_longitude'))
-    origin_label = str(r.get('destination_label') or '')
-    
-    # Calculate new route distance
-    route_info = get_route_distance(
-        float(r['destination_latitude']),
-        float(r['destination_longitude']),
-        float(dest_lat),
-        float(dest_lon)
-    ) if origin_lat and origin_lon else None
-    
-    # If we have a start point, calculate from there to new destination
-    if r.get('departure_at') and origin_lat and origin_lon:
-        # Use departure location as origin for the corrected route
-        departure_row = None
-        with DB_LOCK, db() as con:
-            # Try to find a trip stop near the departure time
-            departure_row = con.execute(
-                'SELECT latitude, longitude FROM trip_stops WHERE created_at<=? ORDER BY created_at DESC LIMIT 1',
-                (r.get('departure_at'),)
-            ).fetchone()
-        
-        if departure_row and departure_row['latitude'] and departure_row['longitude']:
-            route_info = get_route_distance(
-                float(departure_row['latitude']),
-                float(departure_row['longitude']),
-                float(dest_lat),
-                float(dest_lon)
-            )
-    
-    if not route_info:
-        route_info = {'type': 'gps', 'distance_m': haversine_m(origin_lat or 0, origin_lon or 0, dest_lat, dest_lon)}
-    
-    distance_m = route_info.get('distance_m', 0)
-    distance_source = route_info.get('type', 'gps')
-    
+
+    # Bewaar de oude (foutieve) bestemming en de oorspronkelijke GPS-afstand
+    # uitsluitend voor audit-doeleinden. Deze coördinaten mogen NOOIT als
+    # vertrekpunt voor de nieuwe route dienen.
+    old_dest_lat = to_float(r.get('destination_latitude'))
+    old_dest_lon = to_float(r.get('destination_longitude'))
+    old_dest_label = str(r.get('destination_label') or '')
+    original_snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
+    original_gps_distance_m = to_float(original_snapshot.get('route_m'))
+
+    distance = _assistant_arrival_destination_distance(r, arrival_id, dest_lat, dest_lon)
+    distance_m = distance['distance_m']
+    distance_source = distance['distance_source']
+    origin_lat = distance['origin_latitude']
+    origin_lon = distance['origin_longitude']
+
     # Update the assistant arrival with corrected destination
     with DB_LOCK, db() as con:
         con.execute('''
@@ -2031,23 +2267,32 @@ def correct_assistant_arrival_destination(arrival_id: int, payload: dict[str, An
                 corrected_destination_longitude=?,
                 corrected_destination_label=?,
                 corrected_destination_distance_m=?,
+                corrected_destination_place_id=?,
                 destination_distance_source=?,
                 destination_manually_corrected=1
             WHERE id=?
         ''', (
             dest_lat, dest_lon, dest_label,
-            round(distance_m),
+            round(distance_m) if distance_m is not None else None,
+            dest_place_id,
             distance_source,
             int(arrival_id)
         ))
         audit('assistant_correct_destination', 'assistant', int(arrival_id), {
-            'from': {'lat': origin_lat, 'lon': origin_lon, 'label': origin_label},
-            'to': {'lat': dest_lat, 'lon': dest_lon, 'label': dest_label},
-            'distance_m': round(distance_m),
-            'source': distance_source,
+            'original_destination': {
+                'lat': old_dest_lat, 'lon': old_dest_lon, 'label': old_dest_label,
+                'distance_m': round(original_gps_distance_m) if original_gps_distance_m is not None else None,
+            },
+            'corrected_destination': {
+                'lat': dest_lat, 'lon': dest_lon, 'label': dest_label, 'place_id': dest_place_id,
+                'distance_m': round(distance_m) if distance_m is not None else None,
+            },
+            'route_origin': {'lat': origin_lat, 'lon': origin_lon} if distance['origin_available'] else None,
+            'distance_source': distance_source,
+            'destination_manually_corrected': True,
         }, con=con)
         con.commit()
-    
+
     return next((x for x in assistant_arrivals(50, True) if int(x['id']) == int(arrival_id)), {})
 
 
@@ -2075,18 +2320,37 @@ def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any]) -> dic
         raise ValueError('Deze aankomst is ouder dan de laatste opgeslagen stop. Controleer de ritgeschiedenis.')
     if active and active.get('stops') and r.get('departure_at') and parse_dt(active['stops'][-1]['created_at']) > parse_dt(r['departure_at']):
         raise ValueError('Een deel van dit voorstel is al geregistreerd. Controleer de ritgeschiedenis.')
+    # Effectieve bestemming: als de gebruiker handmatig heeft gecorrigeerd,
+    # is de GECORRIGEERDE bestemming leidend voor wat definitief wordt
+    # opgeslagen. De oorspronkelijke (mogelijk foutieve) GPS-bestemming wordt
+    # nooit opnieuw als actuele aankomst gebruikt, maar blijft via
+    # trip_stops.original_destination_* en het audit-log herleidbaar.
+    dest = _assistant_arrival_effective_destination(r)
+    if dest['latitude'] is None or dest['longitude'] is None:
+        raise ValueError('Bestemming van deze aankomst is onbekend.')
     point = {
         'odometer': end_odo,
         'created_at': r['detected_at'],
-        'latitude': float(r['destination_latitude']),
-        'longitude': float(r['destination_longitude']),
-        'location_accuracy': to_float(r.get('destination_accuracy')),
+        'latitude': dest['latitude'],
+        'longitude': dest['longitude'],
+        'location_accuracy': to_float(r.get('destination_accuracy')) if not dest['manually_corrected'] else None,
         'location_source': 'background_assistant',
-        'place_id': None,
-        'manual_label': str(r.get('destination_label') or '')[:120] or None,
-        'note': 'Automatisch herkende aankomst',
-        'known_place_id': r.get('destination_known_place_id'),
+        'place_id': dest['place_id'],
+        'manual_label': str(dest['label'] or '')[:120] or None,
+        'note': 'Automatisch herkende aankomst' + (' (adres handmatig gecorrigeerd)' if dest['manually_corrected'] else ''),
+        'known_place_id': r.get('destination_known_place_id') if not dest['manually_corrected'] else None,
     }
+    destination_audit = None
+    if dest['manually_corrected']:
+        orig_snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
+        destination_audit = {
+            'original_latitude': dest['original_latitude'],
+            'original_longitude': dest['original_longitude'],
+            'original_address': dest['original_label'],
+            'original_distance_m': to_float(orig_snapshot.get('route_m')),
+            'distance_source': dest['distance_source'],
+            'manually_corrected': True,
+        }
     if active:
         result = add_business_stop({
             'odometer': end_odo,
@@ -2098,7 +2362,7 @@ def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any]) -> dic
             'manual_label': point['manual_label'],
             'note': point['note'],
             'segment_trip_type': trip_type,
-        }, finish=payload.get('finish') is True)
+        }, finish=payload.get('finish') is True, destination_audit=destination_audit)
         trip_id = int((result.get('trip') or {}).get('id') or active['id'])
     else:
         origin = known_place_by_id(r.get('origin_known_place_id'))
@@ -2147,13 +2411,22 @@ def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any]) -> dic
             ''', (start_at, r['detected_at'], 'Automatisch herkende rit', trip_type, iso_local()))
             trip_id = int(cur.lastrowid)
             _insert_trip_stop(con, trip_id, start_point, 0, 'Automatische rit start')
-            _insert_trip_stop(con, trip_id, point, 1, f'Automatische rit einde ({trip_type_label(trip_type)})', trip_type, suggestion)
+            _insert_trip_stop(con, trip_id, point, 1, f'Automatische rit einde ({trip_type_label(trip_type)})', trip_type, suggestion, destination_audit=destination_audit)
             remember_segment(start_point, point, trip_type, con=con)
-            audit('assistant_complete', 'trip', trip_id, {'assistant_arrival_id': int(arrival_id), 'trip_type': trip_type}, con=con)
+            audit('assistant_complete', 'trip', trip_id, {
+                'assistant_arrival_id': int(arrival_id), 'trip_type': trip_type,
+                'destination_manually_corrected': dest['manually_corrected'],
+                'effective_destination': {'lat': dest['latitude'], 'lon': dest['longitude'], 'label': dest['label']},
+                'original_destination': {'lat': dest['original_latitude'], 'lon': dest['original_longitude'], 'label': dest['original_label']} if dest['manually_corrected'] else None,
+            }, con=con)
             con.commit()
     with DB_LOCK, db() as con:
         snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
-        if not active and not snapshot.get('route_incomplete'):
+        # Alleen leren van de ruwe telefoon-GPS-tracking als de aankomst NIET
+        # handmatig is gecorrigeerd: de gemeten route liep dan naar de oude
+        # (foutieve) bestemming en komt niet meer overeen met de daadwerkelijk
+        # opgeslagen (gecorrigeerde) afstand, wat de kalibratie zou verstoren.
+        if not active and not snapshot.get('route_incomplete') and not dest['manually_corrected']:
             learn_distance(f'arrival:{arrival_id}', float(snapshot.get('route_m') or 0) / 1000,
                            end_odo - start_odo, int(snapshot.get('route_samples') or 0),
                            payload.get('odometer_checked') is True, con=con)
@@ -2709,8 +2982,10 @@ def _trip_point_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _insert_trip_stop(con: sqlite3.Connection, trip_id: int, point: dict[str, Any], sequence_no: int, event_note: str,
-                      segment_trip_type: str = '', suggestion: dict[str, Any] | None = None) -> int:
+                      segment_trip_type: str = '', suggestion: dict[str, Any] | None = None,
+                      destination_audit: dict[str, Any] | None = None) -> int:
     suggestion = suggestion or {}
+    destination_audit = destination_audit or {}
     seg_type = normalize_segment_type(segment_trip_type)
     suggested = normalize_segment_type(suggestion.get('suggested_type'))
     source = 'start' if sequence_no == 0 else ('user-confirmed' if suggested and seg_type == suggested else 'user-override' if suggested else 'manual')
@@ -2719,13 +2994,19 @@ def _insert_trip_stop(con: sqlite3.Connection, trip_id: int, point: dict[str, An
             trip_id,sequence_no,created_at,odometer,latitude,longitude,
             location_accuracy,location_source,place_id,manual_label,note,known_place_id,
             segment_trip_type,segment_suggested_type,segment_suggestion_reason,
-            segment_suggestion_confidence,segment_classification_source
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            segment_suggestion_confidence,segment_classification_source,
+            original_destination_latitude,original_destination_longitude,original_destination_address,
+            original_destination_distance_m,destination_distance_source,destination_manually_corrected
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ''', (
         trip_id, sequence_no, point['created_at'], point['odometer'], point['latitude'], point['longitude'],
         point['location_accuracy'], point['location_source'], point['place_id'], point['manual_label'], point['note'], point.get('known_place_id'),
         seg_type or None, suggested or None, str(suggestion.get('reason') or '')[:220] or None,
-        float(suggestion.get('confidence') or 0), source
+        float(suggestion.get('confidence') or 0), source,
+        destination_audit.get('original_latitude'), destination_audit.get('original_longitude'),
+        (str(destination_audit.get('original_address') or '')[:180] or None) if destination_audit.get('original_address') else None,
+        destination_audit.get('original_distance_m'), destination_audit.get('distance_source'),
+        1 if destination_audit.get('manually_corrected') else 0,
     ))
     stop_id = int(cur.lastrowid)
     ev = con.execute('''
@@ -2757,7 +3038,7 @@ def start_business_trip(payload: dict[str, Any]) -> dict[str, Any]:
     publish_sensors_async()
     return {'ok': True, 'trip': trip_now}
 
-def add_business_stop(payload: dict[str, Any], *, finish: bool = False) -> dict[str, Any]:
+def add_business_stop(payload: dict[str, Any], *, finish: bool = False, destination_audit: dict[str, Any] | None = None) -> dict[str, Any]:
     trip = active_business_trip()
     if not trip:
         raise ValueError('Er is geen actieve ritregistratie.')
@@ -2778,7 +3059,7 @@ def add_business_stop(payload: dict[str, Any], *, finish: bool = False) -> dict[
             raise ValueError('Kies of dit traject zakelijk of prive was.')
         seq = int(last['sequence_no']) + 1
         label = 'einde' if finish else 'stop'
-        stop_id = _insert_trip_stop(con, int(trip['id']), point, seq, f'Rit {label} ({trip_type_label(seg_type)})', seg_type, suggestion)
+        stop_id = _insert_trip_stop(con, int(trip['id']), point, seq, f'Rit {label} ({trip_type_label(seg_type)})', seg_type, suggestion, destination_audit=destination_audit)
         if (int(tracking.get('trip_id') or -1) == int(trip['id']) and
                 int(tracking.get('stop_id') or -1) == int(last['id']) and not tracking.get('incomplete') and
                 abs((parse_dt(point['created_at']) - now_local()).total_seconds()) < 300):
@@ -4015,7 +4296,7 @@ APP_HTML = r'''<!doctype html>
 [hidden]{display:none!important}.scan-card{display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;background:#19382f;border:1px solid #40836d;border-radius:18px;cursor:pointer;text-align:center}.scan-card>span{font-size:52px}.scan-card>b{font-size:20px}.scan-card small{color:var(--muted)}.address-choices .selected{outline:2px solid #65d9b0}.address-choices{display:grid;gap:6px;margin-top:12px}#receiptScanStatus{font-size:13px;line-height:1.5}#pdfModal .linkbtn{font:inherit} .export-actions{display:flex;gap:8px;align-items:center}.pdf-link{background:#17251f;border-color:#2d7158;color:#7de0b4}.export-actions .maplink{min-width:42px;text-align:center}.trip-type-pill{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:900;margin-top:4px}.trip-type-pill.business{background:#11382f;color:#6ce0b3}.trip-type-pill.private{background:#3b2028;color:#ff9bad}.trip-type-pill.mixed{background:#3b2f15;color:#ffd27a}.trip-actions{gap:7px}.editbtn{background:#172635;border:1px solid #2d5069;color:#8dd2ff;border-radius:10px;padding:6px 9px}.audit-list{display:flex;flex-direction:column;gap:7px}.audit-row{background:#10161b;border:1px solid #27323b;border-radius:13px;padding:10px}.audit-row b{font-size:12px}.audit-row small{display:block;color:var(--muted);font-size:10px;margin-top:3px}.tax-note{font-size:11px;line-height:1.35;color:#a8b5bf;background:#13191e;border:1px solid #2b3540;border-radius:13px;padding:10px;margin-top:9px}.receipt-link{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;background:#2a2117;border:1px solid #624821;color:#ffd28b;border-radius:11px;padding:8px 9px}.filepick{display:block;background:#0f1418;border:1px dashed #3b4a55;border-radius:14px;padding:12px}.filepick input{padding:0;border:0;background:transparent;font-size:13px}.fiscal-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 
 .smart-place-bar{display:flex;gap:8px;margin-top:10px}.smart-place-bar button{flex:1;border:1px solid #385064;background:#13212c;color:#9dd9ff;border-radius:14px;padding:11px;font-weight:900}.known-list{display:flex;flex-direction:column;gap:8px}.known-row{display:grid;grid-template-columns:42px 1fr auto;gap:10px;align-items:center;background:#10171c;border:1px solid #2b3841;border-radius:15px;padding:10px}.known-icon{font-size:24px;text-align:center}.known-row small{display:block;color:var(--muted);margin-top:2px;line-height:1.3}.known-actions{display:flex;gap:5px}.known-actions button{border:0;border-radius:10px;padding:7px 9px;background:#1c2b36;color:#a8dbff}.suggest-box{display:none;margin:12px 0;background:linear-gradient(145deg,#122b26,#112027);border:1px solid #2d8069;border-radius:16px;padding:12px}.suggest-box.show{display:block}.suggest-box b{font-size:14px}.suggest-box small{display:block;color:#9db0ba;margin-top:4px;line-height:1.35}.segment-choice{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}.segment-choice button{border:1px solid #35434c;background:#11181d;color:#aab8c2;border-radius:13px;padding:12px;font-weight:900}.segment-choice button.active.business{background:#11382f;border-color:#25866b;color:#74e7bb}.segment-choice button.active.private{background:#3b2028;border-color:#a1465e;color:#ff9bad}.segment-badge{display:inline-flex;margin-left:6px;padding:3px 7px;border-radius:999px;font-size:9px;font-weight:900;background:#1a2a34;color:#8fd5ff}.leg-pill{display:inline-flex;padding:2px 7px;border-radius:999px;font-size:9px;font-weight:900;margin-left:5px}.leg-pill.business{background:#11382f;color:#6ce0b3}.leg-pill.private{background:#3b2028;color:#ff9bad}.place-radius{display:flex;align-items:center;gap:10px}.place-radius input{flex:1}.place-preview{padding:10px;background:#0f1519;border:1px solid #2a3740;border-radius:13px;color:#9fc2d9;font-size:12px;margin-top:8px}
-.assistant-panel{display:none;margin:10px 0;border:1px solid #2d8069;background:linear-gradient(145deg,#0e2924,#111c24);border-radius:18px;padding:13px}.assistant-panel.show{display:block}.assistant-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.assistant-head b{font-size:15px}.assistant-head small{display:block;color:#9fb1bc;margin-top:3px;line-height:1.35}.assistant-status{font-size:10px;padding:5px 8px;border-radius:999px;background:#17352d;color:#7ce0b8;font-weight:900;white-space:nowrap}.assistant-status.off{background:#33251a;color:#ffc17a}.assistant-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}.assistant-item{background:#0d161b;border:1px solid #2b4246;border-radius:14px;padding:10px}.assistant-route{font-weight:900;font-size:13px}.assistant-meta{font-size:10px;color:#94a6b2;margin-top:3px;line-height:1.35}.assistant-actions{display:grid;grid-template-columns:1fr 1fr auto auto;gap:6px;margin-top:8px}.assistant-actions button{border:1px solid #34454f;background:#152029;color:#c5d2da;border-radius:10px;padding:9px 7px;font-weight:900}.assistant-actions .private{background:#342028;border-color:#864052;color:#ff9bad}.assistant-actions .business{background:#11372f;border-color:#27765f;color:#79deb9}.assistant-actions .complete{background:#12304a;border-color:#28638e;color:#8fd1ff}.assistant-actions .dismiss{min-width:38px}.assistant-zone-ok{color:#71d9b2}.assistant-zone-err{color:#ff9a9a}.assistant-settings{margin-top:14px;padding:12px;background:#0f1519;border:1px solid #2d3a43;border-radius:15px}.assistant-settings h3{margin:0 0 6px;font-size:15px}.assistant-settings p{margin:0 0 9px;color:#91a2ae;font-size:11px;line-height:1.4}.assistant-route-big{font-size:18px;font-weight:900;text-align:center;padding:11px;background:#0e151a;border:1px solid #2c3942;border-radius:14px;margin-top:10px}.assistant-note{font-size:11px;color:#9fb0ba;line-height:1.4;margin-top:8px}.odo-suggest{display:none;margin:2px 0 10px;padding:18px;border:1px solid rgba(69,240,195,.38);background:linear-gradient(145deg,#103a31,#0b211d);border-radius:21px;text-align:center;box-shadow:0 14px 35px rgba(0,0,0,.22)}.odo-suggest.show{display:block}.odo-suggest-label{color:#78e8ca;font-size:10px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.odo-suggest-value{font-size:42px;font-weight:900;letter-spacing:-.055em;margin-top:7px;color:#fff}.odo-suggest-value span{font-size:16px;letter-spacing:0;color:#b9cdc7}.odo-suggest-detail{color:#9eb5af;font-size:11px;line-height:1.4;margin-top:8px}.odo-suggest-actions{display:grid;grid-template-columns:1.35fr .65fr;gap:8px;margin-top:15px}.odo-suggest-accept,.odo-suggest-edit{border-radius:15px;padding:13px 8px;font-weight:900}.odo-suggest-accept{border:0;background:linear-gradient(135deg,#50eec7,#19b9a5);color:#05251d}.odo-suggest-edit{border:1px solid rgba(141,211,193,.23);background:#10211e;color:#d7e7e2}.odo-editor[hidden]{display:none}
+.assistant-panel{display:none;margin:10px 0;border:1px solid #2d8069;background:linear-gradient(145deg,#0e2924,#111c24);border-radius:18px;padding:13px}.assistant-panel.show{display:block}.assistant-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.assistant-head b{font-size:15px}.assistant-head small{display:block;color:#9fb1bc;margin-top:3px;line-height:1.35}.assistant-status{font-size:10px;padding:5px 8px;border-radius:999px;background:#17352d;color:#7ce0b8;font-weight:900;white-space:nowrap}.assistant-status.off{background:#33251a;color:#ffc17a}.assistant-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}.assistant-item{background:#0d161b;border:1px solid #2b4246;border-radius:14px;padding:10px}.assistant-route{font-weight:900;font-size:13px}.assistant-meta{font-size:10px;color:#94a6b2;margin-top:3px;line-height:1.35}.assistant-actions{display:grid;grid-template-columns:1fr 1fr auto auto auto;gap:6px;margin-top:8px}.assistant-actions button{border:1px solid #34454f;background:#152029;color:#c5d2da;border-radius:10px;padding:9px 7px;font-weight:900}.assistant-actions .private{background:#342028;border-color:#864052;color:#ff9bad}.assistant-actions .business{background:#11372f;border-color:#27765f;color:#79deb9}.assistant-actions .complete{background:#12304a;border-color:#28638e;color:#8fd1ff}.assistant-actions .edit-address{background:#2e2711;border-color:#8e6f28;color:#ffd479}.assistant-actions .dismiss{min-width:38px}.assistant-zone-ok{color:#71d9b2}.assistant-zone-err{color:#ff9a9a}.assistant-settings{margin-top:14px;padding:12px;background:#0f1519;border:1px solid #2d3a43;border-radius:15px}.assistant-settings h3{margin:0 0 6px;font-size:15px}.assistant-settings p{margin:0 0 9px;color:#91a2ae;font-size:11px;line-height:1.4}.assistant-route-big{font-size:18px;font-weight:900;text-align:center;padding:11px;background:#0e151a;border:1px solid #2c3942;border-radius:14px;margin-top:10px}.assistant-note{font-size:11px;color:#9fb0ba;line-height:1.4;margin-top:8px}.odo-suggest{display:none;margin:2px 0 10px;padding:18px;border:1px solid rgba(69,240,195,.38);background:linear-gradient(145deg,#103a31,#0b211d);border-radius:21px;text-align:center;box-shadow:0 14px 35px rgba(0,0,0,.22)}.odo-suggest.show{display:block}.odo-suggest-label{color:#78e8ca;font-size:10px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.odo-suggest-value{font-size:42px;font-weight:900;letter-spacing:-.055em;margin-top:7px;color:#fff}.odo-suggest-value span{font-size:16px;letter-spacing:0;color:#b9cdc7}.odo-suggest-detail{color:#9eb5af;font-size:11px;line-height:1.4;margin-top:8px}.odo-suggest-actions{display:grid;grid-template-columns:1.35fr .65fr;gap:8px;margin-top:15px}.odo-suggest-accept,.odo-suggest-edit{border-radius:15px;padding:13px 8px;font-weight:900}.odo-suggest-accept{border:0;background:linear-gradient(135deg,#50eec7,#19b9a5);color:#05251d}.odo-suggest-edit{border:1px solid rgba(141,211,193,.23);background:#10211e;color:#d7e7e2}.odo-editor[hidden]{display:none}
 .offline-banner{display:none;position:sticky;top:calc(env(safe-area-inset-top) + 4px);z-index:25;margin:0 auto 10px;max-width:620px;padding:9px 12px;border-radius:13px;background:#3a2917;border:1px solid #80602f;color:#ffd491;text-align:center;font-size:12px;font-weight:800}.offline-banner.show{display:block}.pwa-card{margin-top:14px;padding:13px;border-radius:17px;background:linear-gradient(145deg,#102a25,#111c22);border:1px solid #2b6f5d}.pwa-card b{display:block}.pwa-card small{display:block;color:#a6bab4;line-height:1.4;margin:4px 0 10px}.pwa-install{width:100%;border:1px solid #34866f;background:#123b31;color:#82e7c2;border-radius:13px;padding:12px;font-weight:900}.pwa-install:disabled{opacity:.6}
 
 /* V4.2 premium mobile interface */
@@ -4155,6 +4436,26 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <button class="save" id="arrivalSave" onclick="saveAssistantArrival()">✓ Alles akkoord</button>
 </div></div>
 
+<div class="modal" id="assistantAddressModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>✏️ Adres aanpassen</h2><button class="close" onclick="closeModal('assistantAddressModal')">✕</button></div>
+  <input id="addrArrivalId" type="hidden">
+  <div class="assistant-note">Huidig voorstel: <b id="addrCurrentLabel">—</b></div>
+  <div class="field"><label>Zoek het juiste adres</label><input id="addrQuery" placeholder="Straat, huisnummer, plaats" onkeydown="if(event.key==='Enter')searchAssistantAddress()"></div>
+  <button class="odo-suggest-edit" type="button" onclick="searchAssistantAddress()">🔍 Zoeken</button>
+  <div class="known-list" id="addrResults"></div>
+  <div class="odo-suggest" id="addrPreview">
+    <div class="odo-suggest-label">Vertrek</div>
+    <div class="assistant-route-big" id="addrPreviewOrigin" style="font-size:14px">—</div>
+    <div class="odo-suggest-label" style="margin-top:8px">Nieuwe bestemming</div>
+    <div class="assistant-route-big" id="addrPreviewLabel" style="font-size:15px">—</div>
+    <div class="odo-suggest-detail" id="addrPreviewDetail"></div>
+    <div class="odo-suggest-label" style="margin-top:8px">Afstand</div>
+    <div class="odo-suggest-detail" id="addrPreviewDistance">—</div>
+    <div class="odo-suggest-label" style="margin-top:8px" id="addrPreviewOdoLabel">Voorgestelde eindstand</div>
+    <div class="odo-suggest-detail" id="addrPreviewOdo">—</div>
+    <button class="save" type="button" id="addrUseBtn" onclick="useAssistantAddressResult()" disabled>✓ Gebruik dit adres</button>
+  </div>
+</div></div>
+
 <div class="modal" id="settingsModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>⚙️ Instellingen</h2><button class="close" onclick="closeModal('settingsModal')">✕</button></div>
   <div class="field"><label>Naam auto</label><input id="setVehicle"></div><div class="field"><label>Brandstof</label><input id="setFuel"></div><div class="field"><label>Valuta</label><input id="setCurrency" maxlength="3"></div>
   <div class="field"><label>Bestuurder (voor ritten-PDF)</label><input id="setDriver" maxlength="80" placeholder="Naam bestuurder"></div>
@@ -4226,9 +4527,15 @@ function switchView(view,remember=true){VIEW=view==='business'?'business':'auto'
 document.querySelectorAll('.view-tab').forEach(b=>b.onclick=()=>{switchView(b.dataset.view);window.scrollTo({top:0,behavior:'smooth'})});VIEW=localStorage.getItem('rit_tank_view')||'auto';
 function smartTripAction(){if(!DATA)return;let active=DATA.business?.active_trip;if(active){switchView('business');$('bizHero').scrollIntoView({block:'start',behavior:'smooth'})}else openTripPoint('start')}
 function renderBusiness(){let b=DATA.business||{},p=b.period||{},y=b.year||{},a=b.active_trip,primary=$('tripPrimaryLabel');if(primary)primary.textContent=a?'Actieve rit bekijken':'Rit starten';let csv=$('bizCsvLink'),pdf=$('bizPdfLink'),scsv=$('settingsBusinessCsv'),spdf=$('settingsBusinessPdf');if(csv)csv.href=`api/business.csv?period=${PERIOD}`;if(pdf)pdf.href=`api/business.pdf?period=${PERIOD}`;if(scsv)scsv.href=`api/business.csv?period=${PERIOD}`;if(spdf)spdf.href=`api/business.pdf?period=${PERIOD}`;$('bizPeriodLabel').textContent=DATA.period.label;$('bizTripCount').textContent=`${p.trips||0} rit${p.trips===1?'':'ten'}`;$('bizKm').textContent=`${fmt(p.business_km||0,1)} km`;$('bizPrivateKm').textContent=`${fmt(p.private_km||0,1)} km`;$('bizPrivateYear').textContent=`${fmt(y.private_km||0,1)} km`;$('bizTrips').textContent=String(p.trips||0);$('bizStops').textContent=String(p.stops||0);$('bizAvg').textContent=`${fmt(p.avg_km||0,1)} km`;let hero=$('bizHero'),actions=$('bizHeroActions');actions.innerHTML='';if(a){hero.classList.add('active-trip');$('bizHeroTitle').textContent=a.purpose||`${a.trip_type_label||'Rit'} actief`;let os=b.odometer_suggestion||{},track=os.active&&Number(os.tracked_km||0)>0?`<br>🛰️ Achtergrondroute sinds laatste stop: <b>${fmt(os.tracked_km,1)} km</b> · voorstel eindstand <b>${fmt(os.suggested_odometer,0)} km</b>`:'';$('bizHeroInfo').innerHTML=`${a.trip_type_label||'Rit'}${a.client?' · '+esc(a.client):''} · ${fmt(a.km||0,1)} km · ${a.stop_count||0} locatie${a.stop_count===1?'':'s'}<br>Laatste: ${esc(a.last_location||'—')}${track}`;actions.className='biz-actions';actions.innerHTML='<button class="biz-next" onclick="openTripPoint(\'stop\')">📍 Volgende adres</button><button class="biz-finish" onclick="openTripPoint(\'finish\')">🏁 Rit afsluiten</button>'}else{hero.classList.remove('active-trip');$('bizHeroTitle').textContent='Geen actieve rit';$('bizHeroInfo').textContent='Start een rit en leg vertrek, aankomst, kilometerstanden en ritsoort vast.';actions.className='';actions.innerHTML='<button class="biz-start" onclick="openTripPoint(\'start\')">＋ Nieuwe rit</button>'}renderAssistant();renderBusinessHistory(b.recent_trips||[]);renderAudit(b.audit||[])}
-function renderAssistant(){let a=DATA?.business?.assistant||{},cfg=a.config||{},rt=a.runtime||{},pending=a.pending||[],panel=$('assistantPanel'),list=$('assistantList'),badge=$('assistantStatusBadge'),txt=$('assistantStatusText');panel.classList.add('show');badge.textContent=cfg.mode==='autopilot'?'AUTO':cfg.enabled?'AAN':'UIT';badge.className='assistant-status'+(cfg.enabled?'':' off');let parts=[];if(cfg.enabled){parts.push(cfg.mode==='autopilot'?'Autopilot classificeert zekere routes':cfg.mode==='manual'?'Handmatige modus':`Assistent volgt ${esc(cfg.location_entity||'nog geen tracker')}`);if(rt.current_place)parts.push(`nu bij ${esc(rt.current_place)}`);else if(rt.departed_from)parts.push(`vertrokken vanaf ${esc(rt.departed_from)}`);if(rt.draft_active)parts.push(`Concept onderweg · ${fmt(rt.draft_km,1)} GPS-km`);if(rt.last_error)parts.push(`⚠️ ${esc(rt.last_error)}`)}else parts.push('Zet hem aan via Instellingen');txt.innerHTML=parts.join(' · ');list.innerHTML='';if(!pending.length){list.innerHTML='<div class="empty" style="padding:6px 0">Alles is bijgewerkt — geen ritten om te controleren.</div>';return}pending.forEach(x=>{let d=document.createElement('div');d.className='assistant-item';let chosen=x.confirmed_type||x.suggested_type||'',pct=Math.round(Number(x.suggestion_confidence||0)*100),proposal=x.suggested_type?`Voorstel: ${esc(x.suggested_type_label)} · ${pct}% · ${esc(x.suggestion_reason||'')}`:'Geen zekere classificatie — kies zelf';d.innerHTML=`<div class="assistant-route">${esc(x.origin_name)} → ${esc(x.destination_name)}</div><div class="assistant-meta">${esc(x.date_label)} · ${proposal}${x.status==='confirmed'?`<br>✓ ${x.classification_source==='autopilot'?'Door Autopilot':'Via melding'} geclassificeerd als ${esc(x.confirmed_type_label)}`:''}</div><div class="assistant-actions"><button class="private ${chosen==='private'?'active':''}" onclick="confirmAssistant(${x.id},'private')">🏠 Privé</button><button class="business ${chosen==='business'?'active':''}" onclick="confirmAssistant(${x.id},'business')">💼 Zakelijk</button><button class="complete" onclick="openAssistantComplete(${x.id})">Controleren →</button><button class="dismiss" onclick="dismissAssistant(${x.id})">×</button></div>`;list.appendChild(d)})}
+function renderAssistant(){let a=DATA?.business?.assistant||{},cfg=a.config||{},rt=a.runtime||{},pending=a.pending||[],panel=$('assistantPanel'),list=$('assistantList'),badge=$('assistantStatusBadge'),txt=$('assistantStatusText');panel.classList.add('show');badge.textContent=cfg.mode==='autopilot'?'AUTO':cfg.enabled?'AAN':'UIT';badge.className='assistant-status'+(cfg.enabled?'':' off');let parts=[];if(cfg.enabled){parts.push(cfg.mode==='autopilot'?'Autopilot classificeert zekere routes':cfg.mode==='manual'?'Handmatige modus':`Assistent volgt ${esc(cfg.location_entity||'nog geen tracker')}`);if(rt.current_place)parts.push(`nu bij ${esc(rt.current_place)}`);else if(rt.departed_from)parts.push(`vertrokken vanaf ${esc(rt.departed_from)}`);if(rt.draft_active)parts.push(`Concept onderweg · ${fmt(rt.draft_km,1)} GPS-km`);if(rt.last_error)parts.push(`⚠️ ${esc(rt.last_error)}`)}else parts.push('Zet hem aan via Instellingen');txt.innerHTML=parts.join(' · ');list.innerHTML='';if(!pending.length){list.innerHTML='<div class="empty" style="padding:6px 0">Alles is bijgewerkt — geen ritten om te controleren.</div>';return}pending.forEach(x=>{let d=document.createElement('div');d.className='assistant-item';let chosen=x.confirmed_type||x.suggested_type||'',pct=Math.round(Number(x.suggestion_confidence||0)*100),proposal=x.suggested_type?`Voorstel: ${esc(x.suggested_type_label)} · ${pct}% · ${esc(x.suggestion_reason||'')}`:'Geen zekere classificatie — kies zelf';let corrected=x.destination_manually_corrected?`<br>✏️ Handmatig gecorrigeerd · ${fmt((x.corrected_destination_distance_m||0)/1000,1)} km (${x.destination_distance_source==='route'?'via wegroute':'GPS-schatting'}) · oorspronkelijke GPS-suggestie: ${esc(x.destination_label||'onbekend')}`:'';d.innerHTML=`<div class="assistant-route">${esc(x.origin_name)} → ${esc(x.destination_name)}</div><div class="assistant-meta">${esc(x.date_label)} · ${proposal}${x.status==='confirmed'?`<br>✓ ${x.classification_source==='autopilot'?'Door Autopilot':'Via melding'} geclassificeerd als ${esc(x.confirmed_type_label)}`:''}${corrected}</div><div class="assistant-actions"><button class="private ${chosen==='private'?'active':''}" onclick="confirmAssistant(${x.id},'private')">🏠 Privé</button><button class="business ${chosen==='business'?'active':''}" onclick="confirmAssistant(${x.id},'business')">💼 Zakelijk</button><button class="edit-address" onclick="openAssistantAddressCorrection(${x.id})">✏️ Adres</button><button class="complete" onclick="openAssistantComplete(${x.id})">Controleren →</button><button class="dismiss" onclick="dismissAssistant(${x.id})">×</button></div>`;list.appendChild(d)})}
 async function confirmAssistant(id,type){try{await api(`api/assistant/${id}/confirm`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trip_type:type})});toast(type==='business'?'Zakelijk bevestigd':'Privé bevestigd');reloadData()}catch(e){toast(e.message,true)}}
 async function dismissAssistant(id){try{await api(`api/assistant/${id}`,{method:'DELETE'});toast('Suggestie gesloten');reloadData()}catch(e){toast(e.message,true)}}
+let ADDR_ARRIVAL=null,ADDR_RESULTS=[],ADDR_SELECTED=null;
+function openAssistantAddressCorrection(id){let a=DATA?.business?.assistant||{},x=(a.pending||[]).find(v=>Number(v.id)===Number(id));if(!x){toast('Dit voorstel is al verwerkt.');return}ADDR_ARRIVAL=x;ADDR_RESULTS=[];ADDR_SELECTED=null;$('addrArrivalId').value=x.id;$('addrCurrentLabel').textContent=x.corrected_destination_label||x.destination_name||'—';$('addrQuery').value='';$('addrResults').innerHTML='';$('addrPreview').classList.remove('show');$('addrUseBtn').disabled=true;openModal('assistantAddressModal')}
+async function searchAssistantAddress(){let q=$('addrQuery').value.trim();if(!q){toast('Vul een adres of zoekterm in.',true);return}try{let r=await api('api/places/search-address',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})});ADDR_RESULTS=r.places||[];renderAssistantAddressResults()}catch(e){toast(e.message,true)}}
+function renderAssistantAddressResults(){let list=$('addrResults');list.innerHTML='';if(!ADDR_RESULTS.length){list.innerHTML='<div class="empty" style="padding:6px 0">Geen adressen gevonden.</div>';return}ADDR_RESULTS.forEach((p,i)=>{let d=document.createElement('div');d.className='known-row';d.style.cursor='pointer';d.innerHTML=`<b>${esc(p.name||p.address||'Adres')}</b><br><small>${esc(p.address||'')}</small>`;d.onclick=()=>selectAssistantAddressResult(i);list.appendChild(d)})}
+async function selectAssistantAddressResult(i){ADDR_SELECTED=ADDR_RESULTS[i];if(!ADDR_SELECTED)return;$('addrPreviewOrigin').textContent=ADDR_ARRIVAL?.origin_name||'—';$('addrPreviewLabel').textContent=ADDR_SELECTED.name||ADDR_SELECTED.address||'—';$('addrPreviewDetail').textContent=ADDR_SELECTED.address||'';$('addrPreviewDistance').textContent='Bezig met berekenen…';$('addrPreviewOdo').textContent='—';$('addrUseBtn').disabled=true;$('addrPreview').classList.add('show');try{let r=await api(`api/assistant/${ADDR_ARRIVAL.id}/preview-destination`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:ADDR_SELECTED.latitude,longitude:ADDR_SELECTED.longitude,address:ADDR_SELECTED.address||ADDR_SELECTED.name,place_id:ADDR_SELECTED.place_id||null})});let km=r.distance_m!=null?r.distance_m/1000:null;$('addrPreviewDistance').textContent=km!=null?`${fmt(km,1)} km ${r.distance_source==='route'?'via wegroute':'GPS-schatting'}`:'Afstand nog onbekend (behoudt bestaande GPS-afstand)';$('addrPreviewOdo').textContent=r.suggested_odometer!=null?`${fmt(r.suggested_odometer,0)} km`:'—';$('addrUseBtn').disabled=false}catch(e){$('addrPreviewDistance').textContent='Kon afstand niet berekenen';$('addrUseBtn').disabled=true;toast(e.message,true)}}
+async function useAssistantAddressResult(){if(!ADDR_SELECTED||!ADDR_ARRIVAL){toast('Kies eerst een adres uit de resultaten.',true);return}try{await api(`api/assistant/${ADDR_ARRIVAL.id}/correct-destination`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:ADDR_SELECTED.latitude,longitude:ADDR_SELECTED.longitude,address:ADDR_SELECTED.address||ADDR_SELECTED.name,place_id:ADDR_SELECTED.place_id||null})});closeModal('assistantAddressModal');toast('Bestemming aangepast');ADDR_ARRIVAL=null;ADDR_SELECTED=null;await reloadData()}catch(e){toast(e.message,true)}}
 function setAssistantType(type){ASSISTANT_TYPE=type;$('assistantBusiness').classList.toggle('active',type==='business');$('assistantPrivate').classList.toggle('active',type==='private')}
 async function openAssistantComplete(id){
   try {
@@ -4671,6 +4978,11 @@ class Handler(BaseHTTPRequestHandler):
                 if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
                     raise ValueError('Geen geldige huidige locatie ontvangen.')
                 return json_response(self, {'places': google_nearby(lat, lon), 'radius_m': places_radius_m()})
+            if path == '/api/places/search-address':
+                query = str(payload.get('query') or '').strip()[:200]
+                if not query:
+                    raise ValueError('Vul een adres of zoekterm in.')
+                return json_response(self, {'places': google_places_text_search(query)})
             if path in ('/api/location/reverse', '/api/location/addresses'):
                 lat = to_float(payload.get('latitude'))
                 lon = to_float(payload.get('longitude'))
@@ -4720,6 +5032,9 @@ class Handler(BaseHTTPRequestHandler):
             md = re.fullmatch(r'/api/assistant/(\d+)/correct-destination', path)
             if md:
                 return json_response(self, {'arrival': correct_assistant_arrival_destination(int(md.group(1)), payload)})
+            mv = re.fullmatch(r'/api/assistant/(\d+)/preview-destination', path)
+            if mv:
+                return json_response(self, preview_assistant_arrival_destination(int(mv.group(1)), payload))
             if path == '/api/known-places':
                 return json_response(self, {'place': save_known_place(payload)}, 201)
             mp=re.fullmatch(r'/api/known-places/(\d+)', path)
