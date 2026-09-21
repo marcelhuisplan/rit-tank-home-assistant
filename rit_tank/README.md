@@ -1,4 +1,4 @@
-# Rit & Tank 6.0.0
+# Rit & Tank 7.00
 
 PDF-ritregistratie staat als grote knop op het beginscherm. Kies maand en jaar, of Heel jaar, en druk op OK. Een jaarrapport bevat alleen maanden met ritten, chronologisch en per maand gegroepeerd. Ritten horen bij hun vertrekmaand, ook als de aankomst in de volgende maand valt. Opgeslagen adressen worden gebruikt zonder externe adresopvraging; ontbrekende adressen worden als coördinaten getoond. Openen/afdrukken, downloaden en delen blijven beschikbaar (delen afhankelijk van apparaat/browser).
 

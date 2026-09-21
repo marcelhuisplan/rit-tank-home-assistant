@@ -1,5 +1,17 @@
 # Changelog
 
+## 7.00
+- Ritvoorstellen kunnen vóór opslaan een gecorrigeerde bestemming krijgen via handmatige adresselectie.
+- Routeafstand wordt opnieuw berekend na adrescorrectie wanneer routeberekeningstijdensing beschikbaar is; fallback naar GPS-afstand.
+- Oorspronkelijke GPS-bestemming, coördinaten en afstand blijven in audit-log beschikbaar; destination_manually_corrected-vlag markeert gecorrigeerde voorstellen.
+- Voorgestelde eindtellerstand wordt automatisch herberekend op basis van nieuwe routeafstand.
+- PDF-rittenregistratie heeft nieuw modern ontwerp met duidelijke adres-hiërarchie.
+- Privéritten: lichtblauwe bullet en accent; zakelijke ritten: lichtgroene bullet en accent.
+- Huisplan-logo staat rechtsboven in de PDF-kop; geen Rit & Tank branding meer.
+- GPS-huisnummerwaarschuwing verdwijnt uit PDF-uitvoer.
+- PDF-footer bevat alleen "Huisplan BV", rapportperiode en paginanummer.
+- Alle actuele versievelden (config.yaml, app.py, runtime) zijn exact 7.00.
+
 ## 6.0.0
 - Nieuwe major release op basis van de reeds gemergede runtime-, database-, ritverwijderings- en versieconsistentieverbeteringen.
 

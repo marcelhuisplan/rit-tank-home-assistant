@@ -38,7 +38,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '6.0.0'
+APP_VERSION = '7.00'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -370,7 +370,13 @@ def init_db() -> None:
             ('segment_suggested_type', 'TEXT'),
             ('segment_suggestion_reason', 'TEXT'),
             ('segment_suggestion_confidence', 'REAL'),
-            ('segment_classification_source', 'TEXT')
+            ('segment_classification_source', 'TEXT'),
+            ('original_destination_latitude', 'REAL'),
+            ('original_destination_longitude', 'REAL'),
+            ('original_destination_address', 'TEXT'),
+            ('original_destination_distance_m', 'REAL'),
+            ('destination_distance_source', 'TEXT'),
+            ('destination_manually_corrected', 'INTEGER DEFAULT 0')
         ):
             if col not in stop_cols:
                 con.execute(f'ALTER TABLE trip_stops ADD COLUMN {col} {sql_type}')
@@ -393,6 +399,18 @@ def init_db() -> None:
         ):
             if col not in trip_cols:
                 con.execute(f'ALTER TABLE business_trips ADD COLUMN {col} {sql_type}')
+
+        arrivals_cols = {r['name'] for r in con.execute('PRAGMA table_info(assistant_arrivals)')}
+        for col, sql_type in (
+            ('corrected_destination_latitude', 'REAL'),
+            ('corrected_destination_longitude', 'REAL'),
+            ('corrected_destination_label', 'TEXT'),
+            ('corrected_destination_distance_m', 'REAL'),
+            ('destination_distance_source', 'TEXT'),
+            ('destination_manually_corrected', 'INTEGER DEFAULT 0')
+        ):
+            if col not in arrivals_cols:
+                con.execute(f'ALTER TABLE assistant_arrivals ADD COLUMN {col} {sql_type}')
 
         opts = load_options()
         for key in ('vehicle_name', 'fuel_type', 'currency'):
@@ -813,6 +831,46 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dl = math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def get_route_distance(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float) -> dict[str, Any]:
+    """
+    Probeer werkelijke routeafstand via Google Routes API.
+    Fallback naar GPS-afstand als Routes API niet beschikbaar is.
+    
+    Returns: {'type': 'route'|'gps', 'distance_m': float}
+    """
+    key = places_key()
+    if not key:
+        gps_m = haversine_m(origin_lat, origin_lon, dest_lat, dest_lon)
+        return {'type': 'gps', 'distance_m': gps_m}
+    
+    try:
+        payload = {
+            'origin': {'location': {'latLng': {'latitude': origin_lat, 'longitude': origin_lon}}},
+            'destination': {'location': {'latLng': {'latitude': dest_lat, 'longitude': dest_lon}}},
+            'travelMode': 'DRIVE',
+            'routingPreference': 'TRAFFIC_UNAWARE',
+            'computeAlternativeRoutes': False,
+        }
+        
+        data = http_json(
+            'https://routes.googleapis.com/directions/v2:computeRoutes',
+            method='POST',
+            payload=payload,
+            headers={'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters'},
+            timeout=8,
+        )
+        
+        routes = data.get('routes', []) or []
+        if routes and routes[0].get('distanceMeters'):
+            distance_m = float(routes[0]['distanceMeters'])
+            return {'type': 'route', 'distance_m': distance_m}
+    except Exception:
+        pass
+    
+    gps_m = haversine_m(origin_lat, origin_lon, dest_lat, dest_lon)
+    return {'type': 'gps', 'distance_m': gps_m}
 
 
 def ha_request(method: str, path: str, payload: dict[str, Any] | None = None, timeout: int = 8) -> Any:
