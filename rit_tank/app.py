@@ -38,7 +38,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '6.0.0'
+APP_VERSION = '7.00'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -370,7 +370,13 @@ def init_db() -> None:
             ('segment_suggested_type', 'TEXT'),
             ('segment_suggestion_reason', 'TEXT'),
             ('segment_suggestion_confidence', 'REAL'),
-            ('segment_classification_source', 'TEXT')
+            ('segment_classification_source', 'TEXT'),
+            ('original_destination_latitude', 'REAL'),
+            ('original_destination_longitude', 'REAL'),
+            ('original_destination_address', 'TEXT'),
+            ('original_destination_distance_m', 'REAL'),
+            ('destination_distance_source', 'TEXT'),
+            ('destination_manually_corrected', 'INTEGER DEFAULT 0')
         ):
             if col not in stop_cols:
                 con.execute(f'ALTER TABLE trip_stops ADD COLUMN {col} {sql_type}')
@@ -393,6 +399,19 @@ def init_db() -> None:
         ):
             if col not in trip_cols:
                 con.execute(f'ALTER TABLE business_trips ADD COLUMN {col} {sql_type}')
+
+        arrivals_cols = {r['name'] for r in con.execute('PRAGMA table_info(assistant_arrivals)')}
+        for col, sql_type in (
+            ('corrected_destination_latitude', 'REAL'),
+            ('corrected_destination_longitude', 'REAL'),
+            ('corrected_destination_label', 'TEXT'),
+            ('corrected_destination_distance_m', 'REAL'),
+            ('corrected_destination_place_id', 'TEXT'),
+            ('destination_distance_source', 'TEXT'),
+            ('destination_manually_corrected', 'INTEGER DEFAULT 0')
+        ):
+            if col not in arrivals_cols:
+                con.execute(f'ALTER TABLE assistant_arrivals ADD COLUMN {col} {sql_type}')
 
         opts = load_options()
         for key in ('vehicle_name', 'fuel_type', 'currency'):
@@ -583,6 +602,49 @@ def google_nearby(lat: float, lon: float) -> list[dict[str, Any]]:
             'longitude': plon,
             'distance_m': round(distance) if distance is not None else None,
             'google_maps_uri': (f"https://www.google.com/maps/search/?api=1&query={plat},{plon}&query_place_id={quote(str(p.get('id') or ''), safe='')}" if plat is not None and plon is not None else ''),
+        })
+    return out
+
+
+def google_places_text_search(query: str) -> list[dict[str, Any]]:
+    """
+    Zoek adressen op vrije tekst (voor handmatige adrescorrectie).
+    Gebruikt Places API v1 Text Search en levert kandidaten met
+    place_id, naam, adres en coördinaten voor een selectielijst in de UI.
+    """
+    q = (query or '').strip()
+    if not q:
+        return []
+    key = places_key()
+    if not key:
+        raise ValueError('Google Places API-key ontbreekt. Vul hem in bij de app-configuratie.')
+    payload = {
+        'textQuery': q,
+        'languageCode': 'nl',
+        'regionCode': 'NL',
+        'maxResultCount': 8,
+    }
+    data = http_json(
+        'https://places.googleapis.com/v1/places:searchText',
+        method='POST', payload=payload,
+        headers={
+            'X-Goog-Api-Key': key,
+            'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
+        }, timeout=10,
+    )
+    out = []
+    for p in data.get('places', []) or []:
+        loc = p.get('location') or {}
+        lat = to_float(loc.get('latitude'))
+        lon = to_float(loc.get('longitude'))
+        if lat is None or lon is None:
+            continue
+        out.append({
+            'place_id': str(p.get('id') or ''),
+            'name': str((p.get('displayName') or {}).get('text') or ''),
+            'address': str(p.get('formattedAddress') or ''),
+            'latitude': lat,
+            'longitude': lon,
         })
     return out
 
@@ -790,7 +852,7 @@ def trip_location_details(stop: dict[str, Any], resolve: bool = True) -> dict[st
     if address:
         name = str(kp.get('name') or '') if kp else ''
         label = (name + ' - ' if name else '') + address
-        return {'label': label, 'address': label + ' (GPS-adres; huisnummer controleren)', 'google_maps_uri': f'https://www.google.com/maps/search/?api=1&query={lat},{lon}'}
+        return {'label': label, 'address': label, 'google_maps_uri': f'https://www.google.com/maps/search/?api=1&query={lat},{lon}'}
     if kp:
         maps = f'https://www.google.com/maps/search/?api=1&query={lat},{lon}' if lat is not None and lon is not None else ''
         return {'label': str(kp.get('name') or 'Bekende plek'), 'address': str(kp.get('name') or ''), 'google_maps_uri': maps}
@@ -813,6 +875,46 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dl = math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def get_route_distance(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float) -> dict[str, Any]:
+    """
+    Probeer werkelijke routeafstand via Google Routes API.
+    Fallback naar GPS-afstand als Routes API niet beschikbaar is.
+    
+    Returns: {'type': 'route'|'gps', 'distance_m': float}
+    """
+    key = places_key()
+    if not key:
+        gps_m = haversine_m(origin_lat, origin_lon, dest_lat, dest_lon)
+        return {'type': 'gps', 'distance_m': gps_m}
+    
+    try:
+        payload = {
+            'origin': {'location': {'latLng': {'latitude': origin_lat, 'longitude': origin_lon}}},
+            'destination': {'location': {'latLng': {'latitude': dest_lat, 'longitude': dest_lon}}},
+            'travelMode': 'DRIVE',
+            'routingPreference': 'TRAFFIC_UNAWARE',
+            'computeAlternativeRoutes': False,
+        }
+        
+        data = http_json(
+            'https://routes.googleapis.com/directions/v2:computeRoutes',
+            method='POST',
+            payload=payload,
+            headers={'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters'},
+            timeout=8,
+        )
+        
+        routes = data.get('routes', []) or []
+        if routes and routes[0].get('distanceMeters'):
+            distance_m = float(routes[0]['distanceMeters'])
+            return {'type': 'route', 'distance_m': distance_m}
+    except Exception:
+        pass
+    
+    gps_m = haversine_m(origin_lat, origin_lon, dest_lat, dest_lon)
+    return {'type': 'gps', 'distance_m': gps_m}
 
 
 def ha_request(method: str, path: str, payload: dict[str, Any] | None = None, timeout: int = 8) -> Any:
@@ -1647,14 +1749,38 @@ def advance_draft_route(runtime: dict[str, Any], lat: float, lon: float, accurac
 
 
 def arrival_proposal(row: dict[str, Any]) -> dict[str, Any]:
-    snapshot = assistant_state_get(f'arrival_route_{row["id"]}', {}) or {}
+    """
+    Voorstel voor eindtellerstand van dit ritvoorstel.
+
+    Als de bestemming handmatig is gecorrigeerd (destination_manually_corrected)
+    en er een corrected_destination_distance_m bekend is, wordt DIE afstand
+    gebruikt in plaats van de oorspronkelijke (mogelijk foutieve) GPS-tracking
+    naar de oude bestemming:
+      - bron 'route' (echte Google-wegafstand): GEEN GPS-kalibratiefactor
+        toepassen, die factor is alleen bedoeld om ruwe telefoon-GPS-afstand
+        te corrigeren, niet een al nauwkeurige wegafstand;
+      - bron 'gps': de bestaande GPS-kalibratie/leerlogica blijft gelden.
+    """
     base = latest_odometer_before(row.get('departure_at') or row['detected_at'])
-    raw_km = float(snapshot.get('route_m') or 0) / 1000
     calibration = distance_calibration()
+    corrected_m = to_float(row.get('corrected_destination_distance_m'))
+    if row.get('destination_manually_corrected') and corrected_m is not None:
+        corrected_km = corrected_m / 1000
+        source = str(row.get('destination_distance_source') or 'gps')
+        usable = bool(base is not None and corrected_km > 0)
+        if source == 'route':
+            suggested = round(base + corrected_km) if usable else None
+        else:
+            suggested = round(base + corrected_km * calibration['factor']) if usable else None
+        return {'start_odometer': base, 'gps_km': round(corrected_km, 2),
+                'suggested_odometer': suggested, 'route_complete': usable,
+                'calibration': calibration, 'distance_source': source}
+    snapshot = assistant_state_get(f'arrival_route_{row["id"]}', {}) or {}
+    raw_km = float(snapshot.get('route_m') or 0) / 1000
     usable = bool(base is not None and raw_km > 0 and int(snapshot.get('route_samples') or 0) >= 3 and not snapshot.get('route_incomplete'))
     return {'start_odometer': base, 'gps_km': round(raw_km, 2),
             'suggested_odometer': round(base + raw_km * calibration['factor']) if usable else None,
-            'route_complete': usable, 'calibration': calibration}
+            'route_complete': usable, 'calibration': calibration, 'distance_source': 'gps'}
 
 
 def zone_icon(category: str) -> str:
@@ -1758,7 +1884,14 @@ def assistant_arrivals(limit: int = 12, include_done: bool = False) -> list[dict
         origin = known_place_by_id(r.get('origin_known_place_id'))
         dest = known_place_by_id(r.get('destination_known_place_id'))
         r['origin_name'] = (origin or {}).get('name') or 'Onbekende vertrekplek'
-        r['destination_name'] = (dest or {}).get('name') or r.get('destination_label') or 'Onbekende bestemming'
+        effective = _assistant_arrival_effective_destination(r)
+        # Zodra de bestemming handmatig is gecorrigeerd, is DIE bestemming de
+        # actuele/hoofdbestemming in de UI (bv. "Thuis → Eikenlaan 8, Rijssen").
+        # De oorspronkelijke GPS-bestemming blijft alleen als audit-info
+        # beschikbaar via destination_label/destination_latitude/longitude.
+        r['destination_name'] = effective['label'] if effective['manually_corrected'] else (
+            (dest or {}).get('name') or r.get('destination_label') or 'Onbekende bestemming'
+        )
         r['suggested_type_label'] = trip_type_label(str(r.get('suggested_type') or '')) if r.get('suggested_type') else ''
         r['confirmed_type_label'] = trip_type_label(str(r.get('confirmed_type') or '')) if r.get('confirmed_type') else ''
         r['date_label'] = parse_dt(r['detected_at']).strftime('%d-%m %H:%M')
@@ -1900,6 +2033,269 @@ def dismiss_assistant_arrival(arrival_id: int) -> None:
         con.commit()
 
 
+def _assistant_arrival_effective_destination(r: dict[str, Any]) -> dict[str, Any]:
+    """
+    Bepaal de EFFECTIEVE bestemming van dit ritvoorstel: de bestemming die
+    consequent gebruikt moet worden bij het definitief opslaan (nieuwe
+    automatische rit, aankomst aan actieve rit, trip_stop, PDF,
+    rittenoverzicht, ...).
+
+    Als de gebruiker de bestemming handmatig heeft gecorrigeerd
+    (destination_manually_corrected=1 met geldige corrected_destination_*
+    coördinaten), is de gecorrigeerde bestemming leidend. De oorspronkelijke
+    (mogelijk foutieve) GPS-bestemming wordt uitsluitend als audit-informatie
+    teruggegeven (original_latitude/original_longitude/original_label) en
+    NOOIT opnieuw als actuele aankomst opgeslagen.
+    """
+    corrected_lat = to_float(r.get('corrected_destination_latitude'))
+    corrected_lon = to_float(r.get('corrected_destination_longitude'))
+    original_lat = to_float(r.get('destination_latitude'))
+    original_lon = to_float(r.get('destination_longitude'))
+    original_label = str(r.get('destination_label') or '').strip() or None
+    manually_corrected = bool(r.get('destination_manually_corrected')) and corrected_lat is not None and corrected_lon is not None
+    if manually_corrected:
+        return {
+            'latitude': corrected_lat,
+            'longitude': corrected_lon,
+            'label': str(r.get('corrected_destination_label') or '').strip() or original_label,
+            'place_id': str(r.get('corrected_destination_place_id') or '').strip() or None,
+            'distance_m': to_float(r.get('corrected_destination_distance_m')),
+            'distance_source': str(r.get('destination_distance_source') or 'gps'),
+            'manually_corrected': True,
+            'original_latitude': original_lat,
+            'original_longitude': original_lon,
+            'original_label': original_label,
+        }
+    return {
+        'latitude': original_lat,
+        'longitude': original_lon,
+        'label': original_label,
+        'place_id': None,
+        'distance_m': None,
+        'distance_source': None,
+        'manually_corrected': False,
+        'original_latitude': None,
+        'original_longitude': None,
+        'original_label': None,
+    }
+
+
+def _assistant_arrival_origin_coords(r: dict[str, Any]) -> tuple[float, float] | None:
+    """
+    Bepaal de meest betrouwbare vertreklocatie die bij dit ritvoorstel hoort.
+    Dit is dezelfde bron die _complete_assistant_arrival() gebruikt om het
+    startpunt van de rit vast te leggen, zodat de route-oorsprong hier
+    consistent is met de uiteindelijk opgeslagen rit:
+      1. De laatste stop van een nog actieve zakelijke rit (indien aanwezig).
+      2. De bekende vertrekplek (origin_known_place_id) die bij het
+         voorstel is vastgelegd toen het werd aangemaakt.
+    Er wordt bewust GEEN gebruik gemaakt van een timestamp-match op
+    trip_stops.created_at<=departure_at: in echte data valt dat niet
+    gegarandeerd samen met de daadwerkelijke vertrekstop.
+    Retourneert None als er geen betrouwbare vertreklocatie is; de aanroeper
+    mag dan NOOIT (0,0) of de oude bestemming als origin gebruiken.
+    """
+    active = active_business_trip()
+    if active and active.get('stops'):
+        last_stop = active['stops'][-1]
+        lat = to_float(last_stop.get('latitude'))
+        lon = to_float(last_stop.get('longitude'))
+        if lat is not None and lon is not None:
+            return lat, lon
+    origin_place = known_place_by_id(r.get('origin_known_place_id'))
+    if origin_place:
+        lat = to_float(origin_place.get('latitude'))
+        lon = to_float(origin_place.get('longitude'))
+        if lat is not None and lon is not None:
+            return lat, lon
+    return None
+
+
+def _assistant_arrival_destination_distance(r: dict[str, Any], arrival_id: int, dest_lat: float, dest_lon: float) -> dict[str, Any]:
+    """
+    Bereken de routeafstand van de betrouwbare vertreklocatie van dit
+    ritvoorstel naar de (nieuw gekozen) bestemming. Gedeelde logica voor
+    zowel de niet-muterende preview als de daadwerkelijke correctie, zodat
+    beide gegarandeerd dezelfde oorsprong (nooit de oude bestemming, nooit
+    (0,0)) en dezelfde afstand opleveren.
+
+    Als de Google Routes-call mislukt of niet beschikbaar is, wordt de
+    hemelsbrede (haversine) afstand die get_route_distance() dan intern
+    berekent NOOIT gebruikt als vervanging voor een werkelijk gereden
+    GPS-routeafstand. In plaats daarvan wordt teruggevallen op de al bekende,
+    door de telefoon gemeten afstand (arrival_route_<id>.route_m); is die er
+    niet, dan is de afstand expliciet onbekend (None) met bron 'gps'.
+    """
+    origin_coords = _assistant_arrival_origin_coords(r)
+    if origin_coords is not None:
+        origin_lat, origin_lon = origin_coords
+        route_info = get_route_distance(origin_lat, origin_lon, dest_lat, dest_lon)
+        if route_info.get('type') == 'route':
+            distance_m = route_info.get('distance_m')
+            distance_source = 'route'
+        else:
+            # De Google Routes-call is mislukt of niet beschikbaar. get_route_distance()
+            # valt dan intern terug op een hemelsbrede (haversine) afstand tussen origin
+            # en bestemming — dat is GEEN werkelijk gereden afstand en mag NOOIT als
+            # GPS-routeafstand worden gepresenteerd. Gebruik in plaats daarvan de al
+            # bekende, door de telefoon gemeten GPS-afstand voor dit voorstel (dezelfde
+            # bron als arrival_proposal()). Is die er niet, dan is de afstand onbekend.
+            snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
+            distance_m = to_float(snapshot.get('route_m'))
+            distance_source = 'gps'
+    else:
+        origin_lat = origin_lon = None
+        # Geen betrouwbare vertreklocatie beschikbaar: bereken GEEN fictieve
+        # route vanaf (0,0) en gebruik de oude bestemming NIET als vertrekpunt.
+        # Val terug op de al bekende, door de telefoon gemeten GPS-afstand
+        # voor dit voorstel (dezelfde bron als arrival_proposal()), en
+        # markeer de bron expliciet als 'gps'.
+        snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
+        distance_m = to_float(snapshot.get('route_m'))
+        distance_source = 'gps'
+    return {
+        'distance_m': distance_m,
+        'distance_source': distance_source,
+        'origin_latitude': origin_lat,
+        'origin_longitude': origin_lon,
+        'origin_available': origin_coords is not None,
+    }
+
+
+def preview_assistant_arrival_destination(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Niet-muterende preview van een bestemmingscorrectie. Berekent de
+    routeafstand (oorspronkelijke vertreklocatie -> nieuw gekozen bestemming,
+    NOOIT vanaf de oude bestemming) en de bijbehorende voorgestelde
+    eindtellerstand, zonder enig databaseveld te wijzigen.
+    """
+    with DB_LOCK, db() as con:
+        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
+    if not row:
+        raise ValueError('Ritsuggestie niet gevonden.')
+    r = dict(row)
+    if r.get('status') not in ('pending', 'confirmed'):
+        raise ValueError('Deze ritsuggestie kan niet meer worden aangepast.')
+
+    dest_lat = to_float(payload.get('latitude'))
+    dest_lon = to_float(payload.get('longitude'))
+    if dest_lat is None or dest_lon is None:
+        raise ValueError('Ongeldige doelcoördinaten.')
+    if not (-90 <= dest_lat <= 90) or not (-180 <= dest_lon <= 180):
+        raise ValueError('Doelcoördinaten buiten bereik.')
+
+    distance = _assistant_arrival_destination_distance(r, arrival_id, dest_lat, dest_lon)
+    distance_m = distance['distance_m']
+    distance_source = distance['distance_source']
+
+    base = latest_odometer_before(r.get('departure_at') or r.get('detected_at'))
+    calibration = distance_calibration()
+    suggested_odometer = None
+    if base is not None and distance_m is not None and distance_m > 0:
+        km = distance_m / 1000
+        if distance_source == 'route':
+            suggested_odometer = round(base + km)
+        else:
+            suggested_odometer = round(base + km * calibration['factor'])
+
+    return {
+        'distance_m': round(distance_m) if distance_m is not None else None,
+        'distance_source': distance_source,
+        'start_odometer': base,
+        'suggested_odometer': suggested_odometer,
+        'origin_available': distance['origin_available'],
+    }
+
+
+def correct_assistant_arrival_destination(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Handmatig corrigeer de gesuggeerde bestemming van een automatisch voorstel.
+    Recalculeer de afstand en bijgewerkte tellerstand.
+
+    BELANGRIJK: de routeafstand loopt ALTIJD van de oorspronkelijke
+    vertreklocatie van het ritvoorstel naar de NIEUW gekozen bestemming.
+    De oude (foutieve) voorgestelde bestemming wordt nooit als route-origin
+    gebruikt — die dient uitsluitend als audit-informatie ('original_destination').
+    """
+    with DB_LOCK, db() as con:
+        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
+
+    if not row:
+        raise ValueError('Ritsuggestie niet gevonden.')
+
+    r = dict(row)
+    # 'confirmed' betekent alleen dat privé/zakelijk is gekozen; er is dan nog
+    # GEEN business_trips/trip_stops-record aangemaakt (dat gebeurt pas bij
+    # complete_assistant_arrival(), waarna status 'completed' wordt). Zolang
+    # de rit niet 'completed' (definitief/fiscaal opgeslagen) is, mag de
+    # bestemming dus nog worden gecorrigeerd.
+    if r.get('status') not in ('pending', 'confirmed'):
+        raise ValueError('Deze ritsuggestie kan niet meer worden aangepast.')
+
+    # Parse corrected destination
+    dest_lat = to_float(payload.get('latitude'))
+    dest_lon = to_float(payload.get('longitude'))
+    dest_label = str(payload.get('address') or '').strip()[:180]
+    dest_place_id = str(payload.get('place_id') or '').strip()[:255] or None
+
+    if dest_lat is None or dest_lon is None:
+        raise ValueError('Ongeldige doelcoördinaten.')
+
+    if not (-90 <= dest_lat <= 90) or not (-180 <= dest_lon <= 180):
+        raise ValueError('Doelcoördinaten buiten bereik.')
+
+    # Bewaar de oude (foutieve) bestemming en de oorspronkelijke GPS-afstand
+    # uitsluitend voor audit-doeleinden. Deze coördinaten mogen NOOIT als
+    # vertrekpunt voor de nieuwe route dienen.
+    old_dest_lat = to_float(r.get('destination_latitude'))
+    old_dest_lon = to_float(r.get('destination_longitude'))
+    old_dest_label = str(r.get('destination_label') or '')
+    original_snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
+    original_gps_distance_m = to_float(original_snapshot.get('route_m'))
+
+    distance = _assistant_arrival_destination_distance(r, arrival_id, dest_lat, dest_lon)
+    distance_m = distance['distance_m']
+    distance_source = distance['distance_source']
+    origin_lat = distance['origin_latitude']
+    origin_lon = distance['origin_longitude']
+
+    # Update the assistant arrival with corrected destination
+    with DB_LOCK, db() as con:
+        con.execute('''
+            UPDATE assistant_arrivals
+            SET corrected_destination_latitude=?,
+                corrected_destination_longitude=?,
+                corrected_destination_label=?,
+                corrected_destination_distance_m=?,
+                corrected_destination_place_id=?,
+                destination_distance_source=?,
+                destination_manually_corrected=1
+            WHERE id=?
+        ''', (
+            dest_lat, dest_lon, dest_label,
+            round(distance_m) if distance_m is not None else None,
+            dest_place_id,
+            distance_source,
+            int(arrival_id)
+        ))
+        audit('assistant_correct_destination', 'assistant', int(arrival_id), {
+            'original_destination': {
+                'lat': old_dest_lat, 'lon': old_dest_lon, 'label': old_dest_label,
+                'distance_m': round(original_gps_distance_m) if original_gps_distance_m is not None else None,
+            },
+            'corrected_destination': {
+                'lat': dest_lat, 'lon': dest_lon, 'label': dest_label, 'place_id': dest_place_id,
+                'distance_m': round(distance_m) if distance_m is not None else None,
+            },
+            'route_origin': {'lat': origin_lat, 'lon': origin_lon} if distance['origin_available'] else None,
+            'distance_source': distance_source,
+            'destination_manually_corrected': True,
+        }, con=con)
+        con.commit()
+
+    return next((x for x in assistant_arrivals(50, True) if int(x['id']) == int(arrival_id)), {})
+
+
 def complete_assistant_arrival(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     with DB_LOCK:
         return _complete_assistant_arrival(arrival_id, payload)
@@ -1924,18 +2320,37 @@ def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any]) -> dic
         raise ValueError('Deze aankomst is ouder dan de laatste opgeslagen stop. Controleer de ritgeschiedenis.')
     if active and active.get('stops') and r.get('departure_at') and parse_dt(active['stops'][-1]['created_at']) > parse_dt(r['departure_at']):
         raise ValueError('Een deel van dit voorstel is al geregistreerd. Controleer de ritgeschiedenis.')
+    # Effectieve bestemming: als de gebruiker handmatig heeft gecorrigeerd,
+    # is de GECORRIGEERDE bestemming leidend voor wat definitief wordt
+    # opgeslagen. De oorspronkelijke (mogelijk foutieve) GPS-bestemming wordt
+    # nooit opnieuw als actuele aankomst gebruikt, maar blijft via
+    # trip_stops.original_destination_* en het audit-log herleidbaar.
+    dest = _assistant_arrival_effective_destination(r)
+    if dest['latitude'] is None or dest['longitude'] is None:
+        raise ValueError('Bestemming van deze aankomst is onbekend.')
     point = {
         'odometer': end_odo,
         'created_at': r['detected_at'],
-        'latitude': float(r['destination_latitude']),
-        'longitude': float(r['destination_longitude']),
-        'location_accuracy': to_float(r.get('destination_accuracy')),
+        'latitude': dest['latitude'],
+        'longitude': dest['longitude'],
+        'location_accuracy': to_float(r.get('destination_accuracy')) if not dest['manually_corrected'] else None,
         'location_source': 'background_assistant',
-        'place_id': None,
-        'manual_label': str(r.get('destination_label') or '')[:120] or None,
-        'note': 'Automatisch herkende aankomst',
-        'known_place_id': r.get('destination_known_place_id'),
+        'place_id': dest['place_id'],
+        'manual_label': str(dest['label'] or '')[:120] or None,
+        'note': 'Automatisch herkende aankomst' + (' (adres handmatig gecorrigeerd)' if dest['manually_corrected'] else ''),
+        'known_place_id': r.get('destination_known_place_id') if not dest['manually_corrected'] else None,
     }
+    destination_audit = None
+    if dest['manually_corrected']:
+        orig_snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
+        destination_audit = {
+            'original_latitude': dest['original_latitude'],
+            'original_longitude': dest['original_longitude'],
+            'original_address': dest['original_label'],
+            'original_distance_m': to_float(orig_snapshot.get('route_m')),
+            'distance_source': dest['distance_source'],
+            'manually_corrected': True,
+        }
     if active:
         result = add_business_stop({
             'odometer': end_odo,
@@ -1947,7 +2362,7 @@ def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any]) -> dic
             'manual_label': point['manual_label'],
             'note': point['note'],
             'segment_trip_type': trip_type,
-        }, finish=payload.get('finish') is True)
+        }, finish=payload.get('finish') is True, destination_audit=destination_audit)
         trip_id = int((result.get('trip') or {}).get('id') or active['id'])
     else:
         origin = known_place_by_id(r.get('origin_known_place_id'))
@@ -1996,13 +2411,22 @@ def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any]) -> dic
             ''', (start_at, r['detected_at'], 'Automatisch herkende rit', trip_type, iso_local()))
             trip_id = int(cur.lastrowid)
             _insert_trip_stop(con, trip_id, start_point, 0, 'Automatische rit start')
-            _insert_trip_stop(con, trip_id, point, 1, f'Automatische rit einde ({trip_type_label(trip_type)})', trip_type, suggestion)
+            _insert_trip_stop(con, trip_id, point, 1, f'Automatische rit einde ({trip_type_label(trip_type)})', trip_type, suggestion, destination_audit=destination_audit)
             remember_segment(start_point, point, trip_type, con=con)
-            audit('assistant_complete', 'trip', trip_id, {'assistant_arrival_id': int(arrival_id), 'trip_type': trip_type}, con=con)
+            audit('assistant_complete', 'trip', trip_id, {
+                'assistant_arrival_id': int(arrival_id), 'trip_type': trip_type,
+                'destination_manually_corrected': dest['manually_corrected'],
+                'effective_destination': {'lat': dest['latitude'], 'lon': dest['longitude'], 'label': dest['label']},
+                'original_destination': {'lat': dest['original_latitude'], 'lon': dest['original_longitude'], 'label': dest['original_label']} if dest['manually_corrected'] else None,
+            }, con=con)
             con.commit()
     with DB_LOCK, db() as con:
         snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
-        if not active and not snapshot.get('route_incomplete'):
+        # Alleen leren van de ruwe telefoon-GPS-tracking als de aankomst NIET
+        # handmatig is gecorrigeerd: de gemeten route liep dan naar de oude
+        # (foutieve) bestemming en komt niet meer overeen met de daadwerkelijk
+        # opgeslagen (gecorrigeerde) afstand, wat de kalibratie zou verstoren.
+        if not active and not snapshot.get('route_incomplete') and not dest['manually_corrected']:
             learn_distance(f'arrival:{arrival_id}', float(snapshot.get('route_m') or 0) / 1000,
                            end_odo - start_odo, int(snapshot.get('route_samples') or 0),
                            payload.get('odometer_checked') is True, con=con)
@@ -2558,8 +2982,10 @@ def _trip_point_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _insert_trip_stop(con: sqlite3.Connection, trip_id: int, point: dict[str, Any], sequence_no: int, event_note: str,
-                      segment_trip_type: str = '', suggestion: dict[str, Any] | None = None) -> int:
+                      segment_trip_type: str = '', suggestion: dict[str, Any] | None = None,
+                      destination_audit: dict[str, Any] | None = None) -> int:
     suggestion = suggestion or {}
+    destination_audit = destination_audit or {}
     seg_type = normalize_segment_type(segment_trip_type)
     suggested = normalize_segment_type(suggestion.get('suggested_type'))
     source = 'start' if sequence_no == 0 else ('user-confirmed' if suggested and seg_type == suggested else 'user-override' if suggested else 'manual')
@@ -2568,13 +2994,19 @@ def _insert_trip_stop(con: sqlite3.Connection, trip_id: int, point: dict[str, An
             trip_id,sequence_no,created_at,odometer,latitude,longitude,
             location_accuracy,location_source,place_id,manual_label,note,known_place_id,
             segment_trip_type,segment_suggested_type,segment_suggestion_reason,
-            segment_suggestion_confidence,segment_classification_source
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            segment_suggestion_confidence,segment_classification_source,
+            original_destination_latitude,original_destination_longitude,original_destination_address,
+            original_destination_distance_m,destination_distance_source,destination_manually_corrected
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ''', (
         trip_id, sequence_no, point['created_at'], point['odometer'], point['latitude'], point['longitude'],
         point['location_accuracy'], point['location_source'], point['place_id'], point['manual_label'], point['note'], point.get('known_place_id'),
         seg_type or None, suggested or None, str(suggestion.get('reason') or '')[:220] or None,
-        float(suggestion.get('confidence') or 0), source
+        float(suggestion.get('confidence') or 0), source,
+        destination_audit.get('original_latitude'), destination_audit.get('original_longitude'),
+        (str(destination_audit.get('original_address') or '')[:180] or None) if destination_audit.get('original_address') else None,
+        destination_audit.get('original_distance_m'), destination_audit.get('distance_source'),
+        1 if destination_audit.get('manually_corrected') else 0,
     ))
     stop_id = int(cur.lastrowid)
     ev = con.execute('''
@@ -2606,7 +3038,7 @@ def start_business_trip(payload: dict[str, Any]) -> dict[str, Any]:
     publish_sensors_async()
     return {'ok': True, 'trip': trip_now}
 
-def add_business_stop(payload: dict[str, Any], *, finish: bool = False) -> dict[str, Any]:
+def add_business_stop(payload: dict[str, Any], *, finish: bool = False, destination_audit: dict[str, Any] | None = None) -> dict[str, Any]:
     trip = active_business_trip()
     if not trip:
         raise ValueError('Er is geen actieve ritregistratie.')
@@ -2627,7 +3059,7 @@ def add_business_stop(payload: dict[str, Any], *, finish: bool = False) -> dict[
             raise ValueError('Kies of dit traject zakelijk of prive was.')
         seq = int(last['sequence_no']) + 1
         label = 'einde' if finish else 'stop'
-        stop_id = _insert_trip_stop(con, int(trip['id']), point, seq, f'Rit {label} ({trip_type_label(seg_type)})', seg_type, suggestion)
+        stop_id = _insert_trip_stop(con, int(trip['id']), point, seq, f'Rit {label} ({trip_type_label(seg_type)})', seg_type, suggestion, destination_audit=destination_audit)
         if (int(tracking.get('trip_id') or -1) == int(trip['id']) and
                 int(tracking.get('stop_id') or -1) == int(last['id']) and not tracking.get('incomplete') and
                 abs((parse_dt(point['created_at']) - now_local()).total_seconds()) < 300):
@@ -2788,56 +3220,110 @@ def _pdf_escape(value: Any) -> bytes:
 
 
 class _SimplePdfPage:
-    def __init__(self, title: str):
+    def __init__(self, title: str = ''):
         self.commands: list[bytes] = []
         self.preview: list[str] = []
         self.images: set[str] = set()
         self.y = 806.0
         self.title = title
-        self.text(title, 36, self.y, 15, bold=True)
-        self.y -= 12
-        self.line(36, self.y, 559, self.y, 0.75)
-        self.y -= 18
+        if title:
+            self.text(title, 36, self.y, 15, bold=True)
+            self.y -= 12
+            self.line(36, self.y, 559, self.y, 0.75)
+            self.y -= 18
 
-    def text(self, value: Any, x: float, y: float, size: float = 9, bold: bool = False, gray: float = 0.08):
-        color = round(gray * 255)
-        self.preview.append(f'<text x="{x}" y="{842-y}" font-size="{size}" font-weight="{700 if bold else 400}" fill="rgb({color},{color},{color})">{html.escape(_pdf_text(value))}</text>')
+    @staticmethod
+    def _normalize_rgb(rgb: tuple[int, int, int] | None) -> tuple[int, int, int] | None:
+        if rgb is None:
+            return None
+        return tuple(max(0, min(255, int(v))) for v in rgb)
+
+    @classmethod
+    def _svg_color(cls, gray: float | None = None, rgb: tuple[int, int, int] | None = None) -> str:
+        norm = cls._normalize_rgb(rgb)
+        if norm is not None:
+            return f'rgb({norm[0]},{norm[1]},{norm[2]})'
+        level = round((0.08 if gray is None else gray) * 255)
+        return f'rgb({level},{level},{level})'
+
+    @classmethod
+    def _fill_command(cls, gray: float | None = None, rgb: tuple[int, int, int] | None = None) -> str:
+        norm = cls._normalize_rgb(rgb)
+        if norm is not None:
+            r, g, b = [v / 255 for v in norm]
+            return f'{r:.3f} {g:.3f} {b:.3f} rg'
+        return f'{(0.08 if gray is None else gray):.3f} g'
+
+    @classmethod
+    def _stroke_command(cls, gray: float | None = None, rgb: tuple[int, int, int] | None = None) -> str:
+        norm = cls._normalize_rgb(rgb)
+        if norm is not None:
+            r, g, b = [v / 255 for v in norm]
+            return f'{r:.3f} {g:.3f} {b:.3f} RG'
+        return f'{(0.75 if gray is None else gray):.3f} G'
+
+    def text(self, value: Any, x: float, y: float, size: float = 9, bold: bool = False,
+             gray: float | None = 0.08, rgb: tuple[int, int, int] | None = None):
+        color = self._svg_color(gray, rgb)
+        self.preview.append(f'<text x="{x}" y="{842-y}" font-size="{size}" font-weight="{700 if bold else 400}" fill="{color}">{html.escape(_pdf_text(value))}</text>')
         font = 'F2' if bold else 'F1'
         esc = _pdf_escape(value)
         self.commands.append(
-            f'{gray:.3f} g BT /{font} {size:.2f} Tf 1 0 0 1 {x:.2f} {y:.2f} Tm '.encode('ascii')
+            (self._fill_command(gray, rgb) + f' BT /{font} {size:.2f} Tf 1 0 0 1 {x:.2f} {y:.2f} Tm ').encode('ascii')
             + b'(' + esc + b') Tj ET\n'
         )
 
-    def line(self, x1: float, y1: float, x2: float, y2: float, width: float = 0.5, gray: float = 0.75):
-        color = round(gray * 255)
-        self.preview.append(f'<line x1="{x1}" y1="{842-y1}" x2="{x2}" y2="{842-y2}" stroke="rgb({color},{color},{color})" stroke-width="{width}"/>')
+    def line(self, x1: float, y1: float, x2: float, y2: float, width: float = 0.5,
+             gray: float | None = 0.75, rgb: tuple[int, int, int] | None = None):
+        color = self._svg_color(gray, rgb)
+        self.preview.append(f'<line x1="{x1}" y1="{842-y1}" x2="{x2}" y2="{842-y2}" stroke="{color}" stroke-width="{width}"/>')
         self.commands.append(
-            f'{gray:.3f} G {width:.2f} w {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S\n'.encode('ascii')
+            f'{self._stroke_command(gray, rgb)} {width:.2f} w {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S\n'.encode('ascii')
         )
 
-    def rect(self, x: float, y: float, width: float, height: float, gray: float = 0.94):
-        """Draw a filled, lightly shaded rectangle used for report cards."""
-        color = round(gray * 255)
-        self.preview.append(f'<rect x="{x}" y="{842-y-height}" width="{width}" height="{height}" fill="rgb({color},{color},{color})"/>')
+    def rect(self, x: float, y: float, width: float, height: float,
+             gray: float | None = 0.94, rgb: tuple[int, int, int] | None = None):
+        color = self._svg_color(gray, rgb)
+        self.preview.append(f'<rect x="{x}" y="{842-y-height}" width="{width}" height="{height}" fill="{color}"/>')
         self.commands.append(
-            f'{gray:.3f} g {x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n'.encode('ascii')
+            f'{self._fill_command(gray, rgb)} {x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n'.encode('ascii')
+        )
+
+    def circle(self, x: float, y: float, radius: float,
+               gray: float | None = 0.75, rgb: tuple[int, int, int] | None = None):
+        color = self._svg_color(gray, rgb)
+        self.preview.append(f'<circle cx="{x}" cy="{842-y}" r="{radius}" fill="{color}"/>')
+        c = radius * 0.5522847498
+        self.commands.append(
+            (
+                f'{self._fill_command(gray, rgb)} '
+                f'{x + radius:.2f} {y:.2f} m '
+                f'{x + radius:.2f} {y + c:.2f} {x + c:.2f} {y + radius:.2f} {x:.2f} {y + radius:.2f} c '
+                f'{x - c:.2f} {y + radius:.2f} {x - radius:.2f} {y + c:.2f} {x - radius:.2f} {y:.2f} c '
+                f'{x - radius:.2f} {y - c:.2f} {x - c:.2f} {y - radius:.2f} {x:.2f} {y - radius:.2f} c '
+                f'{x + c:.2f} {y - radius:.2f} {x + radius:.2f} {y - c:.2f} {x + radius:.2f} {y:.2f} c f\n'
+            ).encode('ascii')
         )
 
     def image(self, name: str, x: float, y: float, width: float, height: float):
-        """Place a registered PDF image XObject at the given position."""
         self.images.add(name)
         self.preview.append(f'<image x="{x}" y="{842-y-height}" width="{width}" height="{height}" preserveAspectRatio="none" href="IMAGE_{name}"/>')
         self.commands.append(
             f'q {width:.2f} 0 0 {height:.2f} {x:.2f} {y:.2f} cm /{name} Do Q\n'.encode('ascii')
         )
 
-    def wrapped(self, value: Any, x: float, width: float, size: float = 8.5, bold: bool = False, leading: float | None = None, indent: float = 0):
-        leading = leading or (size + 3)
+    @staticmethod
+    def wrap_lines(value: Any, width: float, size: float = 8.5) -> list[str]:
         chars = max(18, int(width / max(3.7, size * 0.52)))
-        lines = textwrap.wrap(_pdf_text(value), width=chars, break_long_words=False, break_on_hyphens=False) or ['']
+        return textwrap.wrap(_pdf_text(value), width=chars, break_long_words=False, break_on_hyphens=False) or ['']
+
+    def wrapped(self, value: Any, x: float, width: float, size: float = 8.5, bold: bool = False,
+                leading: float | None = None, indent: float = 0,
+                gray: float | None = 0.08, rgb: tuple[int, int, int] | None = None):
+        leading = leading or (size + 3)
+        lines = self.wrap_lines(value, width, size)
         for line in lines:
-            self.text(line, x + indent, self.y, size, bold=bold)
+            self.text(line, x + indent, self.y, size, bold=bold, gray=gray, rgb=rgb)
             self.y -= leading
         return len(lines)
 
@@ -2920,6 +3406,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             raise ValueError()
     except (ValueError, TypeError):
         raise ValueError('Kies een geldig jaar (1900-9998) en een maand (1-12).') from None
+
     safe_period = period if period in {'day', 'week', 'month', 'year'} else 'month'
     selection_start, selection_end = period_bounds(safe_period, ref)
     trips = []
@@ -2927,6 +3414,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         if stops and (period == 'all' or selection_start <= parse_dt(stops[0]['created_at']) < selection_end):
             trips.append(enrich_business_trip(trip, stops, resolve=False))
     trips.sort(key=lambda trip: parse_dt(trip['stops'][0]['created_at']))
+
     if period == 'all':
         label = 'Alle geregistreerde ritten'
         filename_label = 'alles'
@@ -2939,34 +3427,70 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         period_start = min(period_stops) if period_stops else None
         period_end = max(period_stops) if period_stops else None
     else:
-        safe_period = period if period in {'day', 'week', 'month', 'year'} else 'month'
         period_start, period_end_exclusive = selection_start, selection_end
         label = period_label(safe_period, period_start)
-        filename_label = period_start.strftime('%Y') if safe_period == 'year' else period_start.strftime('%Y-%m') if safe_period == 'month' else safe_period
+        if safe_period == 'year':
+            filename_label = period_start.strftime('%Y')
+        elif safe_period == 'month':
+            filename_label = period_start.strftime('%Y-%m')
+        else:
+            filename_label = safe_period
         period_end = period_end_exclusive - timedelta(days=1)
+
     if period_start and period_end:
         year_label = str(period_start.year) if period_start.year == period_end.year else f'{period_start.year}-{period_end.year}'
         date_range = f'{period_start:%d-%m-%Y} - {period_end:%d-%m-%Y}'
     else:
         year_label = '-'
         date_range = 'Geen geregistreerde datums'
+
     total_km = round(sum(float(t.get('km') or 0) for t in trips), 1)
     business_km = round(sum(float(t.get('business_km') or 0) for t in trips), 1)
     private_km = round(sum(float(t.get('private_km') or 0) for t in trips), 1)
-    pages = []
 
-    company_name = str(settings.get('company_name') or 'Huisplan B.V.').strip() or 'Huisplan B.V.'
+    company_name = str(settings.get('company_name') or 'Huisplan BV').strip() or 'Huisplan BV'
+    footer_company = 'Huisplan BV'
     vehicle_bits = [x for x in [settings.get('vehicle_make'), settings.get('vehicle_model')] if x]
-    vehicle_name = ' '.join(vehicle_bits) or settings.get('vehicle_name') or '-'
-    used_period = ' - '.join(x for x in [settings.get('vehicle_period_from'), settings.get('vehicle_period_to')] if x) or '-'
+    vehicle_name = ' '.join(str(x).strip() for x in vehicle_bits if str(x).strip()) or str(settings.get('vehicle_name') or '-').strip() or '-'
+    driver_name = str(settings.get('driver_name') or '-').strip() or '-'
+    license_plate = str(settings.get('license_plate') or '-').strip() or '-'
+    generated_label = now_local().strftime('%d-%m-%Y %H:%M')
+    footer_period_label = label.capitalize() if label else '-'
+    report_period_label = f'{label.capitalize()} [{date_range}]' if date_range else label.capitalize()
+
+    palette = {
+        'text': (12, 15, 18),
+        'muted': (151, 167, 180),
+        'line': (43, 53, 64),
+        'blue': (82, 186, 255),
+        'teal': (88, 223, 177),
+        'card': (244, 247, 250),
+        'card2': (236, 243, 247),
+    }
+
+    def tint(rgb: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
+        return tuple(max(0, min(255, int(round(v + (255 - v) * ratio)))) for v in rgb)
+
+    def fmt_km(value: Any) -> str:
+        number = round(float(value or 0), 1)
+        if abs(number - round(number)) < 0.05:
+            return f'{int(round(number))}'
+        return f'{number:.1f}'
+
+    def address_parts(value: Any) -> tuple[str, str]:
+        text = str(value or '').strip() or 'Locatie onbekend'
+        parts = [part.strip() for part in text.split(',') if part.strip()]
+        if len(parts) >= 2:
+            return parts[0], ', '.join(parts[1:])
+        match = re.search(r'(\b\d{4}\s?[A-Za-z]{2}\b.*)$', text)
+        if match and match.start() > 0:
+            return text[:match.start()].strip(' ,'), match.group(1).strip(' ,')
+        return text, ''
+
+    def month_heading(dt: datetime) -> str:
+        return period_label('month', dt).capitalize()
 
     pdf_images: dict[str, tuple[int, int, bytes]] = {}
-    captur_path = Path(__file__).with_name('captur-2014.jpg')
-    try:
-        if captur_path.exists():
-            pdf_images['ImCaptur'] = (1200, 800, captur_path.read_bytes())
-    except OSError:
-        pass
     logo_path = Path(__file__).with_name('huisplan-logo.jpg')
     try:
         if logo_path.exists():
@@ -2974,143 +3498,201 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     except OSError:
         pass
 
-    def column_labels(page):
-        # Repeat semantic column labels on every page, including continuations.
-        page.text('RIT / DATUM / ADRES EN TELLERSTAND', 36, page.y, 7.5, bold=True, gray=.35)
-        page.text('RITAFSTAND (KM)', 463, page.y, 7.5, bold=True, gray=.35)
-        page.y -= 20
+    pages: list[_SimplePdfPage] = []
 
-    def new_page():
-        page = _SimplePdfPage('Fiscale rittenregistratie')
-        if pages:
-            column_labels(page)
+    def draw_header(page: _SimplePdfPage, compact: bool = False) -> None:
+        title_y = 806
+        subtitle_y = 788 if not compact else 790
+        logo_w = 70 if not compact else 42
+        logo_h = 64 if not compact else 38
+        logo_x = 489 if not compact else 515
+        logo_y = 760 if not compact else 770
+        page.text('Rittenregistratie', 36, title_y, 20 if not compact else 15, bold=True, rgb=palette['text'])
+        page.text('Fiscale kilometeradministratie', 36, subtitle_y, 9.3 if not compact else 8.4, rgb=palette['muted'])
+        if 'ImLogo' in pdf_images:
+            page.image('ImLogo', logo_x, logo_y, logo_w, logo_h)
+        header_line_y = 754 if not compact else 760
+        page.line(36, header_line_y, 559, header_line_y, 0.8, rgb=tint(palette['line'], 0.35))
+        page.y = 734 if not compact else 742
+
+    def draw_report_table(page: _SimplePdfPage) -> None:
+        table_top = page.y
+        row_h = 32
+        left_x, right_x = 48, 304
+        page.rect(36, table_top - row_h * 3, 523, row_h * 3, rgb=palette['card'])
+        for i in range(4):
+            y = table_top - i * row_h
+            page.line(36, y, 559, y, 0.5, rgb=tint(palette['line'], 0.72))
+        page.line(292, table_top, 292, table_top - row_h * 3, 0.5, rgb=tint(palette['line'], 0.72))
+        cells = [
+            (('Kalenderjaar', year_label), ('Rapportperiode', report_period_label)),
+            (('Bestuurder', driver_name), ('Auto', vehicle_name)),
+            (('Kenteken', license_plate), ('Gegenereerd op', generated_label)),
+        ]
+        for row_idx, (left_cell, right_cell) in enumerate(cells):
+            baseline = table_top - row_idx * row_h - 12
+            for x, width, (key, value) in ((left_x, 218, left_cell), (right_x, 215, right_cell)):
+                page.text(key.upper(), x, baseline, 7.2, bold=True, rgb=palette['muted'])
+                value_lines = _SimplePdfPage.wrap_lines(value, width, 9.2)[:2]
+                for line_idx, line in enumerate(value_lines):
+                    page.text(line, x, baseline - 12 - line_idx * 10, 9.2, bold=(row_idx == 0 and x == left_x), rgb=palette['text'])
+        page.y = table_top - row_h * 3 - 18
+
+    def draw_summary_cards(page: _SimplePdfPage) -> None:
+        card_y = page.y - 58
+        width = 165
+        gap = 14
+        cards = [
+            ('TOTAAL', fmt_km(total_km), palette['card2'], None),
+            ('ZAKELIJK', fmt_km(business_km), tint(palette['teal'], 0.85), palette['teal']),
+            ('PRIVÉ', fmt_km(private_km), tint(palette['blue'], 0.88), palette['blue']),
+        ]
+        for idx, (title, value, bg, bullet) in enumerate(cards):
+            x = 36 + idx * (width + gap)
+            page.rect(x, card_y, width, 58, rgb=bg)
+            label_x = x + 14
+            if bullet is not None:
+                page.circle(x + 16, card_y + 42, 3.2, rgb=bullet)
+                label_x = x + 26
+            page.text(title, label_x, card_y + 40, 8.2, bold=True, rgb=palette['muted'])
+            page.text(f'{value} km', x + 14, card_y + 18, 18, bold=True, rgb=palette['text'])
+        page.y = card_y - 22
+
+    def new_page(*, compact: bool = False, section_label: str | None = None) -> _SimplePdfPage:
+        page = _SimplePdfPage()
+        draw_header(page, compact=compact)
+        if section_label:
+            page.text(section_label, 36, page.y, 9.5, bold=True, rgb=palette['muted'])
+            page.y -= 18
         pages.append(page)
         return page
 
-    page = new_page()
-    if 'ImLogo' in pdf_images:
-        page.rect(34, 738, 38, 38, gray=.96)
-        page.image('ImLogo', 36, 740, 34, 34)
-        page.text(company_name.upper(), 82, 764, 8.5, bold=True, gray=.35)
-        page.text('Rittenregistratie', 82, 751, 7.3, gray=.45)
-        page.y = 728.0
-    else:
-        page.text(company_name.upper(), 36, page.y, 8.5, bold=True, gray=.35)
-        page.y -= 16
-    card_top = page.y
-    page.rect(36, card_top - 65, 335, 65, gray=.94)
-    page.text('KALENDERJAAR', 48, card_top - 17, 7.2, bold=True, gray=.42)
-    page.text(year_label, 48, card_top - 40, 16, bold=True)
-    page.text('RAPPORTPERIODE', 160, card_top - 17, 7.2, bold=True, gray=.42)
-    page.text(label, 160, card_top - 36, 10.2, bold=True)
-    page.text(date_range, 160, card_top - 52, 7.3, gray=.30)
-    if 'ImCaptur' in pdf_images:
-        page.rect(385, card_top - 105, 174, 105, gray=1)
-        page.image('ImCaptur', 387, card_top - 103, 170, 102)
-    page.y = card_top - 122
-    metadata_rows = [
-        (('Bestuurder', settings.get('driver_name') or '-'), ('Auto', vehicle_name)),
-        (('Bedrijf', company_name), ('Kenteken', settings.get('license_plate') or '-')),
-        (('Beschikkingsperiode', used_period), ('Gegenereerd', now_local().strftime('%d-%m-%Y %H:%M'))),
-    ]
-    for (left_key, left_value), (right_key, right_value) in metadata_rows:
-        page.text(f'{left_key}:', 36, page.y, 8, bold=True)
-        page.text(left_value, 122, page.y, 8)
-        page.text(f'{right_key}:', 304, page.y, 8, bold=True)
-        page.text(right_value, 386, page.y, 8)
-        page.y -= 14
-    page.y -= 2
-    page.line(36, page.y, 559, page.y, .5)
-    page.y -= 16
-    page.text(f'Totaal: {total_km:.1f} km', 36, page.y, 9.5, bold=True)
-    page.text(f'Zakelijk: {business_km:.1f} km', 190, page.y, 9.5, bold=True)
-    page.text(f'Prive: {private_km:.1f} km', 370, page.y, 9.5, bold=True)
-    page.y -= 18
-    page.wrapped('Rit & Tank legt datum, begin- en eindstand, vertrek- en aankomstlocatie, ritsoort, afwijkende route en prive-omrijkilometers vast. Controleer dit rapport voor gebruik in uw administratie.', 36, 523, 7.5)
-    page.y -= 6
-    page.wrapped('Ritten zijn ingedeeld op vertrekdatum. Een rit over een maandgrens staat volledig in de vertrekmaand.', 36, 523, 7.5)
-    page.y -= 6
-    column_labels(page)
+    def stop_height(stop: dict[str, Any]) -> float:
+        primary, secondary = address_parts(stop.get('location_address') or stop.get('location_label') or stop.get('manual_label') or '')
+        primary_lines = _SimplePdfPage.wrap_lines(primary, 415, 10.7)
+        secondary_lines = _SimplePdfPage.wrap_lines(secondary, 415, 8.4) if secondary else []
+        note_lines = _SimplePdfPage.wrap_lines(f'Notitie: {stop.get("note")}', 415, 7.8) if stop.get('note') else []
+        height = 14 + len(primary_lines) * 12 + len(secondary_lines) * 10 + 11
+        if note_lines:
+            height += len(note_lines) * 9 + 4
+        return height
+
+    def draw_segment(page: _SimplePdfPage, distance_km: float) -> None:
+        page.line(58, page.y + 4, 58, page.y - 8, 0.8, rgb=tint(palette['line'], 0.45))
+        page.text(f'{fmt_km(distance_km)} km', 72, page.y - 2, 8.4, bold=True, rgb=palette['muted'])
+        page.y -= 20
+
+    def draw_stop(page: _SimplePdfPage, stop: dict[str, Any], role: str) -> None:
+        primary, secondary = address_parts(stop.get('location_address') or stop.get('location_label') or stop.get('manual_label') or '')
+        page.text(f'{role} · {stop.get("time_label") or "-"}', 48, page.y, 8.4, bold=True, rgb=palette['muted'])
+        page.y -= 13
+        for line in _SimplePdfPage.wrap_lines(primary, 415, 10.7):
+            page.text(line, 48, page.y, 10.7, bold=True, rgb=palette['text'])
+            page.y -= 12
+        if secondary:
+            for line in _SimplePdfPage.wrap_lines(secondary, 415, 8.4):
+                page.text(line, 48, page.y, 8.4, rgb=palette['muted'])
+                page.y -= 10
+        page.text(f'Tellerstand: {fmt_km(stop.get("odometer"))} km', 48, page.y, 8.4, rgb=palette['text'])
+        page.y -= 11
+        if stop.get('note'):
+            for line in _SimplePdfPage.wrap_lines(f'Notitie: {stop.get("note")}', 415, 7.8):
+                page.text(line, 48, page.y, 7.8, rgb=palette['muted'])
+                page.y -= 9
+            page.y -= 1
+
+    def trip_badge(trip: dict[str, Any]) -> tuple[str, tuple[int, int, int]]:
+        has_business = float(trip.get('business_km') or 0) > 0
+        has_private = float(trip.get('private_km') or 0) > 0
+        if has_business and has_private:
+            return 'PRIVÉ/ZAKELIJK', palette['line']
+        if has_private:
+            return 'PRIVÉ', palette['blue']
+        return 'ZAKELIJK', palette['teal']
+
+    page = new_page(compact=False)
+    draw_report_table(page)
+    draw_summary_cards(page)
+    page.text('Rittenoverzicht', 36, page.y, 14, bold=True, rgb=palette['text'])
+    page.y -= 20
+
     if not trips:
-        page.text('Geen ritten in deze periode.', 36, page.y, 10)
-    day_counts = {}
-    for trip in trips:
-        stops = trip.get('stops') or []
-        if not stops:
-            continue
-        dkey = parse_dt(stops[0].get('created_at')).strftime('%Y-%m-%d')
-        day_counts[dkey] = day_counts.get(dkey, 0) + 1
-        trip['day_trip_no'] = day_counts[dkey]
+        page.text('Geen ritten in deze periode.', 36, page.y, 10.5, rgb=palette['text'])
+
     previous_month = None
     for idx, trip in enumerate(trips, start=1):
         stops = trip.get('stops') or []
+        if not stops:
+            continue
         start_dt = parse_dt(stops[0]['created_at'])
         month_key = start_dt.strftime('%Y-%m')
-        if period == 'year' and month_key != previous_month:
-            if previous_month is not None or page.need(160):
-                page = new_page()
-            month_trips = [t for t in trips if parse_dt(t['stops'][0]['created_at']).strftime('%Y-%m') == month_key]
-            page.text(period_label('month', start_dt).capitalize(), 36, page.y, 13, bold=True)
-            page.y -= 17
-            page.text(f'{len(month_trips)} ritten | Totaal: {sum(t["km"] for t in month_trips):.1f} km | Zakelijk: {sum(t["business_km"] for t in month_trips):.1f} km | Prive: {sum(t["private_km"] for t in month_trips):.1f} km', 36, page.y, 8)
-            page.y -= 24
+        if safe_period == 'year' and month_key != previous_month:
+            if previous_month is not None and page.need(62):
+                page = new_page(compact=True)
+            page.text(month_heading(start_dt), 36, page.y, 12.5, bold=True, rgb=palette['text'])
+            page.y -= 18
+            page.line(36, page.y, 559, page.y, 0.6, rgb=tint(palette['line'], 0.55))
+            page.y -= 16
             previous_month = month_key
-        estimated = 118 + 20 * max(1, len(stops))
-        if page.need(estimated):
-            page = new_page()
-        start_dt = parse_dt(stops[0]['created_at']) if stops else parse_dt(trip.get('started_at'))
-        page.text(f'Rit {trip.get("day_trip_no", idx):02d} - {dutch_date(start_dt)}', 36, page.y, 10.5, bold=True)
-        page.text(f'{float(trip.get("km") or 0):.1f} km', 500, page.y, 9, bold=True)
-        page.y -= 14
-        page.text(f'Ritsoort: {trip.get("trip_type_label") or "Zakelijk"}', 48, page.y, 8.5, bold=True)
-        page.text(f'Beginstand: {float(trip.get("start_odometer") or 0):.0f} km', 220, page.y, 8.2)
-        page.text(f'Eindstand: {float(trip.get("last_odometer") or 0):.0f} km', 390, page.y, 8.2)
-        page.y -= 12
-        page.text(f'Zakelijk: {float(trip.get("business_km") or 0):.1f} km', 48, page.y, 8)
-        page.text(f'Prive: {float(trip.get("private_km") or 0):.1f} km', 220, page.y, 8)
-        page.text(f'Prive omrij: {float(trip.get("private_detour_km") or 0):.1f} km', 390, page.y, 8)
-        page.y -= 12
-        purpose = trip.get('purpose') or '-'
-        client = trip.get('client') or ''
-        page.wrapped(f'Doel: {purpose}' + (f' | Klant/opdracht: {client}' if client else ''), 48, 500, 8.2)
-        if trip.get('deviating_route'):
-            page.wrapped(f'Afwijkende route: {trip.get("deviating_route")}', 48, 500, 8)
-        if trip.get('note'):
-            page.wrapped(f'Toelichting: {trip.get("note")}', 48, 500, 8)
-        prev_odo = None
-        for j,stop in enumerate(stops):
-            dt = parse_dt(stop.get('created_at'))
-            odo = float(stop.get('odometer') or 0)
-            seg = 0.0 if prev_odo is None else max(0.0, odo - prev_odo)
-            role = 'Vertrek' if j == 0 else ('Aankomst' if j == len(stops) - 1 and trip.get('status') == 'completed' else f'Tussenstop {j}')
-            loc = stop.get('location_address') or stop.get('location_label') or stop.get('manual_label') or 'Locatie onbekend'
-            seg_type = stop.get('segment_trip_type_label') or ''
-            header = f'{role}: {dt.strftime("%H:%M")} | Tellerstand: {odo:.0f} km' + (f' | Etappe: {seg:.1f} km' if j else '') + (f' | {seg_type}' if j and seg_type else '')
-            if page.need(65):
-                page = new_page()
-                page.text(f'Rit {trip.get("day_trip_no", idx):02d} - {dutch_date(start_dt)} - vervolg', 36, page.y, 9, bold=True)
-                page.y -= 15
-            page.text(dutch_date(dt), 54, page.y, 7.5, gray=.35)
-            page.y -= 11
-            page.text(header, 54, page.y, 8.2, bold=True)
-            page.y -= 11
-            page.wrapped(loc, 66, 475, 8)
-            if stop.get('note'):
-                page.wrapped(f'Notitie: {stop.get("note")}', 66, 475, 7.5)
-            prev_odo = odo
+
+        if page.need(72):
+            page = new_page(compact=True)
+            if safe_period == 'year':
+                page.text(month_heading(start_dt), 36, page.y, 12.5, bold=True, rgb=palette['text'])
+                page.y -= 18
+                page.line(36, page.y, 559, page.y, 0.6, rgb=tint(palette['line'], 0.55))
+                page.y -= 16
+
+        trip_label, trip_color = trip_badge(trip)
+        page.circle(40, page.y - 3, 3.6, rgb=trip_color)
+        page.text(trip_label, 52, page.y, 10.4, bold=True, rgb=palette['text'])
+        page.text(f'{fmt_km(trip.get("km"))} km', 498, page.y, 10.4, bold=True, rgb=palette['text'])
+        page.y -= 15
+        page.text(f'Rit {idx:02d} · {dutch_date(start_dt)}', 52, page.y, 9, rgb=palette['muted'])
+        page.y -= 16
+
+        for stop_index, stop in enumerate(stops):
+            role = 'VERTREK' if stop_index == 0 else ('AANKOMST' if stop_index == len(stops) - 1 and trip.get('status') == 'completed' else 'TUSSENSTOP')
+            required = stop_height(stop) + (24 if stop_index > 0 else 0)
+            if page.need(required):
+                page = new_page(compact=True, section_label=f'Rit {idx:02d} · vervolg')
+            if stop_index > 0:
+                draw_segment(page, float(stop.get('segment_km') or 0))
+            draw_stop(page, stop, role)
+
+        if float(trip.get('business_km') or 0) > 0 and (trip.get('purpose') or trip.get('client')):
+            purpose = str(trip.get('purpose') or '').strip()
+            client = str(trip.get('client') or '').strip()
+            detail = f'Doel: {purpose or "-"}' + (f' · Klant/opdracht: {client}' if client else '')
+            for line in _SimplePdfPage.wrap_lines(detail, 475, 8.2):
+                if page.need(12):
+                    page = new_page(compact=True, section_label=f'Rit {idx:02d} · vervolg')
+                page.text(line, 48, page.y, 8.2, rgb=palette['text'])
+                page.y -= 10
+        for extra in [
+            f'Afwijkende route: {trip.get("deviating_route")}' if trip.get('deviating_route') else '',
+            f'Toelichting: {trip.get("note")}' if trip.get('note') else '',
+        ]:
+            if not extra:
+                continue
+            for line in _SimplePdfPage.wrap_lines(extra, 475, 7.8):
+                if page.need(11):
+                    page = new_page(compact=True, section_label=f'Rit {idx:02d} · vervolg')
+                page.text(line, 48, page.y, 7.8, rgb=palette['muted'])
+                page.y -= 9
         page.y -= 4
-        page.line(36, page.y, 559, page.y, .35, .82)
-        page.y -= 14
+        page.line(36, page.y, 559, page.y, 0.45, rgb=tint(palette['line'], 0.65))
+        page.y -= 16
+
     total_pages = len(pages)
-    footer_label = f'{company_name} · Rit & Tank · {label}'
     for n, pg in enumerate(pages, start=1):
-        pg.line(36, 30, 559, 30, .35, .85)
-        footer_x = 56 if 'ImLogo' in pdf_images else 36
-        if 'ImLogo' in pdf_images:
-            pg.image('ImLogo', 38, 7, 13, 13)
-        pg.text(footer_label, footer_x, 18, 7, gray=.45)
-        pg.text(f'Pagina {n} van {total_pages}', 493, 18, 7, gray=.45)
-    data, filename = _build_pdf(pages, pdf_images), f'rittenregistratie_{filename_label}.pdf'
+        pg.line(36, 34, 559, 34, 0.45, rgb=tint(palette['line'], 0.65))
+        pg.text(footer_company, 36, 20, 7.4, bold=True, rgb=palette['muted'])
+        pg.text(footer_period_label, 262, 20, 7.4, rgb=palette['muted'])
+        pg.text(f'Pagina {n} van {total_pages}', 475, 20, 7.4, rgb=palette['muted'])
+
+    data = _build_pdf(pages, pdf_images)
+    filename = f'rittenregistratie_{filename_label}.pdf'
     if preview:
         return {'filename': filename, 'pdf_base64': base64.b64encode(data).decode('ascii'), 'pages': [p.svg(pdf_images) for p in pages]}
     return data, filename
@@ -3714,7 +4296,7 @@ APP_HTML = r'''<!doctype html>
 [hidden]{display:none!important}.scan-card{display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;background:#19382f;border:1px solid #40836d;border-radius:18px;cursor:pointer;text-align:center}.scan-card>span{font-size:52px}.scan-card>b{font-size:20px}.scan-card small{color:var(--muted)}.address-choices .selected{outline:2px solid #65d9b0}.address-choices{display:grid;gap:6px;margin-top:12px}#receiptScanStatus{font-size:13px;line-height:1.5}#pdfModal .linkbtn{font:inherit} .export-actions{display:flex;gap:8px;align-items:center}.pdf-link{background:#17251f;border-color:#2d7158;color:#7de0b4}.export-actions .maplink{min-width:42px;text-align:center}.trip-type-pill{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:900;margin-top:4px}.trip-type-pill.business{background:#11382f;color:#6ce0b3}.trip-type-pill.private{background:#3b2028;color:#ff9bad}.trip-type-pill.mixed{background:#3b2f15;color:#ffd27a}.trip-actions{gap:7px}.editbtn{background:#172635;border:1px solid #2d5069;color:#8dd2ff;border-radius:10px;padding:6px 9px}.audit-list{display:flex;flex-direction:column;gap:7px}.audit-row{background:#10161b;border:1px solid #27323b;border-radius:13px;padding:10px}.audit-row b{font-size:12px}.audit-row small{display:block;color:var(--muted);font-size:10px;margin-top:3px}.tax-note{font-size:11px;line-height:1.35;color:#a8b5bf;background:#13191e;border:1px solid #2b3540;border-radius:13px;padding:10px;margin-top:9px}.receipt-link{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;background:#2a2117;border:1px solid #624821;color:#ffd28b;border-radius:11px;padding:8px 9px}.filepick{display:block;background:#0f1418;border:1px dashed #3b4a55;border-radius:14px;padding:12px}.filepick input{padding:0;border:0;background:transparent;font-size:13px}.fiscal-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 
 .smart-place-bar{display:flex;gap:8px;margin-top:10px}.smart-place-bar button{flex:1;border:1px solid #385064;background:#13212c;color:#9dd9ff;border-radius:14px;padding:11px;font-weight:900}.known-list{display:flex;flex-direction:column;gap:8px}.known-row{display:grid;grid-template-columns:42px 1fr auto;gap:10px;align-items:center;background:#10171c;border:1px solid #2b3841;border-radius:15px;padding:10px}.known-icon{font-size:24px;text-align:center}.known-row small{display:block;color:var(--muted);margin-top:2px;line-height:1.3}.known-actions{display:flex;gap:5px}.known-actions button{border:0;border-radius:10px;padding:7px 9px;background:#1c2b36;color:#a8dbff}.suggest-box{display:none;margin:12px 0;background:linear-gradient(145deg,#122b26,#112027);border:1px solid #2d8069;border-radius:16px;padding:12px}.suggest-box.show{display:block}.suggest-box b{font-size:14px}.suggest-box small{display:block;color:#9db0ba;margin-top:4px;line-height:1.35}.segment-choice{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}.segment-choice button{border:1px solid #35434c;background:#11181d;color:#aab8c2;border-radius:13px;padding:12px;font-weight:900}.segment-choice button.active.business{background:#11382f;border-color:#25866b;color:#74e7bb}.segment-choice button.active.private{background:#3b2028;border-color:#a1465e;color:#ff9bad}.segment-badge{display:inline-flex;margin-left:6px;padding:3px 7px;border-radius:999px;font-size:9px;font-weight:900;background:#1a2a34;color:#8fd5ff}.leg-pill{display:inline-flex;padding:2px 7px;border-radius:999px;font-size:9px;font-weight:900;margin-left:5px}.leg-pill.business{background:#11382f;color:#6ce0b3}.leg-pill.private{background:#3b2028;color:#ff9bad}.place-radius{display:flex;align-items:center;gap:10px}.place-radius input{flex:1}.place-preview{padding:10px;background:#0f1519;border:1px solid #2a3740;border-radius:13px;color:#9fc2d9;font-size:12px;margin-top:8px}
-.assistant-panel{display:none;margin:10px 0;border:1px solid #2d8069;background:linear-gradient(145deg,#0e2924,#111c24);border-radius:18px;padding:13px}.assistant-panel.show{display:block}.assistant-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.assistant-head b{font-size:15px}.assistant-head small{display:block;color:#9fb1bc;margin-top:3px;line-height:1.35}.assistant-status{font-size:10px;padding:5px 8px;border-radius:999px;background:#17352d;color:#7ce0b8;font-weight:900;white-space:nowrap}.assistant-status.off{background:#33251a;color:#ffc17a}.assistant-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}.assistant-item{background:#0d161b;border:1px solid #2b4246;border-radius:14px;padding:10px}.assistant-route{font-weight:900;font-size:13px}.assistant-meta{font-size:10px;color:#94a6b2;margin-top:3px;line-height:1.35}.assistant-actions{display:grid;grid-template-columns:1fr 1fr auto auto;gap:6px;margin-top:8px}.assistant-actions button{border:1px solid #34454f;background:#152029;color:#c5d2da;border-radius:10px;padding:9px 7px;font-weight:900}.assistant-actions .private{background:#342028;border-color:#864052;color:#ff9bad}.assistant-actions .business{background:#11372f;border-color:#27765f;color:#79deb9}.assistant-actions .complete{background:#12304a;border-color:#28638e;color:#8fd1ff}.assistant-actions .dismiss{min-width:38px}.assistant-zone-ok{color:#71d9b2}.assistant-zone-err{color:#ff9a9a}.assistant-settings{margin-top:14px;padding:12px;background:#0f1519;border:1px solid #2d3a43;border-radius:15px}.assistant-settings h3{margin:0 0 6px;font-size:15px}.assistant-settings p{margin:0 0 9px;color:#91a2ae;font-size:11px;line-height:1.4}.assistant-route-big{font-size:18px;font-weight:900;text-align:center;padding:11px;background:#0e151a;border:1px solid #2c3942;border-radius:14px;margin-top:10px}.assistant-note{font-size:11px;color:#9fb0ba;line-height:1.4;margin-top:8px}.odo-suggest{display:none;margin:2px 0 10px;padding:18px;border:1px solid rgba(69,240,195,.38);background:linear-gradient(145deg,#103a31,#0b211d);border-radius:21px;text-align:center;box-shadow:0 14px 35px rgba(0,0,0,.22)}.odo-suggest.show{display:block}.odo-suggest-label{color:#78e8ca;font-size:10px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.odo-suggest-value{font-size:42px;font-weight:900;letter-spacing:-.055em;margin-top:7px;color:#fff}.odo-suggest-value span{font-size:16px;letter-spacing:0;color:#b9cdc7}.odo-suggest-detail{color:#9eb5af;font-size:11px;line-height:1.4;margin-top:8px}.odo-suggest-actions{display:grid;grid-template-columns:1.35fr .65fr;gap:8px;margin-top:15px}.odo-suggest-accept,.odo-suggest-edit{border-radius:15px;padding:13px 8px;font-weight:900}.odo-suggest-accept{border:0;background:linear-gradient(135deg,#50eec7,#19b9a5);color:#05251d}.odo-suggest-edit{border:1px solid rgba(141,211,193,.23);background:#10211e;color:#d7e7e2}.odo-editor[hidden]{display:none}
+.assistant-panel{display:none;margin:10px 0;border:1px solid #2d8069;background:linear-gradient(145deg,#0e2924,#111c24);border-radius:18px;padding:13px}.assistant-panel.show{display:block}.assistant-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.assistant-head b{font-size:15px}.assistant-head small{display:block;color:#9fb1bc;margin-top:3px;line-height:1.35}.assistant-status{font-size:10px;padding:5px 8px;border-radius:999px;background:#17352d;color:#7ce0b8;font-weight:900;white-space:nowrap}.assistant-status.off{background:#33251a;color:#ffc17a}.assistant-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}.assistant-item{background:#0d161b;border:1px solid #2b4246;border-radius:14px;padding:10px}.assistant-route{font-weight:900;font-size:13px}.assistant-meta{font-size:10px;color:#94a6b2;margin-top:3px;line-height:1.35}.assistant-actions{display:grid;grid-template-columns:1fr 1fr auto auto auto;gap:6px;margin-top:8px}.assistant-actions button{border:1px solid #34454f;background:#152029;color:#c5d2da;border-radius:10px;padding:9px 7px;font-weight:900}.assistant-actions .private{background:#342028;border-color:#864052;color:#ff9bad}.assistant-actions .business{background:#11372f;border-color:#27765f;color:#79deb9}.assistant-actions .complete{background:#12304a;border-color:#28638e;color:#8fd1ff}.assistant-actions .edit-address{background:#2e2711;border-color:#8e6f28;color:#ffd479}.assistant-actions .dismiss{min-width:38px}.assistant-zone-ok{color:#71d9b2}.assistant-zone-err{color:#ff9a9a}.assistant-settings{margin-top:14px;padding:12px;background:#0f1519;border:1px solid #2d3a43;border-radius:15px}.assistant-settings h3{margin:0 0 6px;font-size:15px}.assistant-settings p{margin:0 0 9px;color:#91a2ae;font-size:11px;line-height:1.4}.assistant-route-big{font-size:18px;font-weight:900;text-align:center;padding:11px;background:#0e151a;border:1px solid #2c3942;border-radius:14px;margin-top:10px}.assistant-note{font-size:11px;color:#9fb0ba;line-height:1.4;margin-top:8px}.odo-suggest{display:none;margin:2px 0 10px;padding:18px;border:1px solid rgba(69,240,195,.38);background:linear-gradient(145deg,#103a31,#0b211d);border-radius:21px;text-align:center;box-shadow:0 14px 35px rgba(0,0,0,.22)}.odo-suggest.show{display:block}.odo-suggest-label{color:#78e8ca;font-size:10px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.odo-suggest-value{font-size:42px;font-weight:900;letter-spacing:-.055em;margin-top:7px;color:#fff}.odo-suggest-value span{font-size:16px;letter-spacing:0;color:#b9cdc7}.odo-suggest-detail{color:#9eb5af;font-size:11px;line-height:1.4;margin-top:8px}.odo-suggest-actions{display:grid;grid-template-columns:1.35fr .65fr;gap:8px;margin-top:15px}.odo-suggest-accept,.odo-suggest-edit{border-radius:15px;padding:13px 8px;font-weight:900}.odo-suggest-accept{border:0;background:linear-gradient(135deg,#50eec7,#19b9a5);color:#05251d}.odo-suggest-edit{border:1px solid rgba(141,211,193,.23);background:#10211e;color:#d7e7e2}.odo-editor[hidden]{display:none}
 .offline-banner{display:none;position:sticky;top:calc(env(safe-area-inset-top) + 4px);z-index:25;margin:0 auto 10px;max-width:620px;padding:9px 12px;border-radius:13px;background:#3a2917;border:1px solid #80602f;color:#ffd491;text-align:center;font-size:12px;font-weight:800}.offline-banner.show{display:block}.pwa-card{margin-top:14px;padding:13px;border-radius:17px;background:linear-gradient(145deg,#102a25,#111c22);border:1px solid #2b6f5d}.pwa-card b{display:block}.pwa-card small{display:block;color:#a6bab4;line-height:1.4;margin:4px 0 10px}.pwa-install{width:100%;border:1px solid #34866f;background:#123b31;color:#82e7c2;border-radius:13px;padding:12px;font-weight:900}.pwa-install:disabled{opacity:.6}
 
 /* V4.2 premium mobile interface */
@@ -3854,6 +4436,26 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <button class="save" id="arrivalSave" onclick="saveAssistantArrival()">✓ Alles akkoord</button>
 </div></div>
 
+<div class="modal" id="assistantAddressModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>✏️ Adres aanpassen</h2><button class="close" onclick="closeModal('assistantAddressModal')">✕</button></div>
+  <input id="addrArrivalId" type="hidden">
+  <div class="assistant-note">Huidig voorstel: <b id="addrCurrentLabel">—</b></div>
+  <div class="field"><label>Zoek het juiste adres</label><input id="addrQuery" placeholder="Straat, huisnummer, plaats" onkeydown="if(event.key==='Enter')searchAssistantAddress()"></div>
+  <button class="odo-suggest-edit" type="button" onclick="searchAssistantAddress()">🔍 Zoeken</button>
+  <div class="known-list" id="addrResults"></div>
+  <div class="odo-suggest" id="addrPreview">
+    <div class="odo-suggest-label">Vertrek</div>
+    <div class="assistant-route-big" id="addrPreviewOrigin" style="font-size:14px">—</div>
+    <div class="odo-suggest-label" style="margin-top:8px">Nieuwe bestemming</div>
+    <div class="assistant-route-big" id="addrPreviewLabel" style="font-size:15px">—</div>
+    <div class="odo-suggest-detail" id="addrPreviewDetail"></div>
+    <div class="odo-suggest-label" style="margin-top:8px">Afstand</div>
+    <div class="odo-suggest-detail" id="addrPreviewDistance">—</div>
+    <div class="odo-suggest-label" style="margin-top:8px" id="addrPreviewOdoLabel">Voorgestelde eindstand</div>
+    <div class="odo-suggest-detail" id="addrPreviewOdo">—</div>
+    <button class="save" type="button" id="addrUseBtn" onclick="useAssistantAddressResult()" disabled>✓ Gebruik dit adres</button>
+  </div>
+</div></div>
+
 <div class="modal" id="settingsModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>⚙️ Instellingen</h2><button class="close" onclick="closeModal('settingsModal')">✕</button></div>
   <div class="field"><label>Naam auto</label><input id="setVehicle"></div><div class="field"><label>Brandstof</label><input id="setFuel"></div><div class="field"><label>Valuta</label><input id="setCurrency" maxlength="3"></div>
   <div class="field"><label>Bestuurder (voor ritten-PDF)</label><input id="setDriver" maxlength="80" placeholder="Naam bestuurder"></div>
@@ -3925,9 +4527,15 @@ function switchView(view,remember=true){VIEW=view==='business'?'business':'auto'
 document.querySelectorAll('.view-tab').forEach(b=>b.onclick=()=>{switchView(b.dataset.view);window.scrollTo({top:0,behavior:'smooth'})});VIEW=localStorage.getItem('rit_tank_view')||'auto';
 function smartTripAction(){if(!DATA)return;let active=DATA.business?.active_trip;if(active){switchView('business');$('bizHero').scrollIntoView({block:'start',behavior:'smooth'})}else openTripPoint('start')}
 function renderBusiness(){let b=DATA.business||{},p=b.period||{},y=b.year||{},a=b.active_trip,primary=$('tripPrimaryLabel');if(primary)primary.textContent=a?'Actieve rit bekijken':'Rit starten';let csv=$('bizCsvLink'),pdf=$('bizPdfLink'),scsv=$('settingsBusinessCsv'),spdf=$('settingsBusinessPdf');if(csv)csv.href=`api/business.csv?period=${PERIOD}`;if(pdf)pdf.href=`api/business.pdf?period=${PERIOD}`;if(scsv)scsv.href=`api/business.csv?period=${PERIOD}`;if(spdf)spdf.href=`api/business.pdf?period=${PERIOD}`;$('bizPeriodLabel').textContent=DATA.period.label;$('bizTripCount').textContent=`${p.trips||0} rit${p.trips===1?'':'ten'}`;$('bizKm').textContent=`${fmt(p.business_km||0,1)} km`;$('bizPrivateKm').textContent=`${fmt(p.private_km||0,1)} km`;$('bizPrivateYear').textContent=`${fmt(y.private_km||0,1)} km`;$('bizTrips').textContent=String(p.trips||0);$('bizStops').textContent=String(p.stops||0);$('bizAvg').textContent=`${fmt(p.avg_km||0,1)} km`;let hero=$('bizHero'),actions=$('bizHeroActions');actions.innerHTML='';if(a){hero.classList.add('active-trip');$('bizHeroTitle').textContent=a.purpose||`${a.trip_type_label||'Rit'} actief`;let os=b.odometer_suggestion||{},track=os.active&&Number(os.tracked_km||0)>0?`<br>🛰️ Achtergrondroute sinds laatste stop: <b>${fmt(os.tracked_km,1)} km</b> · voorstel eindstand <b>${fmt(os.suggested_odometer,0)} km</b>`:'';$('bizHeroInfo').innerHTML=`${a.trip_type_label||'Rit'}${a.client?' · '+esc(a.client):''} · ${fmt(a.km||0,1)} km · ${a.stop_count||0} locatie${a.stop_count===1?'':'s'}<br>Laatste: ${esc(a.last_location||'—')}${track}`;actions.className='biz-actions';actions.innerHTML='<button class="biz-next" onclick="openTripPoint(\'stop\')">📍 Volgende adres</button><button class="biz-finish" onclick="openTripPoint(\'finish\')">🏁 Rit afsluiten</button>'}else{hero.classList.remove('active-trip');$('bizHeroTitle').textContent='Geen actieve rit';$('bizHeroInfo').textContent='Start een rit en leg vertrek, aankomst, kilometerstanden en ritsoort vast.';actions.className='';actions.innerHTML='<button class="biz-start" onclick="openTripPoint(\'start\')">＋ Nieuwe rit</button>'}renderAssistant();renderBusinessHistory(b.recent_trips||[]);renderAudit(b.audit||[])}
-function renderAssistant(){let a=DATA?.business?.assistant||{},cfg=a.config||{},rt=a.runtime||{},pending=a.pending||[],panel=$('assistantPanel'),list=$('assistantList'),badge=$('assistantStatusBadge'),txt=$('assistantStatusText');panel.classList.add('show');badge.textContent=cfg.mode==='autopilot'?'AUTO':cfg.enabled?'AAN':'UIT';badge.className='assistant-status'+(cfg.enabled?'':' off');let parts=[];if(cfg.enabled){parts.push(cfg.mode==='autopilot'?'Autopilot classificeert zekere routes':cfg.mode==='manual'?'Handmatige modus':`Assistent volgt ${esc(cfg.location_entity||'nog geen tracker')}`);if(rt.current_place)parts.push(`nu bij ${esc(rt.current_place)}`);else if(rt.departed_from)parts.push(`vertrokken vanaf ${esc(rt.departed_from)}`);if(rt.draft_active)parts.push(`Concept onderweg · ${fmt(rt.draft_km,1)} GPS-km`);if(rt.last_error)parts.push(`⚠️ ${esc(rt.last_error)}`)}else parts.push('Zet hem aan via Instellingen');txt.innerHTML=parts.join(' · ');list.innerHTML='';if(!pending.length){list.innerHTML='<div class="empty" style="padding:6px 0">Alles is bijgewerkt — geen ritten om te controleren.</div>';return}pending.forEach(x=>{let d=document.createElement('div');d.className='assistant-item';let chosen=x.confirmed_type||x.suggested_type||'',pct=Math.round(Number(x.suggestion_confidence||0)*100),proposal=x.suggested_type?`Voorstel: ${esc(x.suggested_type_label)} · ${pct}% · ${esc(x.suggestion_reason||'')}`:'Geen zekere classificatie — kies zelf';d.innerHTML=`<div class="assistant-route">${esc(x.origin_name)} → ${esc(x.destination_name)}</div><div class="assistant-meta">${esc(x.date_label)} · ${proposal}${x.status==='confirmed'?`<br>✓ ${x.classification_source==='autopilot'?'Door Autopilot':'Via melding'} geclassificeerd als ${esc(x.confirmed_type_label)}`:''}</div><div class="assistant-actions"><button class="private ${chosen==='private'?'active':''}" onclick="confirmAssistant(${x.id},'private')">🏠 Privé</button><button class="business ${chosen==='business'?'active':''}" onclick="confirmAssistant(${x.id},'business')">💼 Zakelijk</button><button class="complete" onclick="openAssistantComplete(${x.id})">Controleren →</button><button class="dismiss" onclick="dismissAssistant(${x.id})">×</button></div>`;list.appendChild(d)})}
+function renderAssistant(){let a=DATA?.business?.assistant||{},cfg=a.config||{},rt=a.runtime||{},pending=a.pending||[],panel=$('assistantPanel'),list=$('assistantList'),badge=$('assistantStatusBadge'),txt=$('assistantStatusText');panel.classList.add('show');badge.textContent=cfg.mode==='autopilot'?'AUTO':cfg.enabled?'AAN':'UIT';badge.className='assistant-status'+(cfg.enabled?'':' off');let parts=[];if(cfg.enabled){parts.push(cfg.mode==='autopilot'?'Autopilot classificeert zekere routes':cfg.mode==='manual'?'Handmatige modus':`Assistent volgt ${esc(cfg.location_entity||'nog geen tracker')}`);if(rt.current_place)parts.push(`nu bij ${esc(rt.current_place)}`);else if(rt.departed_from)parts.push(`vertrokken vanaf ${esc(rt.departed_from)}`);if(rt.draft_active)parts.push(`Concept onderweg · ${fmt(rt.draft_km,1)} GPS-km`);if(rt.last_error)parts.push(`⚠️ ${esc(rt.last_error)}`)}else parts.push('Zet hem aan via Instellingen');txt.innerHTML=parts.join(' · ');list.innerHTML='';if(!pending.length){list.innerHTML='<div class="empty" style="padding:6px 0">Alles is bijgewerkt — geen ritten om te controleren.</div>';return}pending.forEach(x=>{let d=document.createElement('div');d.className='assistant-item';let chosen=x.confirmed_type||x.suggested_type||'',pct=Math.round(Number(x.suggestion_confidence||0)*100),proposal=x.suggested_type?`Voorstel: ${esc(x.suggested_type_label)} · ${pct}% · ${esc(x.suggestion_reason||'')}`:'Geen zekere classificatie — kies zelf';let corrected=x.destination_manually_corrected?`<br>✏️ Handmatig gecorrigeerd · ${x.corrected_destination_distance_m!=null?`${fmt(x.corrected_destination_distance_m/1000,1)} km (${x.destination_distance_source==='route'?'via wegroute':'GPS-schatting'})`:'afstand onbekend'} · oorspronkelijke GPS-suggestie: ${esc(x.destination_label||'onbekend')}`:'';d.innerHTML=`<div class="assistant-route">${esc(x.origin_name)} → ${esc(x.destination_name)}</div><div class="assistant-meta">${esc(x.date_label)} · ${proposal}${x.status==='confirmed'?`<br>✓ ${x.classification_source==='autopilot'?'Door Autopilot':'Via melding'} geclassificeerd als ${esc(x.confirmed_type_label)}`:''}${corrected}</div><div class="assistant-actions"><button class="private ${chosen==='private'?'active':''}" onclick="confirmAssistant(${x.id},'private')">🏠 Privé</button><button class="business ${chosen==='business'?'active':''}" onclick="confirmAssistant(${x.id},'business')">💼 Zakelijk</button><button class="edit-address" onclick="openAssistantAddressCorrection(${x.id})">✏️ Adres</button><button class="complete" onclick="openAssistantComplete(${x.id})">Controleren →</button><button class="dismiss" onclick="dismissAssistant(${x.id})">×</button></div>`;list.appendChild(d)})}
 async function confirmAssistant(id,type){try{await api(`api/assistant/${id}/confirm`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trip_type:type})});toast(type==='business'?'Zakelijk bevestigd':'Privé bevestigd');reloadData()}catch(e){toast(e.message,true)}}
 async function dismissAssistant(id){try{await api(`api/assistant/${id}`,{method:'DELETE'});toast('Suggestie gesloten');reloadData()}catch(e){toast(e.message,true)}}
+let ADDR_ARRIVAL=null,ADDR_RESULTS=[],ADDR_SELECTED=null;
+function openAssistantAddressCorrection(id){let a=DATA?.business?.assistant||{},x=(a.pending||[]).find(v=>Number(v.id)===Number(id));if(!x){toast('Dit voorstel is al verwerkt.');return}ADDR_ARRIVAL=x;ADDR_RESULTS=[];ADDR_SELECTED=null;$('addrArrivalId').value=x.id;$('addrCurrentLabel').textContent=x.corrected_destination_label||x.destination_name||'—';$('addrQuery').value='';$('addrResults').innerHTML='';$('addrPreview').classList.remove('show');$('addrUseBtn').disabled=true;openModal('assistantAddressModal')}
+async function searchAssistantAddress(){let q=$('addrQuery').value.trim();if(!q){toast('Vul een adres of zoekterm in.',true);return}try{let r=await api('api/places/search-address',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})});ADDR_RESULTS=r.places||[];renderAssistantAddressResults()}catch(e){toast(e.message,true)}}
+function renderAssistantAddressResults(){let list=$('addrResults');list.innerHTML='';if(!ADDR_RESULTS.length){list.innerHTML='<div class="empty" style="padding:6px 0">Geen adressen gevonden.</div>';return}ADDR_RESULTS.forEach((p,i)=>{let d=document.createElement('div');d.className='known-row';d.style.cursor='pointer';d.innerHTML=`<b>${esc(p.name||p.address||'Adres')}</b><br><small>${esc(p.address||'')}</small>`;d.onclick=()=>selectAssistantAddressResult(i);list.appendChild(d)})}
+async function selectAssistantAddressResult(i){ADDR_SELECTED=ADDR_RESULTS[i];if(!ADDR_SELECTED)return;$('addrPreviewOrigin').textContent=ADDR_ARRIVAL?.origin_name||'—';$('addrPreviewLabel').textContent=ADDR_SELECTED.name||ADDR_SELECTED.address||'—';$('addrPreviewDetail').textContent=ADDR_SELECTED.address||'';$('addrPreviewDistance').textContent='Bezig met berekenen…';$('addrPreviewOdo').textContent='—';$('addrUseBtn').disabled=true;$('addrPreview').classList.add('show');try{let r=await api(`api/assistant/${ADDR_ARRIVAL.id}/preview-destination`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:ADDR_SELECTED.latitude,longitude:ADDR_SELECTED.longitude,address:ADDR_SELECTED.address||ADDR_SELECTED.name,place_id:ADDR_SELECTED.place_id||null})});let km=r.distance_m!=null?r.distance_m/1000:null;$('addrPreviewDistance').textContent=km!=null?`${fmt(km,1)} km ${r.distance_source==='route'?'via wegroute':'GPS-schatting'}`:'Afstand nog onbekend (behoudt bestaande GPS-afstand)';$('addrPreviewOdo').textContent=r.suggested_odometer!=null?`${fmt(r.suggested_odometer,0)} km`:'—';$('addrUseBtn').disabled=false}catch(e){$('addrPreviewDistance').textContent='Kon afstand niet berekenen';$('addrUseBtn').disabled=true;toast(e.message,true)}}
+async function useAssistantAddressResult(){if(!ADDR_SELECTED||!ADDR_ARRIVAL){toast('Kies eerst een adres uit de resultaten.',true);return}try{await api(`api/assistant/${ADDR_ARRIVAL.id}/correct-destination`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:ADDR_SELECTED.latitude,longitude:ADDR_SELECTED.longitude,address:ADDR_SELECTED.address||ADDR_SELECTED.name,place_id:ADDR_SELECTED.place_id||null})});closeModal('assistantAddressModal');toast('Bestemming aangepast');ADDR_ARRIVAL=null;ADDR_SELECTED=null;await reloadData()}catch(e){toast(e.message,true)}}
 function setAssistantType(type){ASSISTANT_TYPE=type;$('assistantBusiness').classList.toggle('active',type==='business');$('assistantPrivate').classList.toggle('active',type==='private')}
 async function openAssistantComplete(id){
   try {
@@ -4370,6 +4978,11 @@ class Handler(BaseHTTPRequestHandler):
                 if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
                     raise ValueError('Geen geldige huidige locatie ontvangen.')
                 return json_response(self, {'places': google_nearby(lat, lon), 'radius_m': places_radius_m()})
+            if path == '/api/places/search-address':
+                query = str(payload.get('query') or '').strip()[:200]
+                if not query:
+                    raise ValueError('Vul een adres of zoekterm in.')
+                return json_response(self, {'places': google_places_text_search(query)})
             if path in ('/api/location/reverse', '/api/location/addresses'):
                 lat = to_float(payload.get('latitude'))
                 lon = to_float(payload.get('longitude'))
@@ -4416,6 +5029,12 @@ class Handler(BaseHTTPRequestHandler):
             mc = re.fullmatch(r'/api/assistant/(\d+)/complete', path)
             if mc:
                 return json_response(self, complete_assistant_arrival(int(mc.group(1)), payload), 201)
+            md = re.fullmatch(r'/api/assistant/(\d+)/correct-destination', path)
+            if md:
+                return json_response(self, {'arrival': correct_assistant_arrival_destination(int(md.group(1)), payload)})
+            mv = re.fullmatch(r'/api/assistant/(\d+)/preview-destination', path)
+            if mv:
+                return json_response(self, preview_assistant_arrival_destination(int(mv.group(1)), payload))
             if path == '/api/known-places':
                 return json_response(self, {'place': save_known_place(payload)}, 201)
             mp=re.fullmatch(r'/api/known-places/(\d+)', path)
