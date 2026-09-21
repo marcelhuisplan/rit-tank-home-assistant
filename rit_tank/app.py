@@ -21,7 +21,6 @@ import time
 import textwrap
 import urllib.error
 import urllib.request
-import websocket
 import zipfile
 import zlib
 from dataclasses import dataclass
@@ -38,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '9.00'
+APP_VERSION = '10.00'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -515,29 +514,6 @@ def parse_dt(value: str | None) -> datetime:
         return now_local()
 
 
-
-_PLACE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_PLACE_CACHE_TTL = 300.0
-
-
-def places_key() -> str:
-    return str(load_options().get('google_places_api_key') or '').strip()
-
-
-def places_radius_m() -> int:
-    try:
-        return max(100, min(5000, int(load_options().get('places_radius_m') or 1800)))
-    except Exception:
-        return 1800
-
-
-def places_max_results() -> int:
-    try:
-        return max(1, min(20, int(load_options().get('places_max_results') or 8)))
-    except Exception:
-        return 8
-
-
 def http_json(url: str, *, method: str = 'GET', payload: dict[str, Any] | None = None, headers: dict[str, str] | None = None, timeout: int = 10) -> dict[str, Any]:
     body = json.dumps(payload).encode('utf-8') if payload is not None else None
     req_headers = {'Accept': 'application/json'}
@@ -561,277 +537,87 @@ def http_json(url: str, *, method: str = 'GET', payload: dict[str, Any] | None =
         raise ValueError(f'Externe dienst niet bereikbaar: {exc.reason}')
 
 
-def google_nearby(lat: float, lon: float) -> list[dict[str, Any]]:
-    key = places_key()
-    if not key:
-        raise ValueError('Google Places API-key ontbreekt. Vul hem in bij de app-configuratie.')
-    payload = {
-        'includedTypes': ['gas_station'],
-        'maxResultCount': places_max_results(),
-        'rankPreference': 'DISTANCE',
-        'locationRestriction': {
-            'circle': {
-                'center': {'latitude': lat, 'longitude': lon},
-                'radius': float(places_radius_m()),
-            }
-        },
-        'languageCode': 'nl',
-        'regionCode': 'NL',
+
+
+try:
+    from . import google_places
+except ImportError:
+    import google_places
+
+try:
+    from . import routing
+except ImportError:
+    import routing
+
+try:
+    from . import home_assistant
+except ImportError:
+    import home_assistant
+
+try:
+    from . import trips
+except ImportError:
+    import trips
+
+try:
+    from . import assistant
+except ImportError:
+    import assistant
+
+
+def _places_dependencies() -> dict[str, Any]:
+    return {
+        'load_options': load_options,
+        'http_json': http_json,
+        'haversine_m': haversine_m,
+        'to_float': to_float,
+        'db': db,
+        'DB_LOCK': DB_LOCK,
     }
-    data = http_json(
-        'https://places.googleapis.com/v1/places:searchNearby',
-        method='POST', payload=payload,
-        headers={
-            'X-Goog-Api-Key': key,
-            'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
-        }, timeout=12,
-    )
-    out = []
-    for p in data.get('places', []) or []:
-        loc = p.get('location') or {}
-        plat = to_float(loc.get('latitude'))
-        plon = to_float(loc.get('longitude'))
-        distance = None
-        if plat is not None and plon is not None:
-            distance = haversine_m(lat, lon, plat, plon)
-        out.append({
-            'place_id': str(p.get('id') or ''),
-            'name': str((p.get('displayName') or {}).get('text') or 'Tankstation'),
-            'address': str(p.get('formattedAddress') or ''),
-            'latitude': plat,
-            'longitude': plon,
-            'distance_m': round(distance) if distance is not None else None,
-            'google_maps_uri': (f"https://www.google.com/maps/search/?api=1&query={plat},{plon}&query_place_id={quote(str(p.get('id') or ''), safe='')}" if plat is not None and plon is not None else ''),
-        })
-    return out
+
+
+def places_key() -> str:
+    return google_places.places_key(dependencies=_places_dependencies())
+
+
+def places_radius_m() -> int:
+    return google_places.places_radius_m(dependencies=_places_dependencies())
+
+
+def places_max_results() -> int:
+    return google_places.places_max_results(dependencies=_places_dependencies())
+
+
+def google_nearby(lat: float, lon: float) -> list[dict[str, Any]]:
+    return google_places.google_nearby(lat, lon, dependencies=_places_dependencies())
 
 
 def google_places_text_search(query: str) -> list[dict[str, Any]]:
-    """
-    Zoek adressen op vrije tekst (voor handmatige adrescorrectie).
-    Gebruikt Places API v1 Text Search en levert kandidaten met
-    place_id, naam, adres en coördinaten voor een selectielijst in de UI.
-    """
-    q = (query or '').strip()
-    if not q:
-        return []
-    key = places_key()
-    if not key:
-        raise ValueError('Google Places API-key ontbreekt. Vul hem in bij de app-configuratie.')
-    payload = {
-        'textQuery': q,
-        'languageCode': 'nl',
-        'regionCode': 'NL',
-        'maxResultCount': 8,
-    }
-    data = http_json(
-        'https://places.googleapis.com/v1/places:searchText',
-        method='POST', payload=payload,
-        headers={
-            'X-Goog-Api-Key': key,
-            'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
-        }, timeout=10,
-    )
-    out = []
-    for p in data.get('places', []) or []:
-        loc = p.get('location') or {}
-        lat = to_float(loc.get('latitude'))
-        lon = to_float(loc.get('longitude'))
-        if lat is None or lon is None:
-            continue
-        out.append({
-            'place_id': str(p.get('id') or ''),
-            'name': str((p.get('displayName') or {}).get('text') or ''),
-            'address': str(p.get('formattedAddress') or ''),
-            'latitude': lat,
-            'longitude': lon,
-        })
-    return out
+    return google_places.google_places_text_search(query, dependencies=_places_dependencies())
 
 
 def google_place_details(place_id: str) -> dict[str, Any] | None:
-    place_id = (place_id or '').strip()
-    key = places_key()
-    if not place_id or not key:
-        return None
-    cached = _PLACE_CACHE.get(place_id)
-    if cached and time.monotonic() - cached[0] < _PLACE_CACHE_TTL:
-        return cached[1]
-    try:
-        data = http_json(
-            f'https://places.googleapis.com/v1/places/{quote(place_id, safe="")}',
-            headers={
-                'X-Goog-Api-Key': key,
-                'X-Goog-FieldMask': 'id,displayName,formattedAddress,location',
-            }, timeout=8,
-        )
-        loc = data.get('location') or {}
-        result = {
-            'place_id': str(data.get('id') or place_id),
-            'name': str((data.get('displayName') or {}).get('text') or 'Tankstation'),
-            'address': str(data.get('formattedAddress') or ''),
-            'latitude': to_float(loc.get('latitude')),
-            'longitude': to_float(loc.get('longitude')),
-            'google_maps_uri': (f"https://www.google.com/maps/search/?api=1&query={to_float(loc.get('latitude'))},{to_float(loc.get('longitude'))}&query_place_id={quote(str(data.get('id') or place_id), safe='')}" if to_float(loc.get('latitude')) is not None and to_float(loc.get('longitude')) is not None else ''),
-        }
-        _PLACE_CACHE[place_id] = (time.monotonic(), result)
-        return result
-    except Exception:
-        return None
-
-
-_GEOCODE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_GEOCODE_CACHE_TTL = 300.0
+    return google_places.google_place_details(place_id, dependencies=_places_dependencies())
 
 
 def google_reverse_geocode(lat: float, lon: float) -> dict[str, Any]:
-    key = places_key()
-    if not key:
-        return {
-            'place_id': '',
-            'address': f'{lat:.6f}, {lon:.6f}',
-            'province': '',
-            'latitude': lat,
-            'longitude': lon,
-            'google_maps_uri': f'https://www.google.com/maps/search/?api=1&query={lat},{lon}',
-            'source': 'coordinates',
-        }
-    cache_key = f'{lat:.5f},{lon:.5f}'
-    cached = _GEOCODE_CACHE.get(cache_key)
-    if cached and time.monotonic() - cached[0] < _GEOCODE_CACHE_TTL:
-        return cached[1]
-    try:
-        url = (
-            'https://maps.googleapis.com/maps/api/geocode/json?'
-            f'latlng={quote(f"{lat},{lon}", safe=",")}&language=nl&region=nl&key={quote(key, safe="")}'
-        )
-        data = http_json(url, timeout=10)
-        if str(data.get('status') or '') not in ('OK', 'ZERO_RESULTS'):
-            raise ValueError(str(data.get('error_message') or data.get('status') or 'Geocoding mislukt'))
-        results = data.get('results') or []
-        province = ''
-        if results:
-            first = results[0]
-            place_id = str(first.get('place_id') or '')
-            address = str(first.get('formatted_address') or f'{lat:.6f}, {lon:.6f}')
-            for comp in first.get('address_components') or []:
-                types = set(comp.get('types') or [])
-                if 'administrative_area_level_1' in types:
-                    province = str(comp.get('long_name') or comp.get('short_name') or '').strip()
-                    break
-        else:
-            place_id = ''
-            address = f'{lat:.6f}, {lon:.6f}'
-        result = {
-            'place_id': place_id,
-            'address': address,
-            'province': province,
-            'latitude': lat,
-            'longitude': lon,
-            'google_maps_uri': (
-                f'https://www.google.com/maps/search/?api=1&query={lat},{lon}'
-                + (f'&query_place_id={quote(place_id, safe="")}' if place_id else '')
-            ),
-            'source': 'google' if results else 'coordinates',
-        }
-        _GEOCODE_CACHE[cache_key] = (time.monotonic(), result)
-        return result
-    except Exception:
-        return {
-            'place_id': '',
-            'address': f'{lat:.6f}, {lon:.6f}',
-            'province': '',
-            'latitude': lat,
-            'longitude': lon,
-            'google_maps_uri': f'https://www.google.com/maps/search/?api=1&query={lat},{lon}',
-            'source': 'coordinates',
-        }
+    return google_places.google_reverse_geocode(lat, lon, dependencies=_places_dependencies())
 
 
 def nearby_house_numbers(lat: float, lon: float) -> dict[str, Any]:
-    """Use real BAG addresses, never manufacture house numbers from GPS."""
-    base = 'https://api.pdok.nl/bzk/locatieserver/search/v3_1/'
-    fields = 'id,weergavenaam,straatnaam,woonplaatsnaam,openbareruimte_id,huis_nlt,centroide_ll,afstand'
-    try:
-        nearest = http_json(base + 'reverse?' + urlencode({
-            'lat': lat, 'lon': lon, 'type': 'adres', 'distance': 250,
-            'rows': 1, 'fl': fields,
-        }), timeout=10).get('response', {}).get('docs', [])
-        if not nearest:
-            return {'addresses': [], 'street': '', 'source': 'PDOK / BAG'}
-        street_id = str(nearest[0].get('openbareruimte_id') or '')
-        if not re.fullmatch(r'\d+', street_id):
-            return {'addresses': [], 'street': '', 'source': 'PDOK / BAG'}
-        docs = http_json(base + 'free?' + urlencode({
-            'q': '*:*', 'fq': f'type:adres AND openbareruimte_id:{street_id}',
-            'lat': lat, 'lon': lon, 'rows': 10, 'fl': fields,
-        }), timeout=10).get('response', {}).get('docs', [])
-        addresses, seen = [], set()
-        for doc in docs:
-            if str(doc.get('openbareruimte_id')) != street_id:
-                continue
-            point = re.fullmatch(r'POINT\(([\d.\-]+) ([\d.\-]+)\)', str(doc.get('centroide_ll') or ''))
-            label = str(doc.get('weergavenaam') or '')
-            if not point or not label or label in seen:
-                continue
-            lng, latitude = map(float, point.groups())
-            seen.add(label)
-            addresses.append({'address': label, 'house_number': doc.get('huis_nlt') or '',
-                              'latitude': latitude, 'longitude': lng,
-                              'distance_m': round(haversine_m(lat, lon, latitude, lng))})
-        addresses.sort(key=lambda item: item['distance_m'])
-        return {'addresses': addresses[:10], 'street': nearest[0].get('straatnaam') or '', 'source': 'PDOK / BAG'}
-    except Exception:
-        raise ValueError('Huisnummers konden niet worden opgehaald. Probeer opnieuw of vul het adres handmatig in.') from None
+    return google_places.nearby_house_numbers(lat, lon, dependencies=_places_dependencies())
 
 
 def cached_report_address(lat: float, lon: float) -> str:
-    try:
-        with DB_LOCK, db() as con:
-            row = con.execute('SELECT address FROM report_addresses WHERE coordinate_key=?', (f'{lat:.5f},{lon:.5f}',)).fetchone()
-        return str(row['address']) if row else ''
-    except sqlite3.OperationalError:
-        # Offline/unit-test databases created before the migration simply have no cache yet.
-        return ''
+    return google_places.cached_report_address(lat, lon, dependencies=_places_dependencies())
 
 
 def refresh_report_addresses() -> None:
-    """Resolve old GPS-only records in the background; never delay PDF requests."""
-    with DB_LOCK, db() as con:
-        stops = [dict(r) for r in con.execute('SELECT latitude,longitude FROM trip_stops WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY id DESC')]
-        cached = {r['coordinate_key']: dict(r) for r in con.execute('SELECT * FROM report_addresses')}
-    pending = {}
-    for stop in stops:
-        lat, lon = float(stop['latitude']), float(stop['longitude'])
-        key = f'{lat:.5f},{lon:.5f}'
-        prior = cached.get(key)
-        if prior and (prior['address'] or time.time() - prior['checked_at'] < 86400):
-            continue
-        pending[key] = (lat, lon)
-    for key, (lat, lon) in list(pending.items())[:50]:
-        address = ''
-        try:
-            url = 'https://api.pdok.nl/bzk/locatieserver/search/v3_1/reverse?' + urlencode({
-                'lat': lat, 'lon': lon, 'type': 'adres', 'distance': 100, 'rows': 1,
-                'fl': 'straatnaam,huis_nlt,postcode,woonplaatsnaam',
-            })
-            docs = http_json(url, timeout=6).get('response', {}).get('docs', [])
-            if docs and all(docs[0].get(k) for k in ('straatnaam', 'huis_nlt', 'postcode', 'woonplaatsnaam')):
-                d = docs[0]
-                address = f'{d["straatnaam"]} {d["huis_nlt"]}, {d["postcode"]} {d["woonplaatsnaam"]}'
-        except Exception:
-            pass
-        with DB_LOCK, db() as con:
-            con.execute('INSERT OR REPLACE INTO report_addresses(coordinate_key,address,checked_at) VALUES(?,?,?)', (key, address, time.time()))
+    return google_places.refresh_report_addresses(dependencies=_places_dependencies())
 
 
 def _report_address_worker() -> None:
-    while True:
-        try:
-            refresh_report_addresses()
-        except Exception as exc:
-            print(f'Adresaanvulling: {type(exc).__name__}', flush=True)
-        time.sleep(30)
+    return google_places._report_address_worker(dependencies=_places_dependencies())
 
 
 def dutch_date(value: Any) -> str:
@@ -869,192 +655,56 @@ def trip_location_details(stop: dict[str, Any], resolve: bool = True) -> dict[st
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    r = 6371000.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp = math.radians(lat2 - lat1)
-    dl = math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return routing.haversine_m(lat1, lon1, lat2, lon2)
 
 
 def get_route_distance(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float) -> dict[str, Any]:
-    """
-    Probeer werkelijke routeafstand via Google Routes API.
-    Fallback naar GPS-afstand als Routes API niet beschikbaar is.
-    
-    Returns: {'type': 'route'|'gps', 'distance_m': float}
-    """
-    key = places_key()
-    if not key:
-        gps_m = haversine_m(origin_lat, origin_lon, dest_lat, dest_lon)
-        return {'type': 'gps', 'distance_m': gps_m}
-    
-    try:
-        payload = {
-            'origin': {'location': {'latLng': {'latitude': origin_lat, 'longitude': origin_lon}}},
-            'destination': {'location': {'latLng': {'latitude': dest_lat, 'longitude': dest_lon}}},
-            'travelMode': 'DRIVE',
-            'routingPreference': 'TRAFFIC_UNAWARE',
-            'computeAlternativeRoutes': False,
-        }
-        
-        data = http_json(
-            'https://routes.googleapis.com/directions/v2:computeRoutes',
-            method='POST',
-            payload=payload,
-            headers={'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters'},
-            timeout=8,
-        )
-        
-        routes = data.get('routes', []) or []
-        if routes and routes[0].get('distanceMeters'):
-            distance_m = float(routes[0]['distanceMeters'])
-            return {'type': 'route', 'distance_m': distance_m}
-    except Exception:
-        pass
-    
-    gps_m = haversine_m(origin_lat, origin_lon, dest_lat, dest_lon)
-    return {'type': 'gps', 'distance_m': gps_m}
+    return routing.get_route_distance(
+        origin_lat,
+        origin_lon,
+        dest_lat,
+        dest_lon,
+        dependencies={'api_key': places_key, 'http_json': http_json},
+    )
 
 
 def ha_request(method: str, path: str, payload: dict[str, Any] | None = None, timeout: int = 8) -> Any:
-    token = os.getenv('SUPERVISOR_TOKEN', '')
-    if not token:
-        raise ValueError('Home Assistant API-token is niet beschikbaar.')
-    body = None if payload is None else json.dumps(payload).encode('utf-8')
-    headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
-    if body is not None:
-        headers['Content-Type'] = 'application/json'
-    req = urllib.request.Request(
-        f'http://supervisor/core/api/{path.lstrip("/")}',
-        data=body,
-        method=method.upper(),
-        headers=headers,
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            raw = response.read()
-            if not raw:
-                return {}
-            return json.loads(raw.decode('utf-8'))
-    except Exception as exc:
-        detail = str(exc)
-        if token:
-            detail = detail.replace(token, '[redacted]')
-        raise ValueError(f'Home Assistant API niet beschikbaar: {detail}')
+    return home_assistant.ha_request(method, path, payload, timeout)
 
 
 def ha_get(path: str) -> Any:
-    return ha_request('GET', path)
+    return home_assistant.ha_get(path, dependencies={'ha_request': ha_request})
 
 
 def ha_post(path: str, payload: dict[str, Any]) -> Any:
-    return ha_request('POST', path, payload)
+    return home_assistant.ha_post(path, payload, dependencies={'ha_request': ha_request})
 
 
 def ha_notify_services() -> list[dict[str, str]]:
-    try:
-        domains = ha_get('services')
-    except Exception:
-        return []
-    out: list[dict[str, str]] = []
-    for domain in domains if isinstance(domains, list) else []:
-        if str(domain.get('domain') or '') != 'notify':
-            continue
-        services = domain.get('services') or {}
-        for service_name in services:
-            if str(service_name).startswith('mobile_app_'):
-                out.append({
-                    'service': f'notify.{service_name}',
-                    'name': str(service_name).replace('mobile_app_', '').replace('_', ' ').title(),
-                })
-    out.sort(key=lambda x: x['name'].lower())
-    return out
+    return home_assistant.ha_notify_services(dependencies={'ha_get': ha_get})
 
 
 def _ha_ws_open(timeout: int = 10):
-    token = os.getenv('SUPERVISOR_TOKEN', '')
-    if not token:
-        raise ValueError('Home Assistant API-token is niet beschikbaar.')
-    ws = websocket.create_connection('ws://supervisor/core/websocket', timeout=timeout)
-    first = json.loads(ws.recv())
-    if first.get('type') != 'auth_required':
-        ws.close()
-        raise ValueError('Onverwachte Home Assistant WebSocket-handshake.')
-    ws.send(json.dumps({'type': 'auth', 'access_token': token}))
-    auth = json.loads(ws.recv())
-    if auth.get('type') != 'auth_ok':
-        ws.close()
-        raise ValueError('Home Assistant WebSocket-authenticatie mislukt.')
-    return ws
+    return home_assistant._ha_ws_open(timeout)
 
 
 def ha_ws_command(command: dict[str, Any], timeout: int = 10) -> Any:
-    ws = _ha_ws_open(timeout)
-    try:
-        payload = dict(command)
-        payload['id'] = 1
-        ws.send(json.dumps(payload))
-        while True:
-            msg = json.loads(ws.recv())
-            if msg.get('id') != 1:
-                continue
-            if msg.get('type') == 'result':
-                if not msg.get('success'):
-                    err = msg.get('error') or {}
-                    raise ValueError(str(err.get('message') or 'WebSocket-opdracht mislukt.'))
-                return msg.get('result')
-    finally:
-        try:
-            ws.close()
-        except Exception:
-            pass
+    return home_assistant.ha_ws_command(
+        command,
+        timeout,
+        dependencies={'ha_ws_open': _ha_ws_open},
+    )
 
 
 def location_entities() -> list[dict[str, Any]]:
-    rows = ha_get('states')
-    out = []
-    for item in rows if isinstance(rows, list) else []:
-        entity_id = str(item.get('entity_id') or '')
-        if not (entity_id.startswith('person.') or entity_id.startswith('device_tracker.')):
-            continue
-        attrs = item.get('attributes') or {}
-        lat, lon = to_float(attrs.get('latitude')), to_float(attrs.get('longitude'))
-        if lat is None or lon is None:
-            continue
-        out.append({
-            'entity_id': entity_id,
-            'name': str(attrs.get('friendly_name') or entity_id),
-            'state': str(item.get('state') or ''),
-            'latitude': lat,
-            'longitude': lon,
-            'gps_accuracy': to_float(attrs.get('gps_accuracy')),
-        })
-    out.sort(key=lambda x: (0 if x['entity_id'].startswith('person.') else 1, x['name'].lower()))
-    return out
+    return home_assistant.location_entities(dependencies={'ha_get': ha_get, 'to_float': to_float})
 
 
 def location_from_entity(entity_id: str) -> dict[str, Any]:
-    entity_id = (entity_id or '').strip()
-    if not (entity_id.startswith('person.') or entity_id.startswith('device_tracker.')):
-        raise ValueError('Kies een geldige person- of device_tracker-entiteit.')
-    item = ha_get(f'states/{quote(entity_id, safe="._")}')
-    attrs = item.get('attributes') or {}
-    lat, lon = to_float(attrs.get('latitude')), to_float(attrs.get('longitude'))
-    if lat is None or lon is None:
-        raise ValueError('Deze Home Assistant-entiteit heeft geen GPS-coördinaten.')
-    return {
-        'entity_id': entity_id,
-        'name': str(attrs.get('friendly_name') or entity_id),
-        'latitude': lat,
-        'longitude': lon,
-        'accuracy': to_float(attrs.get('gps_accuracy')),
-        'speed': to_float(attrs.get('speed')),
-        'course': to_float(attrs.get('course')),
-        'state': str(item.get('state') or ''),
-        'source': 'home_assistant',
-        'ha_last_updated': item.get('last_updated'),
-    }
+    return home_assistant.location_from_entity(
+        entity_id,
+        dependencies={'ha_get': ha_get, 'to_float': to_float},
+    )
 
 def rows_events() -> list[dict[str, Any]]:
     with DB_LOCK, db() as con:
@@ -1369,12 +1019,7 @@ def recent_audit(limit: int = 30) -> list[dict[str, Any]]:
 
 
 def _snapshot_trip(con: sqlite3.Connection, trip_id: int) -> dict[str, Any]:
-    row=con.execute('SELECT * FROM business_trips WHERE id=?',(trip_id,)).fetchone()
-    if not row:
-        return {}
-    stops=[dict(r) for r in con.execute('SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no,id',(trip_id,))]
-    return {'trip':dict(row),'stops':stops}
-
+    return trips.snapshot_trip(con, trip_id)
 
 def save_receipt_data(data_url: str, event_id: int) -> str | None:
     if not data_url:
@@ -1619,168 +1264,126 @@ def setting_int(key: str, default: int, low: int, high: int) -> int:
         return default
 
 
-def assistant_config() -> dict[str, Any]:
-    st = get_settings()
-    mode = str(st.get('assistant_mode') or 'assistant').strip().lower()
-    if mode not in {'manual', 'assistant', 'autopilot'}:
-        mode = 'assistant'
+def _assistant_dependencies() -> dict[str, Any]:
     return {
-        'enabled': str(st.get('assistant_enabled', '0')).lower() in {'1','true','yes','on','aan'},
-        'mode': mode,
-        'auto_confidence': setting_int('assistant_auto_confidence', 95, 70, 100),
-        'location_entity': str(st.get('assistant_location_entity') or '').strip(),
-        'notify_service': str(st.get('assistant_notify_service') or '').strip(),
-        'sync_zones': str(st.get('assistant_sync_zones', '1')).lower() in {'1','true','yes','on','aan'},
-        'unknown_stops': str(st.get('assistant_unknown_stops', '1')).lower() in {'1','true','yes','on','aan'},
-        'check_seconds': setting_int('assistant_check_seconds', 20, 10, 300),
-        'unknown_stop_minutes': setting_int('assistant_unknown_stop_minutes', 4, 2, 30),
-        'fast_stop_seconds': setting_int('assistant_fast_stop_seconds', 30, 20, 180),
-        'min_trip_m': setting_int('assistant_min_trip_m', 500, 100, 10000),
-        'push_provinces': ['Groningen', 'Drenthe'],
+        'get_settings': get_settings,
+        'setting_int': setting_int,
+        'DB_LOCK': DB_LOCK,
+        'db': db,
+        'DIAGNOSTIC_LOCK': DIAGNOSTIC_LOCK,
+        'iso_local': iso_local,
+        'parse_dt': parse_dt,
+        'APP_VERSION': APP_VERSION,
+        'setting_bool': setting_bool,
+        'latest_odometer_before': latest_odometer_before,
+        'to_float': to_float,
+        'known_place_by_id': known_place_by_id,
+        'trip_type_label': trip_type_label,
+        '_route_memory_suggestion': _route_memory_suggestion,
+        'audit': audit,
+        'google_reverse_geocode': google_reverse_geocode,
+        'haversine_m': haversine_m,
+        'normalize_segment_type': normalize_segment_type,
+        'now_local': now_local,
+        'active_business_trip': active_business_trip,
+        'get_route_distance': get_route_distance,
+        '_insert_trip_stop': _insert_trip_stop,
+        'add_business_stop': add_business_stop,
+        'publish_sensors_async': publish_sensors_async,
+        'remember_segment': remember_segment,
+        'validate_odometer': validate_odometer,
+        'ha_post': ha_post,
+        '_ha_ws_open': _ha_ws_open,
+        'match_known_place': match_known_place,
+        'location_from_entity': location_from_entity,
+        'sync_all_known_place_zones': sync_all_known_place_zones,
+        '_assistant_action_listener': _assistant_action_listener,
+        '_assistant_arrival_destination_distance': _assistant_arrival_destination_distance,
+        '_assistant_arrival_effective_destination': _assistant_arrival_effective_destination,
+        '_assistant_arrival_origin_coords': _assistant_arrival_origin_coords,
+        '_assistant_location_worker': _assistant_location_worker,
+        '_assistant_suggestion': _assistant_suggestion,
+        '_complete_assistant_arrival': _complete_assistant_arrival,
+        '_process_assistant_location': _process_assistant_location,
+        'advance_draft_route': advance_draft_route,
+        'arrival_proposal': arrival_proposal,
+        'assistant_arrivals': assistant_arrivals,
+        'assistant_config': assistant_config,
+        'assistant_runtime_public': assistant_runtime_public,
+        'assistant_state_get': assistant_state_get,
+        'assistant_state_set': assistant_state_set,
+        'calibration_vehicle': calibration_vehicle,
+        'complete_assistant_arrival': complete_assistant_arrival,
+        'confirm_assistant_arrival': confirm_assistant_arrival,
+        'correct_assistant_arrival_destination': correct_assistant_arrival_destination,
+        'create_assistant_arrival': create_assistant_arrival,
+        'diagnostic_event': diagnostic_event,
+        'diagnostic_report': diagnostic_report,
+        'dismiss_assistant_arrival': dismiss_assistant_arrival,
+        'distance_calibration': distance_calibration,
+        'learn_distance': learn_distance,
+        'preview_assistant_arrival_destination': preview_assistant_arrival_destination,
+        'province_allowed_for_push': province_allowed_for_push,
+        'reset_trip_distance_tracking': reset_trip_distance_tracking,
+        'send_active_trip_stop_notification': send_active_trip_stop_notification,
+        'send_assistant_notification': send_assistant_notification,
+        'send_assistant_test_notification': send_assistant_test_notification,
+        'track_active_trip_distance': track_active_trip_distance,
+        'trip_distance_tracking_public': trip_distance_tracking_public,
     }
 
 
-def assistant_state_get(key: str, default: Any = None) -> Any:
-    with DB_LOCK, db() as con:
-        row = con.execute('SELECT value FROM assistant_state WHERE key=?', (key,)).fetchone()
-    if not row:
-        return default
-    try:
-        return json.loads(row['value'])
-    except Exception:
-        return row['value']
+def assistant_config() -> dict[str, Any]:
+    return assistant.assistant_config(dependencies=_assistant_dependencies())
+
+
+
+def assistant_state_get(key: str, default: Any=None) -> Any:
+    return assistant.assistant_state_get(key, default, dependencies=_assistant_dependencies())
+
 
 
 def assistant_state_set(key: str, value: Any) -> None:
-    raw = json.dumps(value, ensure_ascii=False, default=str)
-    with DB_LOCK, db() as con:
-        con.execute(
-            'INSERT INTO assistant_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-            (key, raw)
-        )
-        con.commit()
+    return assistant.assistant_state_set(key, value, dependencies=_assistant_dependencies())
+
 
 
 DIAGNOSTIC_LOCK = threading.Lock()
 
 
 def diagnostic_event(event: str, **details: Any) -> None:
-    """Bounded, persistent support log. Never include raw API data or errors."""
-    allowed = {'tracked_m', 'minimum_m', 'accuracy_m', 'speed_m_s',
-               'stationary_seconds', 'threshold_seconds', 'province_allowed',
-               'samples', 'position_changed', 'incomplete', 'ha_state_age_seconds'}
-    safe = {k: v for k, v in details.items() if k in allowed and
-            (v is None or isinstance(v, (int, float, bool)))}
-    try:
-        with DIAGNOSTIC_LOCK:
-            rows = assistant_state_get('diagnostic_log', []) or []
-            now = iso_local()
-            if rows and rows[-1]['event'] == event and rows[-1]['details'] == safe:
-                if (parse_dt(now) - parse_dt(rows[-1]['at'])).total_seconds() < 60:
-                    return
-            rows.append({'at': now, 'event': event, 'details': safe})
-            cutoff = time.time() - 48 * 3600
-            rows = [r for r in rows[-500:] if parse_dt(r['at']).timestamp() >= cutoff]
-            assistant_state_set('diagnostic_log', rows)
-    except Exception:
-        pass  # Diagnostics must not interrupt tracking or sending.
+    return assistant.diagnostic_event(event, **details, dependencies=_assistant_dependencies())
+
 
 
 def diagnostic_report() -> dict[str, Any]:
-    cfg = assistant_config()
-    rows = assistant_state_get('diagnostic_log', []) or []
-    cutoff = time.time() - 48 * 3600
-    return {'version': APP_VERSION, 'generated_at': iso_local(),
-            'note': 'GPS-polls zijn geen bewijs van een nieuwe iPhone-locatiemeting. HA-acceptatie is geen afleverbevestiging.',
-            'config': {k: cfg.get(k) for k in ('enabled', 'mode', 'min_trip_m', 'fast_stop_seconds')},
-            'tracker_configured': bool(cfg.get('location_entity')),
-            'notification_configured': bool(cfg.get('notify_service')),
-            'events': [r for r in rows[-500:] if parse_dt(r['at']).timestamp() >= cutoff]}
+    return assistant.diagnostic_report(dependencies=_assistant_dependencies())
+
 
 
 def calibration_vehicle() -> str:
-    settings = get_settings()
-    return str(settings.get('license_plate') or settings.get('vehicle_name') or 'default').strip().upper()
+    return assistant.calibration_vehicle(dependencies=_assistant_dependencies())
+
 
 
 def distance_calibration() -> dict[str, Any]:
-    """Bounded median, never trained from simply accepting a proposal."""
-    import statistics
-    enabled = setting_bool('distance_learning_enabled', True)
-    with DB_LOCK, db() as con:
-        rows = con.execute('SELECT gps_km,actual_km FROM distance_calibration WHERE vehicle=? ORDER BY id DESC LIMIT 30', (calibration_vehicle(),)).fetchall()
-    ratios = [float(r['actual_km']) / float(r['gps_km']) for r in rows]
-    stable = len(ratios) >= 5 and statistics.median([abs(x - statistics.median(ratios)) for x in ratios]) <= .04
-    factor = max(.90, min(1.10, statistics.median(ratios))) if enabled and stable else 1.0
-    return {'enabled': enabled, 'samples': len(ratios), 'ready': bool(enabled and stable), 'factor': round(factor, 4)}
+    return assistant.distance_calibration(dependencies=_assistant_dependencies())
+
 
 
 def learn_distance(source: str, gps_km: float, actual_km: float, samples: int, checked: bool, *, con: sqlite3.Connection) -> None:
-    # Both endpoint odometers must have been checked by the user. Reject short
-    # segments, sparse tracks and large discrepancies rather than hiding gaps.
-    if not checked or not setting_bool('distance_learning_enabled', True):
-        return
-    if not math.isfinite(gps_km) or not math.isfinite(actual_km) or gps_km < 5 or samples < 5:
-        return
-    if not .85 <= actual_km / gps_km <= 1.15:
-        return
-    con.execute('INSERT OR IGNORE INTO distance_calibration(vehicle,source,gps_km,actual_km,created_at) VALUES(?,?,?,?,?)',
-                (calibration_vehicle(), source, gps_km, actual_km, iso_local()))
+    return assistant.learn_distance(source, gps_km, actual_km, samples, checked, con=con, dependencies=_assistant_dependencies())
+
 
 
 def advance_draft_route(runtime: dict[str, Any], lat: float, lon: float, accuracy: float | None, now: datetime) -> None:
-    """Accumulate a draft without creating any official trip or odometer event."""
-    if not runtime.get('departure_at'):
-        return
-    prev_lat, prev_lon = to_float(runtime.get('route_lat')), to_float(runtime.get('route_lon'))
-    if prev_lat is None or prev_lon is None:
-        runtime.update(route_lat=lat, route_lon=lon, route_at=iso_local(now))
-        return
-    dt = max(1, (now - parse_dt(runtime.get('route_at') or iso_local(now))).total_seconds())
-    step = haversine_m(lat, lon, prev_lat, prev_lon)
-    if step < 8:
-        return
-    if dt > 300 or (accuracy is not None and accuracy > 100) or step > 60 * dt + 100:
-        runtime['route_incomplete'] = True
-    elif step >= 35:
-        runtime['route_m'] = float(runtime.get('route_m') or 0) + step
-        runtime['route_samples'] = int(runtime.get('route_samples') or 0) + 1
-    runtime.update(route_lat=lat, route_lon=lon, route_at=iso_local(now))
+    return assistant.advance_draft_route(runtime, lat, lon, accuracy, now, dependencies=_assistant_dependencies())
+
 
 
 def arrival_proposal(row: dict[str, Any]) -> dict[str, Any]:
-    """
-    Voorstel voor eindtellerstand van dit ritvoorstel.
+    return assistant.arrival_proposal(row, dependencies=_assistant_dependencies())
 
-    Als de bestemming handmatig is gecorrigeerd (destination_manually_corrected)
-    en er een corrected_destination_distance_m bekend is, wordt DIE afstand
-    gebruikt in plaats van de oorspronkelijke (mogelijk foutieve) GPS-tracking
-    naar de oude bestemming:
-      - bron 'route' (echte Google-wegafstand): GEEN GPS-kalibratiefactor
-        toepassen, die factor is alleen bedoeld om ruwe telefoon-GPS-afstand
-        te corrigeren, niet een al nauwkeurige wegafstand;
-      - bron 'gps': de bestaande GPS-kalibratie/leerlogica blijft gelden.
-    """
-    base = latest_odometer_before(row.get('departure_at') or row['detected_at'])
-    calibration = distance_calibration()
-    corrected_m = to_float(row.get('corrected_destination_distance_m'))
-    if row.get('destination_manually_corrected') and corrected_m is not None:
-        corrected_km = corrected_m / 1000
-        source = str(row.get('destination_distance_source') or 'gps')
-        usable = bool(base is not None and corrected_km > 0)
-        if source == 'route':
-            suggested = round(base + corrected_km) if usable else None
-        else:
-            suggested = round(base + corrected_km * calibration['factor']) if usable else None
-        return {'start_odometer': base, 'gps_km': round(corrected_km, 2),
-                'suggested_odometer': suggested, 'route_complete': usable,
-                'calibration': calibration, 'distance_source': source}
-    snapshot = assistant_state_get(f'arrival_route_{row["id"]}', {}) or {}
-    raw_km = float(snapshot.get('route_m') or 0) / 1000
-    usable = bool(base is not None and raw_km > 0 and int(snapshot.get('route_samples') or 0) >= 3 and not snapshot.get('route_incomplete'))
-    return {'start_odometer': base, 'gps_km': round(raw_km, 2),
-            'suggested_odometer': round(base + raw_km * calibration['factor']) if usable else None,
-            'route_complete': usable, 'calibration': calibration, 'distance_source': 'gps'}
 
 
 def zone_icon(category: str) -> str:
@@ -1872,995 +1475,119 @@ def latest_odometer_before(created_at: str | None) -> float | None:
     return float(row['odometer']) if row else None
 
 
-def assistant_arrivals(limit: int = 12, include_done: bool = False) -> list[dict[str, Any]]:
-    where = '' if include_done else "WHERE status IN ('pending','confirmed')"
-    with DB_LOCK, db() as con:
-        rows = [dict(r) for r in con.execute(
-            f'SELECT * FROM assistant_arrivals {where} ORDER BY id DESC LIMIT ?',
-            (max(1, min(100, int(limit))),)
-        )]
-    out = []
-    for r in rows:
-        origin = known_place_by_id(r.get('origin_known_place_id'))
-        dest = known_place_by_id(r.get('destination_known_place_id'))
-        r['origin_name'] = (origin or {}).get('name') or 'Onbekende vertrekplek'
-        effective = _assistant_arrival_effective_destination(r)
-        # Zodra de bestemming handmatig is gecorrigeerd, is DIE bestemming de
-        # actuele/hoofdbestemming in de UI (bv. "Thuis → Eikenlaan 8, Rijssen").
-        # De oorspronkelijke GPS-bestemming blijft alleen als audit-info
-        # beschikbaar via destination_label/destination_latitude/longitude.
-        r['destination_name'] = effective['label'] if effective['manually_corrected'] else (
-            (dest or {}).get('name') or r.get('destination_label') or 'Onbekende bestemming'
-        )
-        r['suggested_type_label'] = trip_type_label(str(r.get('suggested_type') or '')) if r.get('suggested_type') else ''
-        r['confirmed_type_label'] = trip_type_label(str(r.get('confirmed_type') or '')) if r.get('confirmed_type') else ''
-        r['date_label'] = parse_dt(r['detected_at']).strftime('%d-%m %H:%M')
-        r['start_odometer'] = latest_odometer_before(r.get('departure_at') or r.get('detected_at'))
-        r['proposal'] = arrival_proposal(r)
-        out.append(r)
-    return out
+def assistant_arrivals(limit: int=12, include_done: bool=False) -> list[dict[str, Any]]:
+    return assistant.assistant_arrivals(limit, include_done, dependencies=_assistant_dependencies())
+
 
 
 def assistant_runtime_public() -> dict[str, Any]:
-    runtime = assistant_state_get('runtime', {}) or {}
-    current = known_place_by_id(runtime.get('current_place_id'))
-    departed = known_place_by_id(runtime.get('departed_from_place_id'))
-    return {
-        'seeded': bool(runtime.get('seeded')),
-        'current_place': (current or {}).get('name') or '',
-        'departed_from': (departed or {}).get('name') or '',
-        'draft_active': bool(runtime.get('departure_at') and not runtime.get('unknown_at_stop')),
-        'draft_km': round(float(runtime.get('route_m') or 0) / 1000, 1),
-        'last_seen_at': runtime.get('last_seen_at') or '',
-        'last_error': assistant_state_get('last_error', '') or '',
-        'ws_connected': bool(assistant_state_get('ws_connected', False)),
-    }
+    return assistant.assistant_runtime_public(dependencies=_assistant_dependencies())
+
 
 
 def _assistant_suggestion(origin_place_id: int | None, dest_place_id: int | None, lat: float, lon: float) -> dict[str, Any]:
-    origin = known_place_by_id(origin_place_id)
-    dest = known_place_by_id(dest_place_id)
-    if dest and str(dest.get('arrival_trip_type') or 'ask') in {'business','private'}:
-        t = str(dest['arrival_trip_type'])
-        return {'suggested_type': t, 'reason': f'Bestemming {dest["name"]} staat als {trip_type_label(t).lower()} ingesteld', 'confidence': .98}
-    if origin and not dest and str(origin.get('unknown_departure_trip_type') or 'ask') in {'business','private'}:
-        t = str(origin['unknown_departure_trip_type'])
-        return {'suggested_type': t, 'reason': f'Vanaf {origin["name"]} naar onbekende bestemming: {trip_type_label(t)}', 'confidence': .90}
-    memory = _route_memory_suggestion(origin_place_id, lat, lon)
-    if memory:
-        return memory
-    return {'suggested_type': '', 'reason': 'Geen vaste regel gevonden — kies zelf', 'confidence': 0.0}
+    return assistant._assistant_suggestion(origin_place_id, dest_place_id, lat, lon, dependencies=_assistant_dependencies())
 
 
-def create_assistant_arrival(
-    origin_place_id: int | None,
-    destination_place_id: int | None,
-    lat: float,
-    lon: float,
-    accuracy: float | None,
-    departure_at: str | None,
-    destination_label: str = '',
-    route_snapshot: dict[str, Any] | None = None,
-) -> dict[str, Any] | None:
-    now = iso_local()
-    cutoff = iso_local(now_local() - timedelta(minutes=20))
-    with DB_LOCK, db() as con:
-        recent = [dict(r) for r in con.execute(
-            "SELECT * FROM assistant_arrivals WHERE detected_at>=? AND status IN ('pending','confirmed') ORDER BY id DESC",
-            (cutoff,)
-        )]
-    for r in recent:
-        if haversine_m(lat, lon, float(r['destination_latitude']), float(r['destination_longitude'])) < 180:
-            return r
-    dest = known_place_by_id(destination_place_id)
-    if dest:
-        destination_label = str(dest.get('name') or destination_label)
-    elif not destination_label:
-        try:
-            geo = google_reverse_geocode(lat, lon)
-            destination_label = str(geo.get('address') or '')[:180]
-        except Exception:
-            destination_label = ''
-    if not destination_label:
-        destination_label = f'{lat:.5f}, {lon:.5f}'
-    suggestion = _assistant_suggestion(origin_place_id, destination_place_id, lat, lon)
-    cfg = assistant_config()
-    suggested_type = normalize_segment_type(suggestion.get('suggested_type'))
-    auto_confirm = (
-        cfg.get('mode') == 'autopilot' and suggested_type and
-        float(suggestion.get('confidence') or 0) * 100 >= int(cfg.get('auto_confidence') or 95)
-    )
-    status = 'confirmed' if auto_confirm else 'pending'
-    classification_source = 'autopilot' if auto_confirm else None
-    handled_at = now if auto_confirm else None
-    with DB_LOCK, db() as con:
-        cur = con.execute('''
-            INSERT INTO assistant_arrivals(
-                detected_at,departure_at,origin_known_place_id,destination_known_place_id,
-                destination_latitude,destination_longitude,destination_accuracy,destination_label,
-                suggested_type,suggestion_reason,suggestion_confidence,status,confirmed_type,
-                classification_source,handled_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ''', (
-            now, departure_at, origin_place_id, destination_place_id,
-            lat, lon, accuracy, destination_label[:180],
-            suggested_type or None,
-            str(suggestion.get('reason') or '')[:240],
-            float(suggestion.get('confidence') or 0),
-            status, suggested_type if auto_confirm else None,
-            classification_source, handled_at,
-        ))
-        arrival_id = int(cur.lastrowid)
-        audit('assistant_arrival', 'assistant', arrival_id, {
-            'origin_place_id': origin_place_id, 'destination_place_id': destination_place_id,
-            'destination': destination_label, 'suggestion': suggestion, 'autopilot': auto_confirm,
-        }, con=con)
-        con.commit()
-    if route_snapshot:
-        assistant_state_set(f'arrival_route_{arrival_id}', {key: route_snapshot.get(key) for key in ('route_m', 'route_samples', 'route_incomplete', 'departure_at')})
-    item = next((x for x in assistant_arrivals(30) if int(x['id']) == arrival_id), None)
-    if item:
-        threading.Thread(target=send_assistant_notification, args=(item,), daemon=True).start()
-    return item
+
+def create_assistant_arrival(origin_place_id: int | None, destination_place_id: int | None, lat: float, lon: float, accuracy: float | None, departure_at: str | None, destination_label: str='', route_snapshot: dict[str, Any] | None=None) -> dict[str, Any] | None:
+    return assistant.create_assistant_arrival(origin_place_id, destination_place_id, lat, lon, accuracy, departure_at, destination_label, route_snapshot, dependencies=_assistant_dependencies())
 
 
-def confirm_assistant_arrival(arrival_id: int, trip_type: str, source: str = 'app') -> dict[str, Any]:
-    t = normalize_segment_type(trip_type)
-    if not t:
-        raise ValueError('Kies Privé of Zakelijk.')
-    with DB_LOCK, db() as con:
-        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
-        if not row:
-            raise ValueError('Ritsuggestie niet gevonden.')
-        if str(row['status']) in {'completed','dismissed'}:
-            return dict(row)
-        con.execute(
-            "UPDATE assistant_arrivals SET status='confirmed',confirmed_type=?,classification_source=?,handled_at=? WHERE id=?",
-            (t, source[:40], iso_local(), int(arrival_id))
-        )
-        audit('assistant_confirm', 'assistant', int(arrival_id), {'trip_type': t, 'source': source}, con=con)
-        con.commit()
-    return next((x for x in assistant_arrivals(50, True) if int(x['id']) == int(arrival_id)), {})
+
+def confirm_assistant_arrival(arrival_id: int, trip_type: str, source: str='app') -> dict[str, Any]:
+    return assistant.confirm_assistant_arrival(arrival_id, trip_type, source, dependencies=_assistant_dependencies())
+
 
 
 def dismiss_assistant_arrival(arrival_id: int) -> None:
-    with DB_LOCK, db() as con:
-        con.execute(
-            "UPDATE assistant_arrivals SET status='dismissed',handled_at=? WHERE id=?",
-            (iso_local(), int(arrival_id))
-        )
-        audit('assistant_dismiss', 'assistant', int(arrival_id), {}, con=con)
-        con.commit()
+    return assistant.dismiss_assistant_arrival(arrival_id, dependencies=_assistant_dependencies())
+
 
 
 def _assistant_arrival_effective_destination(r: dict[str, Any]) -> dict[str, Any]:
-    """
-    Bepaal de EFFECTIEVE bestemming van dit ritvoorstel: de bestemming die
-    consequent gebruikt moet worden bij het definitief opslaan (nieuwe
-    automatische rit, aankomst aan actieve rit, trip_stop, PDF,
-    rittenoverzicht, ...).
+    return assistant._assistant_arrival_effective_destination(r, dependencies=_assistant_dependencies())
 
-    Als de gebruiker de bestemming handmatig heeft gecorrigeerd
-    (destination_manually_corrected=1 met geldige corrected_destination_*
-    coördinaten), is de gecorrigeerde bestemming leidend. De oorspronkelijke
-    (mogelijk foutieve) GPS-bestemming wordt uitsluitend als audit-informatie
-    teruggegeven (original_latitude/original_longitude/original_label) en
-    NOOIT opnieuw als actuele aankomst opgeslagen.
-    """
-    corrected_lat = to_float(r.get('corrected_destination_latitude'))
-    corrected_lon = to_float(r.get('corrected_destination_longitude'))
-    original_lat = to_float(r.get('destination_latitude'))
-    original_lon = to_float(r.get('destination_longitude'))
-    original_label = str(r.get('destination_label') or '').strip() or None
-    manually_corrected = bool(r.get('destination_manually_corrected')) and corrected_lat is not None and corrected_lon is not None
-    if manually_corrected:
-        return {
-            'latitude': corrected_lat,
-            'longitude': corrected_lon,
-            'label': str(r.get('corrected_destination_label') or '').strip() or original_label,
-            'place_id': str(r.get('corrected_destination_place_id') or '').strip() or None,
-            'distance_m': to_float(r.get('corrected_destination_distance_m')),
-            'distance_source': str(r.get('destination_distance_source') or 'gps'),
-            'manually_corrected': True,
-            'original_latitude': original_lat,
-            'original_longitude': original_lon,
-            'original_label': original_label,
-        }
-    return {
-        'latitude': original_lat,
-        'longitude': original_lon,
-        'label': original_label,
-        'place_id': None,
-        'distance_m': None,
-        'distance_source': None,
-        'manually_corrected': False,
-        'original_latitude': None,
-        'original_longitude': None,
-        'original_label': None,
-    }
 
 
 def _assistant_arrival_origin_coords(r: dict[str, Any]) -> tuple[float, float] | None:
-    """
-    Bepaal de meest betrouwbare vertreklocatie die bij dit ritvoorstel hoort.
-    Dit is dezelfde bron die _complete_assistant_arrival() gebruikt om het
-    startpunt van de rit vast te leggen, zodat de route-oorsprong hier
-    consistent is met de uiteindelijk opgeslagen rit:
-      1. De laatste stop van een nog actieve zakelijke rit (indien aanwezig).
-      2. De bekende vertrekplek (origin_known_place_id) die bij het
-         voorstel is vastgelegd toen het werd aangemaakt.
-    Er wordt bewust GEEN gebruik gemaakt van een timestamp-match op
-    trip_stops.created_at<=departure_at: in echte data valt dat niet
-    gegarandeerd samen met de daadwerkelijke vertrekstop.
-    Retourneert None als er geen betrouwbare vertreklocatie is; de aanroeper
-    mag dan NOOIT (0,0) of de oude bestemming als origin gebruiken.
-    """
-    active = active_business_trip()
-    if active and active.get('stops'):
-        last_stop = active['stops'][-1]
-        lat = to_float(last_stop.get('latitude'))
-        lon = to_float(last_stop.get('longitude'))
-        if lat is not None and lon is not None:
-            return lat, lon
-    origin_place = known_place_by_id(r.get('origin_known_place_id'))
-    if origin_place:
-        lat = to_float(origin_place.get('latitude'))
-        lon = to_float(origin_place.get('longitude'))
-        if lat is not None and lon is not None:
-            return lat, lon
-    return None
+    return assistant._assistant_arrival_origin_coords(r, dependencies=_assistant_dependencies())
+
 
 
 def _assistant_arrival_destination_distance(r: dict[str, Any], arrival_id: int, dest_lat: float, dest_lon: float) -> dict[str, Any]:
-    """
-    Bereken de routeafstand van de betrouwbare vertreklocatie van dit
-    ritvoorstel naar de (nieuw gekozen) bestemming. Gedeelde logica voor
-    zowel de niet-muterende preview als de daadwerkelijke correctie, zodat
-    beide gegarandeerd dezelfde oorsprong (nooit de oude bestemming, nooit
-    (0,0)) en dezelfde afstand opleveren.
+    return assistant._assistant_arrival_destination_distance(r, arrival_id, dest_lat, dest_lon, dependencies=_assistant_dependencies())
 
-    Als de Google Routes-call mislukt of niet beschikbaar is, wordt de
-    hemelsbrede (haversine) afstand die get_route_distance() dan intern
-    berekent NOOIT gebruikt als vervanging voor een werkelijk gereden
-    GPS-routeafstand. In plaats daarvan wordt teruggevallen op de al bekende,
-    door de telefoon gemeten afstand (arrival_route_<id>.route_m); is die er
-    niet, dan is de afstand expliciet onbekend (None) met bron 'gps'.
-    """
-    origin_coords = _assistant_arrival_origin_coords(r)
-    if origin_coords is not None:
-        origin_lat, origin_lon = origin_coords
-        route_info = get_route_distance(origin_lat, origin_lon, dest_lat, dest_lon)
-        if route_info.get('type') == 'route':
-            distance_m = route_info.get('distance_m')
-            distance_source = 'route'
-        else:
-            # De Google Routes-call is mislukt of niet beschikbaar. get_route_distance()
-            # valt dan intern terug op een hemelsbrede (haversine) afstand tussen origin
-            # en bestemming — dat is GEEN werkelijk gereden afstand en mag NOOIT als
-            # GPS-routeafstand worden gepresenteerd. Gebruik in plaats daarvan de al
-            # bekende, door de telefoon gemeten GPS-afstand voor dit voorstel (dezelfde
-            # bron als arrival_proposal()). Is die er niet, dan is de afstand onbekend.
-            snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
-            distance_m = to_float(snapshot.get('route_m'))
-            distance_source = 'gps'
-    else:
-        origin_lat = origin_lon = None
-        # Geen betrouwbare vertreklocatie beschikbaar: bereken GEEN fictieve
-        # route vanaf (0,0) en gebruik de oude bestemming NIET als vertrekpunt.
-        # Val terug op de al bekende, door de telefoon gemeten GPS-afstand
-        # voor dit voorstel (dezelfde bron als arrival_proposal()), en
-        # markeer de bron expliciet als 'gps'.
-        snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
-        distance_m = to_float(snapshot.get('route_m'))
-        distance_source = 'gps'
-    return {
-        'distance_m': distance_m,
-        'distance_source': distance_source,
-        'origin_latitude': origin_lat,
-        'origin_longitude': origin_lon,
-        'origin_available': origin_coords is not None,
-    }
 
 
 def preview_assistant_arrival_destination(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    """
-    Niet-muterende preview van een bestemmingscorrectie. Berekent de
-    routeafstand (oorspronkelijke vertreklocatie -> nieuw gekozen bestemming,
-    NOOIT vanaf de oude bestemming) en de bijbehorende voorgestelde
-    eindtellerstand, zonder enig databaseveld te wijzigen.
-    """
-    with DB_LOCK, db() as con:
-        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
-    if not row:
-        raise ValueError('Ritsuggestie niet gevonden.')
-    r = dict(row)
-    if r.get('status') not in ('pending', 'confirmed'):
-        raise ValueError('Deze ritsuggestie kan niet meer worden aangepast.')
+    return assistant.preview_assistant_arrival_destination(arrival_id, payload, dependencies=_assistant_dependencies())
 
-    dest_lat = to_float(payload.get('latitude'))
-    dest_lon = to_float(payload.get('longitude'))
-    if dest_lat is None or dest_lon is None:
-        raise ValueError('Ongeldige doelcoördinaten.')
-    if not (-90 <= dest_lat <= 90) or not (-180 <= dest_lon <= 180):
-        raise ValueError('Doelcoördinaten buiten bereik.')
-
-    distance = _assistant_arrival_destination_distance(r, arrival_id, dest_lat, dest_lon)
-    distance_m = distance['distance_m']
-    distance_source = distance['distance_source']
-
-    base = latest_odometer_before(r.get('departure_at') or r.get('detected_at'))
-    calibration = distance_calibration()
-    suggested_odometer = None
-    if base is not None and distance_m is not None and distance_m > 0:
-        km = distance_m / 1000
-        if distance_source == 'route':
-            suggested_odometer = round(base + km)
-        else:
-            suggested_odometer = round(base + km * calibration['factor'])
-
-    return {
-        'distance_m': round(distance_m) if distance_m is not None else None,
-        'distance_source': distance_source,
-        'start_odometer': base,
-        'suggested_odometer': suggested_odometer,
-        'origin_available': distance['origin_available'],
-    }
 
 
 def correct_assistant_arrival_destination(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    """
-    Handmatig corrigeer de gesuggeerde bestemming van een automatisch voorstel.
-    Recalculeer de afstand en bijgewerkte tellerstand.
+    return assistant.correct_assistant_arrival_destination(arrival_id, payload, dependencies=_assistant_dependencies())
 
-    BELANGRIJK: de routeafstand loopt ALTIJD van de oorspronkelijke
-    vertreklocatie van het ritvoorstel naar de NIEUW gekozen bestemming.
-    De oude (foutieve) voorgestelde bestemming wordt nooit als route-origin
-    gebruikt — die dient uitsluitend als audit-informatie ('original_destination').
-    """
-    with DB_LOCK, db() as con:
-        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
-
-    if not row:
-        raise ValueError('Ritsuggestie niet gevonden.')
-
-    r = dict(row)
-    # 'confirmed' betekent alleen dat privé/zakelijk is gekozen; er is dan nog
-    # GEEN business_trips/trip_stops-record aangemaakt (dat gebeurt pas bij
-    # complete_assistant_arrival(), waarna status 'completed' wordt). Zolang
-    # de rit niet 'completed' (definitief/fiscaal opgeslagen) is, mag de
-    # bestemming dus nog worden gecorrigeerd.
-    if r.get('status') not in ('pending', 'confirmed'):
-        raise ValueError('Deze ritsuggestie kan niet meer worden aangepast.')
-
-    # Parse corrected destination
-    dest_lat = to_float(payload.get('latitude'))
-    dest_lon = to_float(payload.get('longitude'))
-    dest_label = str(payload.get('address') or '').strip()[:180]
-    dest_place_id = str(payload.get('place_id') or '').strip()[:255] or None
-
-    if dest_lat is None or dest_lon is None:
-        raise ValueError('Ongeldige doelcoördinaten.')
-
-    if not (-90 <= dest_lat <= 90) or not (-180 <= dest_lon <= 180):
-        raise ValueError('Doelcoördinaten buiten bereik.')
-
-    # Bewaar de oude (foutieve) bestemming en de oorspronkelijke GPS-afstand
-    # uitsluitend voor audit-doeleinden. Deze coördinaten mogen NOOIT als
-    # vertrekpunt voor de nieuwe route dienen.
-    old_dest_lat = to_float(r.get('destination_latitude'))
-    old_dest_lon = to_float(r.get('destination_longitude'))
-    old_dest_label = str(r.get('destination_label') or '')
-    original_snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
-    original_gps_distance_m = to_float(original_snapshot.get('route_m'))
-
-    distance = _assistant_arrival_destination_distance(r, arrival_id, dest_lat, dest_lon)
-    distance_m = distance['distance_m']
-    distance_source = distance['distance_source']
-    origin_lat = distance['origin_latitude']
-    origin_lon = distance['origin_longitude']
-
-    # Update the assistant arrival with corrected destination
-    with DB_LOCK, db() as con:
-        con.execute('''
-            UPDATE assistant_arrivals
-            SET corrected_destination_latitude=?,
-                corrected_destination_longitude=?,
-                corrected_destination_label=?,
-                corrected_destination_distance_m=?,
-                corrected_destination_place_id=?,
-                destination_distance_source=?,
-                destination_manually_corrected=1
-            WHERE id=?
-        ''', (
-            dest_lat, dest_lon, dest_label,
-            round(distance_m) if distance_m is not None else None,
-            dest_place_id,
-            distance_source,
-            int(arrival_id)
-        ))
-        audit('assistant_correct_destination', 'assistant', int(arrival_id), {
-            'original_destination': {
-                'lat': old_dest_lat, 'lon': old_dest_lon, 'label': old_dest_label,
-                'distance_m': round(original_gps_distance_m) if original_gps_distance_m is not None else None,
-            },
-            'corrected_destination': {
-                'lat': dest_lat, 'lon': dest_lon, 'label': dest_label, 'place_id': dest_place_id,
-                'distance_m': round(distance_m) if distance_m is not None else None,
-            },
-            'route_origin': {'lat': origin_lat, 'lon': origin_lon} if distance['origin_available'] else None,
-            'distance_source': distance_source,
-            'destination_manually_corrected': True,
-        }, con=con)
-        con.commit()
-
-    return next((x for x in assistant_arrivals(50, True) if int(x['id']) == int(arrival_id)), {})
 
 
 def complete_assistant_arrival(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    with DB_LOCK:
-        return _complete_assistant_arrival(arrival_id, payload)
+    return assistant.complete_assistant_arrival(arrival_id, payload, dependencies=_assistant_dependencies())
+
 
 
 def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    with DB_LOCK, db() as con:
-        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
-    if not row:
-        raise ValueError('Ritsuggestie niet gevonden.')
-    r = dict(row)
-    if r.get('status') not in ('pending', 'confirmed'):
-        raise ValueError('Deze ritsuggestie is al verwerkt.')
-    trip_type = normalize_segment_type(payload.get('trip_type')) or normalize_segment_type(r.get('confirmed_type')) or normalize_segment_type(r.get('suggested_type'))
-    if not trip_type:
-        raise ValueError('Kies Privé of Zakelijk.')
-    end_odo = to_float(payload.get('odometer'))
-    if end_odo is None or not math.isfinite(end_odo) or end_odo < 0:
-        raise ValueError('Vul de kilometerstand bij aankomst in.')
-    active = active_business_trip()
-    if active and active.get('stops') and parse_dt(active['stops'][-1]['created_at']) >= parse_dt(r['detected_at']):
-        raise ValueError('Deze aankomst is ouder dan de laatste opgeslagen stop. Controleer de ritgeschiedenis.')
-    if active and active.get('stops') and r.get('departure_at') and parse_dt(active['stops'][-1]['created_at']) > parse_dt(r['departure_at']):
-        raise ValueError('Een deel van dit voorstel is al geregistreerd. Controleer de ritgeschiedenis.')
-    # Effectieve bestemming: als de gebruiker handmatig heeft gecorrigeerd,
-    # is de GECORRIGEERDE bestemming leidend voor wat definitief wordt
-    # opgeslagen. De oorspronkelijke (mogelijk foutieve) GPS-bestemming wordt
-    # nooit opnieuw als actuele aankomst gebruikt, maar blijft via
-    # trip_stops.original_destination_* en het audit-log herleidbaar.
-    dest = _assistant_arrival_effective_destination(r)
-    if dest['latitude'] is None or dest['longitude'] is None:
-        raise ValueError('Bestemming van deze aankomst is onbekend.')
-    point = {
-        'odometer': end_odo,
-        'created_at': r['detected_at'],
-        'latitude': dest['latitude'],
-        'longitude': dest['longitude'],
-        'location_accuracy': to_float(r.get('destination_accuracy')) if not dest['manually_corrected'] else None,
-        'location_source': 'background_assistant',
-        'place_id': dest['place_id'],
-        'manual_label': str(dest['label'] or '')[:120] or None,
-        'note': 'Automatisch herkende aankomst' + (' (adres handmatig gecorrigeerd)' if dest['manually_corrected'] else ''),
-        'known_place_id': r.get('destination_known_place_id') if not dest['manually_corrected'] else None,
-    }
-    destination_audit = None
-    if dest['manually_corrected']:
-        orig_snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
-        destination_audit = {
-            'original_latitude': dest['original_latitude'],
-            'original_longitude': dest['original_longitude'],
-            'original_address': dest['original_label'],
-            'original_distance_m': to_float(orig_snapshot.get('route_m')),
-            'distance_source': dest['distance_source'],
-            'manually_corrected': True,
-        }
-    if active:
-        result = add_business_stop({
-            'odometer': end_odo,
-            'created_at': r['detected_at'],
-            'latitude': point['latitude'],
-            'longitude': point['longitude'],
-            'location_accuracy': point['location_accuracy'],
-            'location_source': point['location_source'],
-            'manual_label': point['manual_label'],
-            'note': point['note'],
-            'segment_trip_type': trip_type,
-        }, finish=payload.get('finish') is True, destination_audit=destination_audit)
-        trip_id = int((result.get('trip') or {}).get('id') or active['id'])
-    else:
-        origin = known_place_by_id(r.get('origin_known_place_id'))
-        if not origin:
-            raise ValueError('Startpunt van deze automatische rit is onbekend. Gebruik de gewone ritregistratie.')
-        start_odo = to_float(payload.get('start_odometer'))
-        if start_odo is None:
-            start_odo = latest_odometer_before(r.get('departure_at') or r.get('detected_at'))
-        if start_odo is None:
-            raise ValueError('Vul ook de kilometerstand bij vertrek in.')
-        if not math.isfinite(start_odo) or start_odo < 0:
-            raise ValueError('Vul een geldige vertrekstand in.')
-        if end_odo < start_odo:
-            raise ValueError('Aankomst-kilometerstand is lager dan de vertrekstand.')
-        start_at = r.get('departure_at') or iso_local(parse_dt(r['detected_at']) - timedelta(minutes=1))
-        with db() as con:
-            overlap = con.execute('SELECT id FROM business_trips WHERE started_at<? AND COALESCE(ended_at,?)>? LIMIT 1',
-                                  (r['detected_at'], r['detected_at'], start_at)).fetchone()
-        if overlap:
-            raise ValueError('Deze aankomst overlapt een opgeslagen rit. Controleer de ritgeschiedenis om dubbeltelling te voorkomen.')
-        for timestamp, odo in ((start_at, start_odo), (r['detected_at'], end_odo)):
-            valid, message = validate_odometer(timestamp, odo)
-            if not valid:
-                raise ValueError(message)
-        start_point = {
-            'odometer': start_odo,
-            'created_at': start_at,
-            'latitude': float(origin['latitude']),
-            'longitude': float(origin['longitude']),
-            'location_accuracy': None,
-            'location_source': 'background_assistant',
-            'place_id': None,
-            'manual_label': str(origin.get('name') or '')[:120] or None,
-            'note': 'Automatisch herkend vertrek',
-            'known_place_id': int(origin['id']),
-        }
-        suggestion = {
-            'suggested_type': normalize_segment_type(r.get('suggested_type')),
-            'reason': str(r.get('suggestion_reason') or ''),
-            'confidence': float(r.get('suggestion_confidence') or 0),
-        }
-        with DB_LOCK, db() as con:
-            cur = con.execute('''
-                INSERT INTO business_trips(started_at,ended_at,status,purpose,client,note,trip_type,private_detour_km,modified_at)
-                VALUES(?,?,'completed',NULL,NULL,?,?,0,?)
-            ''', (start_at, r['detected_at'], 'Automatisch herkende rit', trip_type, iso_local()))
-            trip_id = int(cur.lastrowid)
-            _insert_trip_stop(con, trip_id, start_point, 0, 'Automatische rit start')
-            _insert_trip_stop(con, trip_id, point, 1, f'Automatische rit einde ({trip_type_label(trip_type)})', trip_type, suggestion, destination_audit=destination_audit)
-            remember_segment(start_point, point, trip_type, con=con)
-            audit('assistant_complete', 'trip', trip_id, {
-                'assistant_arrival_id': int(arrival_id), 'trip_type': trip_type,
-                'destination_manually_corrected': dest['manually_corrected'],
-                'effective_destination': {'lat': dest['latitude'], 'lon': dest['longitude'], 'label': dest['label']},
-                'original_destination': {'lat': dest['original_latitude'], 'lon': dest['original_longitude'], 'label': dest['original_label']} if dest['manually_corrected'] else None,
-            }, con=con)
-            con.commit()
-    with DB_LOCK, db() as con:
-        snapshot = assistant_state_get(f'arrival_route_{arrival_id}', {}) or {}
-        # Alleen leren van de ruwe telefoon-GPS-tracking als de aankomst NIET
-        # handmatig is gecorrigeerd: de gemeten route liep dan naar de oude
-        # (foutieve) bestemming en komt niet meer overeen met de daadwerkelijk
-        # opgeslagen (gecorrigeerde) afstand, wat de kalibratie zou verstoren.
-        if not active and not snapshot.get('route_incomplete') and not dest['manually_corrected']:
-            learn_distance(f'arrival:{arrival_id}', float(snapshot.get('route_m') or 0) / 1000,
-                           end_odo - start_odo, int(snapshot.get('route_samples') or 0),
-                           payload.get('odometer_checked') is True, con=con)
-        con.execute(
-            "UPDATE assistant_arrivals SET status='completed',confirmed_type=?,classification_source=COALESCE(classification_source,'app'),handled_at=?,odometer=?,trip_id=? WHERE id=?",
-            (trip_type, iso_local(), end_odo, trip_id, int(arrival_id))
-        )
-        con.commit()
-    publish_sensors_async()
-    return {'ok': True, 'trip_id': trip_id}
+    return assistant._complete_assistant_arrival(arrival_id, payload, dependencies=_assistant_dependencies())
+
 
 
 def province_allowed_for_push(lat: float, lon: float) -> tuple[bool, str, dict[str, Any]]:
-    """Provincies waar de gebruiker stopmeldingen wil ontvangen."""
-    geo = google_reverse_geocode(lat, lon)
-    province = str(geo.get('province') or '').strip()
-    allowed = province.lower() in {'groningen', 'drenthe', 'overijssel'}
-    return allowed, province, geo
+    return assistant.province_allowed_for_push(lat, lon, dependencies=_assistant_dependencies())
+
 
 
 def trip_distance_tracking_public() -> dict[str, Any]:
-    """Publieke schatting voor de actieve rit, gebaseerd op achtergrond-GPS."""
-    trip = active_business_trip()
-    if not trip or not trip.get('stops'):
-        diagnostic_event('geen_actieve_rit_met_startpunt')
-        return {'active': False, 'tracked_km': 0.0, 'suggested_odometer': None, 'sample_count': 0}
-    last = trip['stops'][-1]
-    state = assistant_state_get('trip_distance_tracking', {}) or {}
-    same_trip = int(state.get('trip_id') or -1) == int(trip['id'])
-    same_stop = int(state.get('stop_id') or -1) == int(last.get('id') or -2)
-    tracked_m = float(state.get('segment_m') or 0.0) if same_trip and same_stop else 0.0
-    base = float(last['odometer'])
-    calibration = distance_calibration()
-    suggested = round(base + tracked_m / 1000.0 * calibration['factor'])
-    return {
-        'active': True,
-        'trip_id': int(trip['id']),
-        'stop_id': int(last.get('id') or 0),
-        'base_odometer': base,
-        'stop_prompt': state.get('stop_prompt') if same_trip and same_stop else None,
-        'calibration': calibration,
-        'tracked_km': round(tracked_m / 1000.0, 1),
-        'suggested_odometer': suggested if not state.get('incomplete') and same_trip and same_stop and int(state.get('sample_count') or 0) >= 3 else None,
-        'sample_count': int(state.get('sample_count') or 0) if same_trip and same_stop else 0,
-        'last_update': state.get('last_update') if same_trip and same_stop else None,
-    }
+    return assistant.trip_distance_tracking_public(dependencies=_assistant_dependencies())
 
 
-def reset_trip_distance_tracking(trip: dict[str, Any] | None = None) -> None:
-    if not trip or not trip.get('stops'):
-        assistant_state_set('trip_distance_tracking', {})
-        return
-    last = trip['stops'][-1]
-    assistant_state_set('trip_distance_tracking', {
-        'trip_id': int(trip['id']),
-        'stop_id': int(last.get('id') or 0),
-        'segment_m': 0.0,
-        'sample_count': 0,
-        'incomplete': False,
-        'last_lat': to_float(last.get('latitude')),
-        'last_lon': to_float(last.get('longitude')),
-        'last_update': iso_local(),
-        'stationary_since': None,
-        'prompted': False,
-        'last_prompt_at': None,
-    })
+
+def reset_trip_distance_tracking(trip: dict[str, Any] | None=None) -> None:
+    return assistant.reset_trip_distance_tracking(trip, dependencies=_assistant_dependencies())
+
 
 
 def track_active_trip_distance(loc: dict[str, Any], cfg: dict[str, Any]) -> None:
-    """Best-effort routeafstand vanaf de laatste handmatige stop.
+    return assistant.track_active_trip_distance(loc, cfg, dependencies=_assistant_dependencies())
 
-    Dit is een suggestie, geen vervanging van de echte kilometerteller.
-    """
-    trip = active_business_trip()
-    if not trip or not trip.get('stops'):
-        assistant_state_set('trip_distance_tracking', {})
-        return
-    last = trip['stops'][-1]
-    state = assistant_state_get('trip_distance_tracking', {}) or {}
-    trip_id = int(trip['id'])
-    stop_id = int(last.get('id') or 0)
-    if int(state.get('trip_id') or -1) != trip_id or int(state.get('stop_id') or -1) != stop_id:
-        reset_trip_distance_tracking(trip)
-        state = assistant_state_get('trip_distance_tracking', {}) or {}
-
-    lat, lon = to_float(loc.get('latitude')), to_float(loc.get('longitude'))
-    if lat is None or lon is None:
-        diagnostic_event('gps_coordinaten_ontbreken')
-        return
-    accuracy = to_float(loc.get('accuracy'))
-    if accuracy is not None and accuracy > 250:
-        diagnostic_event('gps_te_onnauwkeurig', accuracy_m=round(accuracy))
-        return
-    now = now_local()
-    prev_lat, prev_lon = to_float(state.get('last_lat')), to_float(state.get('last_lon'))
-    prev_dt = parse_dt(state.get('last_update')) if state.get('last_update') else now
-    step = haversine_m(float(lat), float(lon), prev_lat, prev_lon) if prev_lat is not None and prev_lon is not None else 0.0
-    dt_s = max(1.0, (now - prev_dt).total_seconds())
-    speed = to_float(loc.get('speed'))
-    if step >= 8 and dt_s > 300:
-        state['incomplete'] = True
-
-    # GPS-jitter bij stilstand niet als routeafstand tellen; onrealistische sprongen ook niet.
-    max_step = 60.0 * dt_s + 250.0  # ruim < 216 km/h + GPS-marge
-    moving = (speed is not None and speed > 3.0) or step >= 35.0
-    if 8.0 <= step <= max_step and moving:
-        state['segment_m'] = float(state.get('segment_m') or 0.0) + step
-        state['sample_count'] = int(state.get('sample_count') or 0) + 1
-
-    if moving:
-        state['stationary_since'] = None
-        state['stop_prompt'] = None
-        if step > 220:
-            state['prompted'] = False
-    else:
-        if not state.get('stationary_since'):
-            state['stationary_since'] = iso_local(now)
-
-    # Bewaar het tijdstip van de laatst werkelijk gewijzigde GPS-positie.
-    # De HA-worker pollt vaker dan iOS vaak nieuwe GPS-data publiceert; als we
-    # bij identieke coördinaten de klok zouden opschuiven, zou een latere grote
-    # maar geldige sprong ten onrechte als 'onrealistisch' worden weggefilterd.
-    if prev_lat is None or prev_lon is None or step >= 8.0:
-        state['last_lat'] = float(lat)
-        state['last_lon'] = float(lon)
-        state['last_update'] = iso_local(now)
-    assistant_state_set('trip_distance_tracking', state)
-
-    # Overijssel: 10 seconden gedetecteerde stilstand; andere provincies
-    # behouden de ingestelde wachttijd. Geen definitieve opslag zonder akkoord.
-    tracked_m = float(state.get('segment_m') or 0.0)
-    since_raw = state.get('stationary_since')
-    ha_age = None
-    if loc.get('ha_last_updated'):
-        try:
-            ha_age = max(0, round((now - parse_dt(loc['ha_last_updated'])).total_seconds()))
-        except (ValueError, TypeError):
-            pass
-    diagnostic_event('achtergrondcontrole', tracked_m=round(tracked_m),
-                     minimum_m=cfg.get('min_trip_m'), accuracy_m=accuracy,
-                     speed_m_s=speed, position_changed=step >= 8,
-                     samples=state.get('sample_count', 0), incomplete=bool(state.get('incomplete')),
-                     ha_state_age_seconds=ha_age)
-    if state.get('prompted') or tracked_m < float(cfg.get('min_trip_m') or 500) or not since_raw:
-        diagnostic_event('stop_al_aangeboden' if state.get('prompted') else
-                         'afstand_onder_minimum' if tracked_m < float(cfg.get('min_trip_m') or 500) else 'beweging_gedetecteerd')
-        return
-    since = parse_dt(str(since_raw))
-    elapsed = (now - since).total_seconds()
-    if elapsed < min(10, int(cfg.get('fast_stop_seconds') or 30)):
-        diagnostic_event('wachten_op_stilstand', stationary_seconds=round(elapsed))
-        return
-    allowed, province, geo = province_allowed_for_push(float(lat), float(lon))
-    if not allowed:
-        diagnostic_event('provincie_onbekend_of_niet_toegestaan', province_allowed=False)
-        return
-    threshold = 10 if province.lower() == 'overijssel' else int(cfg.get('fast_stop_seconds') or 30)
-    if elapsed < threshold:
-        diagnostic_event('wachten_op_stilstand', stationary_seconds=round(elapsed), threshold_seconds=threshold)
-        return
-    state['stop_prompt'] = {'id': f'{trip["id"]}:{last["id"]}:{iso_local(now)}',
-                            'trip_id': int(trip['id']), 'province': province,
-                            'address': str(geo.get('address') or province), 'created_at': iso_local(now)}
-    state['prompted'] = True
-    state['last_prompt_at'] = iso_local(now)
-    assistant_state_set('trip_distance_tracking', state)
-    diagnostic_event('stop_herkend', stationary_seconds=round(elapsed), threshold_seconds=threshold)
-    sent = send_active_trip_stop_notification(trip, tracked_m, province, geo)
-    diagnostic_event('stop_push_geaccepteerd_door_ha' if sent else 'stop_push_mislukt')
 
 
 def send_active_trip_stop_notification(trip: dict[str, Any], tracked_m: float, province: str, geo: dict[str, Any]) -> bool:
-    cfg = assistant_config()
-    service = cfg.get('notify_service') or ''
-    if not service.startswith('notify.') or not trip.get('stops'):
-        return False
-    svc = service.split('.', 1)[1]
-    km = tracked_m / 1000.0
-    address = str(geo.get('address') or province or 'huidige locatie')
-    payload = {
-        'title': f'🏁 Rit & Tank · gestopt in {province}',
-        'message': f'Wil je je actieve rit opslaan? Je lijkt gestopt bij {address}. Achtergrondroute: ca. {km:.1f} km. Open Rit & Tank om de tellerstand te controleren en de rit af te sluiten.',
-        'data': {
-            'tag': f'rit_tank_stop_{int(trip["id"])}',
-            'url': '/675b3933_rit_tank',
-            'actions': [
-                {'action': 'URI', 'title': 'Open Rit & Tank', 'uri': '/675b3933_rit_tank'},
-            ],
-        },
-    }
-    try:
-        ha_post(f'services/notify/{svc}', payload)
-        return True
-    except Exception as exc:
-        assistant_state_set('last_error', f'Stopmelding: {exc}')
-        return False
+    return assistant.send_active_trip_stop_notification(trip, tracked_m, province, geo, dependencies=_assistant_dependencies())
+
 
 
 def send_assistant_notification(item: dict[str, Any]) -> bool:
-    cfg = assistant_config()
-    service = cfg.get('notify_service') or ''
-    if not service.startswith('notify.'):
-        return False
-    lat = to_float(item.get('destination_latitude'))
-    lon = to_float(item.get('destination_longitude'))
-    if lat is None or lon is None:
-        return False
-    allowed, province, _geo = province_allowed_for_push(float(lat), float(lon))
-    if not allowed:
-        return False
-    svc = service.split('.', 1)[1]
-    suggested = normalize_segment_type(item.get('suggested_type'))
-    suggestion_text = f" · voorstel: {trip_type_label(suggested)}" if suggested else ''
-    message = f"{item.get('origin_name','Vertrek')} → {item.get('destination_name','Bestemming')}{suggestion_text}. Bevestig ritsoort; kilometerstand vul je later in Rit & Tank in."
-    aid = int(item['id'])
-    payload = {
-        'title': f"🚗 Rit & Tank · {item.get('destination_name','Aankomst')} · {province}",
-        'message': message,
-        'data': {
-            'tag': f'rit_tank_arrival_{aid}',
-            'url': '/675b3933_rit_tank',
-            'actions': [
-                {'action': f'RITTANK_PRIVATE_{aid}', 'title': 'Privé'},
-                {'action': f'RITTANK_BUSINESS_{aid}', 'title': 'Zakelijk'},
-                {'action': 'URI', 'title': 'Open Rit & Tank', 'uri': '/675b3933_rit_tank'},
-            ],
-        },
-    }
-    try:
-        ha_post(f'services/notify/{svc}', payload)
-        with DB_LOCK, db() as con:
-            con.execute('UPDATE assistant_arrivals SET notification_sent=1 WHERE id=?', (aid,))
-            con.commit()
-        return True
-    except Exception as exc:
-        assistant_state_set('last_error', f'Pushmelding: {exc}')
-        return False
+    return assistant.send_assistant_notification(item, dependencies=_assistant_dependencies())
+
 
 
 def send_assistant_test_notification() -> None:
-    cfg = assistant_config()
-    service = cfg.get('notify_service') or ''
-    if not service.startswith('notify.'):
-        raise ValueError('Kies eerst een Home Assistant mobiele meldingsservice.')
-    svc = service.split('.', 1)[1]
-    ha_post(f'services/notify/{svc}', {
-        'title': '🚗 Rit & Tank',
-        'message': 'Achtergrond-ritassistent is gekoppeld. Meldingen komen op dit apparaat binnen.',
-        'data': {'url': '/675b3933_rit_tank'},
-    })
+    return assistant.send_assistant_test_notification(dependencies=_assistant_dependencies())
+
 
 
 def _assistant_action_listener() -> None:
-    backoff = 3
-    while True:
-        try:
-            ws = _ha_ws_open(20)
-            ws.settimeout(300)
-            ws.send(json.dumps({'id': 1, 'type': 'subscribe_events', 'event_type': 'mobile_app_notification_action'}))
-            while True:
-                msg = json.loads(ws.recv())
-                if msg.get('id') == 1 and msg.get('type') == 'result':
-                    if not msg.get('success'):
-                        raise RuntimeError('Kon niet op notification actions abonneren.')
-                    break
-            backoff = 3
-            assistant_state_set('ws_connected', True)
-            while True:
-                msg = json.loads(ws.recv())
-                if msg.get('type') != 'event':
-                    continue
-                event = msg.get('event') or {}
-                data = event.get('data') or {}
-                action = str(data.get('action') or '')
-                m = re.fullmatch(r'RITTANK_(PRIVATE|BUSINESS)_(\d+)', action)
-                if m:
-                    trip_type = 'private' if m.group(1) == 'PRIVATE' else 'business'
-                    try:
-                        confirm_assistant_arrival(int(m.group(2)), trip_type, 'notification')
-                    except Exception as exc:
-                        assistant_state_set('last_error', f'Notificatieactie: {exc}')
-        except Exception as exc:
-            assistant_state_set('ws_connected', False)
-            assistant_state_set('last_error', f'WebSocket: {exc}')
-            time.sleep(backoff)
-            backoff = min(60, backoff * 2)
+    return assistant._assistant_action_listener(dependencies=_assistant_dependencies())
+
 
 
 def _process_assistant_location(loc: dict[str, Any], cfg: dict[str, Any]) -> None:
-    lat, lon = float(loc['latitude']), float(loc['longitude'])
-    accuracy = to_float(loc.get('accuracy'))
-    if accuracy is not None and accuracy > 500:
-        assistant_state_set('last_error', f'Locatie te onnauwkeurig (±{accuracy:.0f} m).')
-        return
-    now = now_local()
-    matched = match_known_place(lat, lon)
-    runtime = assistant_state_get('runtime', {}) or {}
-    previous_lat = to_float(runtime.get('last_lat'))
-    previous_lon = to_float(runtime.get('last_lon'))
-    previous_seen = runtime.get('last_seen_at')
-    runtime['last_seen_at'] = iso_local(now)
-    runtime['last_lat'] = lat
-    runtime['last_lon'] = lon
-    runtime['last_accuracy'] = accuracy
-    if not runtime.get('seeded'):
-        runtime.update({
-            'seeded': True,
-            'current_place_id': int(matched['id']) if matched else None,
-            'departed_from_place_id': None,
-            'departure_at': None,
-            'entry_candidate_id': None,
-            'entry_candidate_since': None,
-            'stationary_since': None,
-            'stationary_lat': lat,
-            'stationary_lon': lon,
-            'unknown_at_stop': False,
-        })
-        assistant_state_set('runtime', runtime)
-        return
+    return assistant._process_assistant_location(loc, cfg, dependencies=_assistant_dependencies())
 
-    current_id = runtime.get('current_place_id')
-    matched_id = int(matched['id']) if matched else None
-    advance_draft_route(runtime, lat, lon, accuracy, now)
-
-    if current_id and matched_id == int(current_id):
-        runtime['entry_candidate_id'] = None
-        runtime['entry_candidate_since'] = None
-        runtime['stationary_since'] = None
-        runtime['unknown_at_stop'] = False
-        runtime['stationary_lat'] = lat
-        runtime['stationary_lon'] = lon
-        assistant_state_set('runtime', runtime)
-        return
-
-    if current_id and matched_id != int(current_id):
-        runtime.update(route_m=0.0, route_samples=0, route_incomplete=False,
-                       route_lat=previous_lat, route_lon=previous_lon,
-                       route_at=previous_seen or iso_local(now))
-        runtime['departed_from_place_id'] = int(current_id)
-        runtime['departure_at'] = iso_local(now)
-        advance_draft_route(runtime, lat, lon, accuracy, now)
-        runtime['current_place_id'] = None
-        runtime['stationary_since'] = None
-        runtime['stationary_lat'] = lat
-        runtime['stationary_lon'] = lon
-        runtime['unknown_at_stop'] = False
-        current_id = None
-
-    if matched_id:
-        if runtime.get('entry_candidate_id') != matched_id:
-            runtime['entry_candidate_id'] = matched_id
-            runtime['entry_candidate_since'] = iso_local(now)
-        else:
-            since = parse_dt(runtime.get('entry_candidate_since') or iso_local(now))
-            if (now - since).total_seconds() >= max(10, min(60, cfg['check_seconds'])):
-                create_assistant_arrival(
-                    int(runtime['departed_from_place_id']) if runtime.get('departed_from_place_id') else None,
-                    matched_id, lat, lon, accuracy, runtime.get('departure_at'), route_snapshot=runtime
-                )
-                runtime['current_place_id'] = matched_id
-                runtime['departed_from_place_id'] = None
-                runtime['departure_at'] = None
-                runtime['entry_candidate_id'] = None
-                runtime['entry_candidate_since'] = None
-                runtime['stationary_since'] = None
-                runtime['unknown_at_stop'] = False
-        assistant_state_set('runtime', runtime)
-        return
-
-    runtime['entry_candidate_id'] = None
-    runtime['entry_candidate_since'] = None
-
-    if cfg.get('unknown_stops') and runtime.get('departed_from_place_id') and not runtime.get('unknown_at_stop'):
-        origin = known_place_by_id(runtime.get('departed_from_place_id'))
-        if origin:
-            from_origin = haversine_m(lat, lon, float(origin['latitude']), float(origin['longitude']))
-            if from_origin >= float(cfg.get('min_trip_m') or 500):
-                stat_lat = to_float(runtime.get('stationary_lat'))
-                stat_lon = to_float(runtime.get('stationary_lon'))
-                moved = haversine_m(lat, lon, stat_lat, stat_lon) if stat_lat is not None and stat_lon is not None else 9999
-                speed = to_float(loc.get('speed'))
-                stationary = moved <= 90 and (speed is None or speed <= 3.0)
-                if stationary:
-                    if not runtime.get('stationary_since'):
-                        runtime['stationary_since'] = iso_local(now)
-                    else:
-                        since = parse_dt(runtime['stationary_since'])
-                        if (now - since).total_seconds() >= int(cfg.get('unknown_stop_minutes') or 4) * 60:
-                            create_assistant_arrival(
-                                int(runtime['departed_from_place_id']), None, lat, lon, accuracy,
-                                runtime.get('departure_at'), route_snapshot=runtime
-                            )
-                            runtime['unknown_at_stop'] = True
-                            runtime['stationary_since'] = None
-                else:
-                    runtime['stationary_since'] = None
-                runtime['stationary_lat'] = lat
-                runtime['stationary_lon'] = lon
-
-    if runtime.get('unknown_at_stop') and previous_lat is not None and previous_lon is not None:
-        if haversine_m(lat, lon, previous_lat, previous_lon) > 220:
-            runtime['unknown_at_stop'] = False
-            runtime['departed_from_place_id'] = None
-            runtime['departure_at'] = iso_local(now)
-            runtime.update(route_m=0.0, route_samples=0, route_incomplete=True,
-                           route_lat=lat, route_lon=lon, route_at=iso_local(now))
-            runtime['stationary_lat'] = lat
-            runtime['stationary_lon'] = lon
-
-    assistant_state_set('runtime', runtime)
 
 
 def _assistant_location_worker() -> None:
-    last_sync = 0.0
-    while True:
-        cfg = assistant_config()
-        delay = min(10, int(cfg.get('check_seconds') or 10))
-        if not cfg.get('enabled') or cfg.get('mode') == 'manual' or not cfg.get('location_entity'):
-            diagnostic_event('assistent_uit' if not cfg.get('enabled') else
-                             'handmatige_modus' if cfg.get('mode') == 'manual' else 'tracker_ontbreekt')
-            time.sleep(max(10, delay))
-            continue
-        try:
-            if cfg.get('sync_zones') and time.time() - last_sync > 1800:
-                sync_all_known_place_zones()
-                last_sync = time.time()
-            loc = location_from_entity(str(cfg['location_entity']))
-            track_active_trip_distance(loc, cfg)
-            _process_assistant_location(loc, cfg)
-            assistant_state_set('last_error', '')
-        except Exception as exc:
-            diagnostic_event('achtergrondverwerking_mislukt')
-            assistant_state_set('last_error', str(exc)[:300])
-        time.sleep(max(10, delay))
+    return assistant._assistant_location_worker(dependencies=_assistant_dependencies())
+
 
 
 def start_assistant_threads() -> None:
@@ -2872,935 +1599,114 @@ def start_assistant_threads() -> None:
     threading.Thread(target=_backup_worker, daemon=True, name='rit-tank-backup').start()
 
 
-def _route_memory_suggestion(origin_place_id: int | None, dest_lat: float, dest_lon: float) -> dict[str, Any] | None:
-    if not origin_place_id:
-        return None
-    with DB_LOCK, db() as con:
-        rows=[dict(r) for r in con.execute('SELECT * FROM route_memory WHERE origin_known_place_id=? ORDER BY last_seen_at DESC',(int(origin_place_id),))]
-    best=None; best_dist=None
-    for r in rows:
-        d=haversine_m(dest_lat,dest_lon,float(r['destination_latitude']),float(r['destination_longitude']))
-        if d<=450 and (best_dist is None or d<best_dist): best,best_dist=r,d
-    if not best: return None
-    b,p=int(best.get('business_count') or 0),int(best.get('private_count') or 0); total=b+p
-    if total<2: return None
-    winner='business' if b>=p else 'private'; count=max(b,p); ratio=count/total
-    if ratio<0.70: return None
-    return {'suggested_type':winner,'reason':f'Eerder {count}x zo geregistreerd vanaf deze plek','confidence':round(min(.94,.68+.06*count),2),'source':'learned'}
-
-
-def suggest_segment(origin_stop: dict[str, Any] | None, dest_lat: float, dest_lon: float) -> dict[str, Any]:
-    dest=match_known_place(dest_lat,dest_lon)
-    origin=None
-    if origin_stop:
-        origin=known_place_by_id(origin_stop.get('known_place_id')) or match_known_place(to_float(origin_stop.get('latitude')),to_float(origin_stop.get('longitude')))
-    if dest and str(dest.get('arrival_trip_type') or 'ask') in {'business','private'}:
-        t=str(dest['arrival_trip_type'])
-        return {'suggested_type':t,'reason':f'Bestemming {dest["name"]} staat als {trip_type_label(t).lower()} ingesteld','confidence':.98,'source':'destination_rule','origin_place':origin,'destination_place':dest}
-    if origin and not dest and str(origin.get('unknown_departure_trip_type') or 'ask') in {'business','private'}:
-        t=str(origin['unknown_departure_trip_type'])
-        return {'suggested_type':t,'reason':f'Vanaf {origin["name"]} naar onbekende bestemming: {trip_type_label(t)}','confidence':.90,'source':'origin_rule','origin_place':origin,'destination_place':None}
-    memory=_route_memory_suggestion(int(origin['id']) if origin else None,dest_lat,dest_lon)
-    if memory:
-        return {**memory,'origin_place':origin,'destination_place':dest}
-    return {'suggested_type':'','reason':'Geen vaste regel gevonden — kies zelf','confidence':0.0,'source':'manual','origin_place':origin,'destination_place':dest}
-
-
-def remember_segment(origin_stop: dict[str, Any], destination_point: dict[str, Any], trip_type: str, *, con: sqlite3.Connection | None = None) -> None:
-    t=normalize_segment_type(trip_type)
-    if not t: return
-    origin=known_place_by_id(origin_stop.get('known_place_id')) or match_known_place(to_float(origin_stop.get('latitude')),to_float(origin_stop.get('longitude')))
-    if not origin: return
-    lat,lon=to_float(destination_point.get('latitude')),to_float(destination_point.get('longitude'))
-    if lat is None or lon is None: return
-    dest=match_known_place(lat,lon)
-    owned = con is None
-    c = con or db()
-    try:
-        rows=[dict(r) for r in c.execute('SELECT * FROM route_memory WHERE origin_known_place_id=?',(int(origin['id']),))]
-        target=None
-        for r in rows:
-            if haversine_m(lat,lon,float(r['destination_latitude']),float(r['destination_longitude']))<=350:
-                target=r; break
-        if target:
-            field='business_count' if t=='business' else 'private_count'
-            c.execute(f'UPDATE route_memory SET {field}={field}+1,destination_known_place_id=?,destination_latitude=?,destination_longitude=?,last_seen_at=? WHERE id=?',
-                      (int(dest['id']) if dest else None,lat,lon,iso_local(),int(target['id'])))
-        else:
-            c.execute('''INSERT INTO route_memory(origin_known_place_id,destination_known_place_id,destination_latitude,destination_longitude,business_count,private_count,last_seen_at) VALUES(?,?,?,?,?,?,?)''',
-                      (int(origin['id']),int(dest['id']) if dest else None,lat,lon,1 if t=='business' else 0,1 if t=='private' else 0,iso_local()))
-        if owned: c.commit()
-    finally:
-        if owned: c.close()
-
-
-def trip_type_label(value: str) -> str:
-    return {'business':'Zakelijk','private':'Prive','mixed':'Gemengd'}.get(value,'Zakelijk')
-
-
-def active_business_trip() -> dict[str, Any] | None:
-    with DB_LOCK, db() as con:
-        row = con.execute("SELECT * FROM business_trips WHERE status='active' ORDER BY id DESC LIMIT 1").fetchone()
-        if not row:
-            return None
-        trip = dict(row)
-        stops = [dict(r) for r in con.execute('SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no ASC, id ASC', (trip['id'],))]
-    return enrich_business_trip(trip, stops)
-
-
-def _trip_point_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    odo = to_float(payload.get('odometer'))
-    if odo is None or odo < 0:
-        raise ValueError('Vul een geldige kilometerstand in.')
-    dt = parse_dt(payload.get('created_at'))
-    created = iso_local(dt)
-    ok, msg = validate_odometer(created, odo)
-    if not ok:
-        raise ValueError(msg)
-    lat = to_float(payload.get('latitude'))
-    lon = to_float(payload.get('longitude'))
-    accuracy = to_float(payload.get('location_accuracy'))
-    source = str(payload.get('location_source') or '').strip()[:40]
-    if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
-        raise ValueError('Leg eerst de huidige locatie vast met de 📍-knop.')
-    place_id = str(payload.get('place_id') or '').strip()[:255]
-    if not place_id and not payload.get('manual_label'):
-        geo = google_reverse_geocode(lat, lon)
-        place_id = str(geo.get('place_id') or '')[:255]
+def _trips_dependencies() -> dict[str, Any]:
     return {
-        'odometer': odo,
-        'created_at': created,
-        'latitude': lat,
-        'longitude': lon,
-        'location_accuracy': accuracy,
-        'location_source': source or 'browser',
-        'place_id': place_id or None,
-        'manual_label': str(payload.get('manual_label') or '').strip()[:120] or None,
-        'note': str(payload.get('note') or '').strip()[:250] or None,
-        'known_place_id': (match_known_place(lat, lon) or {}).get('id'),
+        'db': db,
+        'DB_LOCK': DB_LOCK,
+        'haversine_m': haversine_m,
+        'match_known_place': match_known_place,
+        'known_place_by_id': known_place_by_id,
+        'to_float': to_float,
+        'normalize_segment_type': normalize_segment_type,
+        'iso_local': iso_local,
+        'parse_dt': parse_dt,
+        'now_local': now_local,
+        'validate_odometer': validate_odometer,
+        'google_reverse_geocode': google_reverse_geocode,
+        'audit': audit,
+        'reset_trip_distance_tracking': reset_trip_distance_tracking,
+        'publish_sensors_async': publish_sensors_async,
+        'assistant_state_get': assistant_state_get,
+        'assistant_state_set': assistant_state_set,
+        'learn_distance': learn_distance,
+        'trip_location_details': trip_location_details,
+        'dutch_date': dutch_date,
+        'period_bounds': period_bounds,
     }
 
+
+def _route_memory_suggestion(origin_place_id: int | None, dest_lat: float, dest_lon: float) -> dict[str, Any] | None:
+    return trips._route_memory_suggestion(origin_place_id, dest_lat, dest_lon, dependencies=_trips_dependencies())
+
+def suggest_segment(origin_stop: dict[str, Any] | None, dest_lat: float, dest_lon: float) -> dict[str, Any]:
+    return trips.suggest_segment(origin_stop, dest_lat, dest_lon, dependencies=_trips_dependencies())
+
+def remember_segment(origin_stop: dict[str, Any], destination_point: dict[str, Any], trip_type: str, *, con: sqlite3.Connection | None = None) -> None:
+    return trips.remember_segment(origin_stop, destination_point, trip_type, con=con, dependencies=_trips_dependencies())
+
+def trip_type_label(value: str) -> str:
+    return trips.trip_type_label(value)
+
+def active_business_trip() -> dict[str, Any] | None:
+    return trips.active_business_trip(dependencies=_trips_dependencies())
+
+def _trip_point_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return trips._trip_point_payload(payload, dependencies=_trips_dependencies())
 
 def _insert_trip_stop(con: sqlite3.Connection, trip_id: int, point: dict[str, Any], sequence_no: int, event_note: str,
                       segment_trip_type: str = '', suggestion: dict[str, Any] | None = None,
                       destination_audit: dict[str, Any] | None = None) -> int:
-    suggestion = suggestion or {}
-    destination_audit = destination_audit or {}
-    seg_type = normalize_segment_type(segment_trip_type)
-    suggested = normalize_segment_type(suggestion.get('suggested_type'))
-    source = 'start' if sequence_no == 0 else ('user-confirmed' if suggested and seg_type == suggested else 'user-override' if suggested else 'manual')
-    cur = con.execute('''
-        INSERT INTO trip_stops(
-            trip_id,sequence_no,created_at,odometer,latitude,longitude,
-            location_accuracy,location_source,place_id,manual_label,note,known_place_id,
-            segment_trip_type,segment_suggested_type,segment_suggestion_reason,
-            segment_suggestion_confidence,segment_classification_source,
-            original_destination_latitude,original_destination_longitude,original_destination_address,
-            original_destination_distance_m,destination_distance_source,destination_manually_corrected
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ''', (
-        trip_id, sequence_no, point['created_at'], point['odometer'], point['latitude'], point['longitude'],
-        point['location_accuracy'], point['location_source'], point['place_id'], point['manual_label'], point['note'], point.get('known_place_id'),
-        seg_type or None, suggested or None, str(suggestion.get('reason') or '')[:220] or None,
-        float(suggestion.get('confidence') or 0), source,
-        destination_audit.get('original_latitude'), destination_audit.get('original_longitude'),
-        (str(destination_audit.get('original_address') or '')[:180] or None) if destination_audit.get('original_address') else None,
-        destination_audit.get('original_distance_m'), destination_audit.get('distance_source'),
-        1 if destination_audit.get('manually_corrected') else 0,
-    ))
-    stop_id = int(cur.lastrowid)
-    ev = con.execute('''
-        INSERT INTO events(created_at,type,odometer,note,source_kind,business_trip_stop_id)
-        VALUES(?,?,?,?,?,?)
-    ''', (point['created_at'], 'odometer', point['odometer'], event_note[:200], 'business', stop_id))
-    con.execute('UPDATE trip_stops SET event_id=? WHERE id=?', (int(ev.lastrowid), stop_id))
-    return stop_id
-
+    return trips._insert_trip_stop(
+        con, trip_id, point, sequence_no, event_note, segment_trip_type, suggestion,
+        destination_audit, dependencies=_trips_dependencies(),
+    )
 
 def start_business_trip(payload: dict[str, Any]) -> dict[str, Any]:
-    if active_business_trip() is not None:
-        raise ValueError('Er staat al een ritregistratie open. Voeg een volgende locatie toe of sluit de dagrit af.')
-    point = _trip_point_payload(payload)
-    purpose = str(payload.get('purpose') or '').strip()[:120]
-    client = str(payload.get('client') or '').strip()[:120]
-    trip_note = str(payload.get('trip_note') or '').strip()[:250]
-    with DB_LOCK, db() as con:
-        cur = con.execute('''
-            INSERT INTO business_trips(started_at,status,purpose,client,note,trip_type,private_detour_km,modified_at)
-            VALUES(?,'active',?,?,?,'mixed',0,?)
-        ''', (point['created_at'], purpose or None, client or None, trip_note or None, iso_local()))
-        trip_id = int(cur.lastrowid)
-        _insert_trip_stop(con, trip_id, point, 0, 'Ritregistratie start')
-        audit('create', 'trip', trip_id, {'mode': 'segment_classification', 'purpose': purpose, 'client': client, 'start': point}, con=con)
-        con.commit()
-    trip_now = active_business_trip()
-    reset_trip_distance_tracking(trip_now)
-    publish_sensors_async()
-    return {'ok': True, 'trip': trip_now}
+    return trips.start_business_trip(payload, dependencies=_trips_dependencies())
 
 def add_business_stop(payload: dict[str, Any], *, finish: bool = False, destination_audit: dict[str, Any] | None = None) -> dict[str, Any]:
-    trip = active_business_trip()
-    if not trip:
-        raise ValueError('Er is geen actieve ritregistratie.')
-    point = _trip_point_payload(payload)
-    tracking = assistant_state_get('trip_distance_tracking', {}) or {}
-    with DB_LOCK, db() as con:
-        last = con.execute('SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no DESC LIMIT 1', (trip['id'],)).fetchone()
-        if not last:
-            raise ValueError('De actieve rit heeft geen startpunt.')
-        lastd=dict(last)
-        if point['odometer'] < float(last['odometer']):
-            raise ValueError(f'Kilometerstand is lager dan de vorige stop ({float(last["odometer"]):.0f} km).')
-        suggestion=suggest_segment(lastd,float(point['latitude']),float(point['longitude']))
-        seg_type=normalize_segment_type(payload.get('segment_trip_type'))
-        if not seg_type:
-            seg_type=normalize_segment_type(suggestion.get('suggested_type'))
-        if not seg_type:
-            raise ValueError('Kies of dit traject zakelijk of prive was.')
-        seq = int(last['sequence_no']) + 1
-        label = 'einde' if finish else 'stop'
-        stop_id = _insert_trip_stop(con, int(trip['id']), point, seq, f'Rit {label} ({trip_type_label(seg_type)})', seg_type, suggestion, destination_audit=destination_audit)
-        if (int(tracking.get('trip_id') or -1) == int(trip['id']) and
-                int(tracking.get('stop_id') or -1) == int(last['id']) and not tracking.get('incomplete') and
-                abs((parse_dt(point['created_at']) - now_local()).total_seconds()) < 300):
-            learn_distance(f'stop:{stop_id}', float(tracking.get('segment_m') or 0) / 1000,
-                           float(point['odometer']) - float(last['odometer']), int(tracking.get('sample_count') or 0),
-                           payload.get('odometer_checked') is True, con=con)
-        remember_segment(lastd, point, seg_type, con=con)
-        # Overall trip type is derived from all classified legs.
-        types=[str(r['segment_trip_type'] or '') for r in con.execute('SELECT segment_trip_type FROM trip_stops WHERE trip_id=? AND sequence_no>0',(trip['id'],))]
-        types=[t for t in types if t in {'business','private'}]
-        overall = types[0] if types and all(t==types[0] for t in types) else 'mixed'
-        if finish:
-            route = str(payload.get('deviating_route') or '').strip()[:300]
-            detour = max(0.0, to_float(payload.get('private_detour_km')) or 0.0)
-            con.execute("UPDATE business_trips SET status='completed', ended_at=?, trip_type=?, deviating_route=?, private_detour_km=?, modified_at=? WHERE id=?",
-                        (point['created_at'], overall, route or None, detour, iso_local(), trip['id']))
-            audit('finish','trip',int(trip['id']),{'stop_id':stop_id,'segment_trip_type':seg_type,'overall_trip_type':overall,'suggestion':suggestion.get('reason'),'end':point},con=con)
-        else:
-            con.execute('UPDATE business_trips SET trip_type=?,modified_at=? WHERE id=?',(overall,iso_local(),trip['id']))
-            audit('stop','trip',int(trip['id']),{'stop_id':stop_id,'segment_trip_type':seg_type,'suggestion':suggestion.get('reason'),'point':point},con=con)
-        con.commit()
-    result_trip = active_business_trip() if not finish else business_trip_by_id(int(trip['id']))
-    if finish:
-        assistant_state_set('trip_distance_tracking', {})
-    else:
-        reset_trip_distance_tracking(result_trip)
-    publish_sensors_async()
-    return {'ok': True, 'trip': result_trip}
+    return trips.add_business_stop(
+        payload, finish=finish, destination_audit=destination_audit,
+        dependencies=_trips_dependencies(),
+    )
 
 def business_trip_by_id(trip_id: int) -> dict[str, Any] | None:
-    with DB_LOCK, db() as con:
-        row = con.execute('SELECT * FROM business_trips WHERE id=?', (trip_id,)).fetchone()
-        if not row:
-            return None
-        stops = [dict(r) for r in con.execute('SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no ASC, id ASC', (trip_id,))]
-    return enrich_business_trip(dict(row), stops)
-
+    return trips.business_trip_by_id(trip_id, dependencies=_trips_dependencies())
 
 def enrich_business_trip(trip: dict[str, Any], stops: list[dict[str, Any]], resolve: bool = True) -> dict[str, Any]:
-    out = dict(trip)
-    enriched = []
-    prev_odo = None
-    total = business_km = private_km = 0.0
-    segment_types=[]
-    for stop in stops:
-        x = dict(stop)
-        dt = parse_dt(x['created_at'])
-        x['date_label'] = dutch_date(dt)
-        x['time_label'] = dt.strftime('%H:%M')
-        km = max(0.0, float(x['odometer']) - prev_odo) if prev_odo is not None else 0.0
-        x['segment_km'] = round(km, 1)
-        total += km
-        seg=normalize_segment_type(x.get('segment_trip_type'))
-        x['segment_trip_type']=seg
-        x['segment_trip_type_label']=trip_type_label(seg) if seg else ''
-        if seg:
-            segment_types.append(seg)
-            if seg=='private': private_km += km
-            else: business_km += km
-        kp=known_place_by_id(x.get('known_place_id'))
-        x['known_place_name']=kp.get('name') if kp else ''
-        loc = trip_location_details(x, resolve=resolve)
-        x['location_label'] = loc['label']
-        x['location_address'] = loc['address']
-        x['google_maps_uri'] = loc['google_maps_uri']
-        enriched.append(x)
-        prev_odo = float(x['odometer'])
-    out['stops'] = enriched
-    out['km'] = round(total, 1)
-    # New V3.4 records use per-leg classifications. Legacy records fall back to old trip-level logic.
-    if segment_types:
-        overall=segment_types[0] if all(t==segment_types[0] for t in segment_types) else 'mixed'
-        out['trip_type']=overall
-        out['business_km']=round(business_km,1)
-        out['private_km']=round(private_km,1)
-    else:
-        out['trip_type'] = str(out.get('trip_type') or 'business')
-        detour = max(0.0, min(total, float(out.get('private_detour_km') or 0)))
-        if out['trip_type'] == 'private': out['business_km'],out['private_km']=0.0,round(total,1)
-        elif out['trip_type'] == 'mixed': out['private_km'],out['business_km']=round(detour,1),round(max(0.0,total-detour),1)
-        else: out['business_km'],out['private_km']=round(total,1),0.0
-    out['trip_type_label'] = trip_type_label(out['trip_type'])
-    out['start_odometer'] = float(stops[0]['odometer']) if stops else None
-    out['last_odometer'] = float(stops[-1]['odometer']) if stops else None
-    out['stop_count'] = len(stops)
-    if stops:
-        out['start_location'] = enriched[0]['location_label']
-        out['last_location'] = enriched[-1]['location_label']
-        out['started_label'] = dutch_date(stops[0]['created_at']) + ' ' + parse_dt(stops[0]['created_at']).strftime('%H:%M')
-        out['ended_label'] = dutch_date(stops[-1]['created_at']) + ' ' + parse_dt(stops[-1]['created_at']).strftime('%H:%M') if out.get('status') == 'completed' else None
-    else:
-        out['start_location'] = out['last_location'] = ''
-        out['started_label'] = out['ended_label'] = None
-    return out
-
+    return trips.enrich_business_trip(trip, stops, resolve, dependencies=_trips_dependencies())
 
 def business_trips_raw() -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
-    with DB_LOCK, db() as con:
-        trips = [dict(r) for r in con.execute('SELECT * FROM business_trips ORDER BY started_at ASC, id ASC')]
-        result = []
-        for t in trips:
-            stops = [dict(r) for r in con.execute('SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no ASC, id ASC', (t['id'],))]
-            result.append((t, stops))
-    return result
-
+    return trips.business_trips_raw(dependencies=_trips_dependencies())
 
 def business_stats_for_period(period: str) -> dict[str, Any]:
-    trips = business_trips_for_period(period)
-    total_km = sum(float(t.get('km') or 0) for t in trips)
-    business_km = sum(float(t.get('business_km') or 0) for t in trips)
-    private_km = sum(float(t.get('private_km') or 0) for t in trips)
-    stop_count = sum(int(t.get('stop_count') or 0) for t in trips)
-    return {
-        'km': round(total_km,1), 'business_km': round(business_km,1), 'private_km': round(private_km,1),
-        'trips': len(trips), 'segments': sum(max(0,int(t.get('stop_count') or 0)-1) for t in trips),
-        'stops': stop_count, 'avg_km': round(total_km/len(trips),1) if trips else 0.0,
-    }
+    return trips.business_stats_for_period(period, dependencies=_trips_dependencies())
 
 def recent_business_trips(period: str, limit: int = 12) -> list[dict[str, Any]]:
-    start, end = period_bounds(period)
-    selected = []
-    for trip, stops in reversed(business_trips_raw()):
-        if not stops:
-            continue
-        if trip.get('status') == 'active' or any(start <= parse_dt(s['created_at']) < end for s in stops):
-            selected.append(enrich_business_trip(trip, stops))
-        if len(selected) >= limit:
-            break
-    return selected
-
-
+    return trips.recent_business_trips(period, limit, dependencies=_trips_dependencies())
 
 def business_trips_for_period(period: str) -> list[dict[str, Any]]:
-    """Return complete trips that touch the selected reporting period."""
-    if period == 'all':
-        return [enrich_business_trip(t, stops) for t, stops in business_trips_raw() if stops]
-    if period not in {'day', 'week', 'month', 'year'}:
-        period = 'month'
-    start, end = period_bounds(period)
-    out = []
-    for trip, stops in business_trips_raw():
-        if not stops:
-            continue
-        if any(start <= parse_dt(stop['created_at']) < end for stop in stops):
-            out.append(enrich_business_trip(trip, stops))
-    return out
+    return trips.business_trips_for_period(period, dependencies=_trips_dependencies())
 
+try:
+    from . import pdf_report
+except ImportError:
+    import pdf_report
 
-def _pdf_text(value: Any) -> str:
-    """Text safe for the built-in PDF WinAnsi fonts."""
-    s = str(value if value is not None else '')
-    return s.replace('\u2192', '->').replace('\u00a0', ' ')
-
-
-def _pdf_escape(value: Any) -> bytes:
-    raw = _pdf_text(value).encode('cp1252', 'replace')
-    return raw.replace(b'\\', b'\\\\').replace(b'(', b'\\(').replace(b')', b'\\)')
-
-
-class _SimplePdfPage:
-    def __init__(self, title: str = ''):
-        self.commands: list[bytes] = []
-        self.preview: list[str] = []
-        self.images: set[str] = set()
-        self.y = 806.0
-        self.title = title
-        if title:
-            self.text(title, 36, self.y, 15, bold=True)
-            self.y -= 12
-            self.line(36, self.y, 559, self.y, 0.75)
-            self.y -= 18
-
-    @staticmethod
-    def _normalize_rgb(rgb: tuple[int, int, int] | None) -> tuple[int, int, int] | None:
-        if rgb is None:
-            return None
-        return tuple(max(0, min(255, int(v))) for v in rgb)
-
-    @classmethod
-    def _svg_color(cls, gray: float | None = None, rgb: tuple[int, int, int] | None = None) -> str:
-        norm = cls._normalize_rgb(rgb)
-        if norm is not None:
-            return f'rgb({norm[0]},{norm[1]},{norm[2]})'
-        level = round((0.08 if gray is None else gray) * 255)
-        return f'rgb({level},{level},{level})'
-
-    @classmethod
-    def _fill_command(cls, gray: float | None = None, rgb: tuple[int, int, int] | None = None) -> str:
-        norm = cls._normalize_rgb(rgb)
-        if norm is not None:
-            r, g, b = [v / 255 for v in norm]
-            return f'{r:.3f} {g:.3f} {b:.3f} rg'
-        return f'{(0.08 if gray is None else gray):.3f} g'
-
-    @classmethod
-    def _stroke_command(cls, gray: float | None = None, rgb: tuple[int, int, int] | None = None) -> str:
-        norm = cls._normalize_rgb(rgb)
-        if norm is not None:
-            r, g, b = [v / 255 for v in norm]
-            return f'{r:.3f} {g:.3f} {b:.3f} RG'
-        return f'{(0.75 if gray is None else gray):.3f} G'
-
-    def text(self, value: Any, x: float, y: float, size: float = 9, bold: bool = False,
-             gray: float | None = 0.08, rgb: tuple[int, int, int] | None = None):
-        color = self._svg_color(gray, rgb)
-        self.preview.append(f'<text x="{x}" y="{842-y}" font-size="{size}" font-weight="{700 if bold else 400}" fill="{color}">{html.escape(_pdf_text(value))}</text>')
-        font = 'F2' if bold else 'F1'
-        esc = _pdf_escape(value)
-        self.commands.append(
-            (self._fill_command(gray, rgb) + f' BT /{font} {size:.2f} Tf 1 0 0 1 {x:.2f} {y:.2f} Tm ').encode('ascii')
-            + b'(' + esc + b') Tj ET\n'
-        )
-
-    def line(self, x1: float, y1: float, x2: float, y2: float, width: float = 0.5,
-             gray: float | None = 0.75, rgb: tuple[int, int, int] | None = None):
-        color = self._svg_color(gray, rgb)
-        self.preview.append(f'<line x1="{x1}" y1="{842-y1}" x2="{x2}" y2="{842-y2}" stroke="{color}" stroke-width="{width}"/>')
-        self.commands.append(
-            f'{self._stroke_command(gray, rgb)} {width:.2f} w {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S\n'.encode('ascii')
-        )
-
-    def rect(self, x: float, y: float, width: float, height: float,
-             gray: float | None = 0.94, rgb: tuple[int, int, int] | None = None):
-        color = self._svg_color(gray, rgb)
-        self.preview.append(f'<rect x="{x}" y="{842-y-height}" width="{width}" height="{height}" fill="{color}"/>')
-        self.commands.append(
-            f'{self._fill_command(gray, rgb)} {x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n'.encode('ascii')
-        )
-
-    def rounded_rect(self, x: float, y: float, width: float, height: float, radius: float = 4.0,
-                      gray: float | None = 0.94, rgb: tuple[int, int, int] | None = None):
-        """Filled rectangle with subtly rounded corners (radius clamped to half the smallest side)."""
-        r = max(0.0, min(radius, width / 2, height / 2))
-        color = self._svg_color(gray, rgb)
-        self.preview.append(
-            f'<rect x="{x}" y="{842-y-height}" width="{width}" height="{height}" rx="{r}" ry="{r}" fill="{color}"/>'
-        )
-        if r <= 0:
-            self.commands.append(
-                f'{self._fill_command(gray, rgb)} {x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n'.encode('ascii')
-            )
-            return
-        k = r * 0.5522847498
-        x0, x1 = x, x + width
-        y0, y1 = y, y + height
-        path = (
-            f'{x0 + r:.2f} {y0:.2f} m '
-            f'{x1 - r:.2f} {y0:.2f} l '
-            f'{x1 - r + k:.2f} {y0:.2f} {x1:.2f} {y0 + r - k:.2f} {x1:.2f} {y0 + r:.2f} c '
-            f'{x1:.2f} {y1 - r:.2f} l '
-            f'{x1:.2f} {y1 - r + k:.2f} {x1 - r + k:.2f} {y1:.2f} {x1 - r:.2f} {y1:.2f} c '
-            f'{x0 + r:.2f} {y1:.2f} l '
-            f'{x0 + r - k:.2f} {y1:.2f} {x0:.2f} {y1 - r + k:.2f} {x0:.2f} {y1 - r:.2f} c '
-            f'{x0:.2f} {y0 + r:.2f} l '
-            f'{x0:.2f} {y0 + r - k:.2f} {x0 + r - k:.2f} {y0:.2f} {x0 + r:.2f} {y0:.2f} c h f\n'
-        )
-        self.commands.append((f'{self._fill_command(gray, rgb)} ' + path).encode('ascii'))
-
-    def circle(self, x: float, y: float, radius: float,
-               gray: float | None = 0.75, rgb: tuple[int, int, int] | None = None):
-        color = self._svg_color(gray, rgb)
-        self.preview.append(f'<circle cx="{x}" cy="{842-y}" r="{radius}" fill="{color}"/>')
-        c = radius * 0.5522847498
-        self.commands.append(
-            (
-                f'{self._fill_command(gray, rgb)} '
-                f'{x + radius:.2f} {y:.2f} m '
-                f'{x + radius:.2f} {y + c:.2f} {x + c:.2f} {y + radius:.2f} {x:.2f} {y + radius:.2f} c '
-                f'{x - c:.2f} {y + radius:.2f} {x - radius:.2f} {y + c:.2f} {x - radius:.2f} {y:.2f} c '
-                f'{x - radius:.2f} {y - c:.2f} {x - c:.2f} {y - radius:.2f} {x:.2f} {y - radius:.2f} c '
-                f'{x + c:.2f} {y - radius:.2f} {x + radius:.2f} {y - c:.2f} {x + radius:.2f} {y:.2f} c h f\n'
-            ).encode('ascii')
-        )
-
-    def image(self, name: str, x: float, y: float, width: float, height: float):
-        self.images.add(name)
-        self.preview.append(f'<image x="{x}" y="{842-y-height}" width="{width}" height="{height}" preserveAspectRatio="none" href="IMAGE_{name}"/>')
-        self.commands.append(
-            f'q {width:.2f} 0 0 {height:.2f} {x:.2f} {y:.2f} cm /{name} Do Q\n'.encode('ascii')
-        )
-
-    @staticmethod
-    def text_width(value: str, size: float = 8.5, bold: bool = False) -> float:
-        """Rough estimate of rendered text width for Helvetica(-Bold) at a given size."""
-        factor = 0.60 if bold else 0.52
-        return len(str(value)) * size * factor
-
-    @staticmethod
-    def wrap_lines(value: Any, width: float, size: float = 8.5) -> list[str]:
-        chars = max(18, int(width / max(3.7, size * 0.52)))
-        return textwrap.wrap(_pdf_text(value), width=chars, break_long_words=False, break_on_hyphens=False) or ['']
-
-    def wrapped(self, value: Any, x: float, width: float, size: float = 8.5, bold: bool = False,
-                leading: float | None = None, indent: float = 0,
-                gray: float | None = 0.08, rgb: tuple[int, int, int] | None = None):
-        leading = leading or (size + 3)
-        lines = self.wrap_lines(value, width, size)
-        for line in lines:
-            self.text(line, x + indent, self.y, size, bold=bold, gray=gray, rgb=rgb)
-            self.y -= leading
-        return len(lines)
-
-    def need(self, height: float) -> bool:
-        return self.y - height < 42
-
-    def stream(self) -> bytes:
-        return b''.join(self.commands)
-
-    def svg(self, images: dict[str, tuple[int, int, bytes]]) -> str:
-        markup = ''.join(self.preview)
-        for name, (_, _, data) in images.items():
-            markup = markup.replace(f'IMAGE_{name}', 'data:image/jpeg;base64,' + base64.b64encode(data).decode('ascii'))
-        return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" role="img" aria-label="Pagina rittenregistratie" style="font-family:Arial,Helvetica,sans-serif;background:white">' + markup + '</svg>'
-
-
-def _build_pdf(pages: list[_SimplePdfPage], images: dict[str, tuple[int, int, bytes]] | None = None) -> bytes:
-    """Minimal dependency-free PDF writer using core Helvetica fonts and JPEGs."""
-    objects: dict[int, bytes] = {}
-    objects[1] = b'<< /Type /Catalog /Pages 2 0 R >>'
-    objects[3] = b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'
-    objects[4] = b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>'
-    image_ids: dict[str, int] = {}
-    next_id = 5
-    for name, (width, height, data) in (images or {}).items():
-        image_ids[name] = next_id
-        objects[next_id] = (
-            f'<< /Type /XObject /Subtype /Image /Width {int(width)} /Height {int(height)} '
-            f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(data)} >>\n'
-        ).encode('ascii') + b'stream\n' + data + b'\nendstream'
-        next_id += 1
-    kids = []
-    for page in pages:
-        page_id = next_id
-        content_id = next_id + 1
-        next_id += 2
-        kids.append(f'{page_id} 0 R')
-        stream = page.stream()
-        objects[content_id] = b'<< /Length %d >>\nstream\n' % len(stream) + stream + b'endstream'
-        xobjects = ' '.join(
-            f'/{name} {image_ids[name]} 0 R'
-            for name in sorted(page.images)
-            if name in image_ids
-        )
-        xobject_resource = f' /XObject << {xobjects} >>' if xobjects else ''
-        objects[page_id] = (
-            f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] '
-            f'/Resources << /Font << /F1 3 0 R /F2 4 0 R >>{xobject_resource} >> /Contents {content_id} 0 R >>'
-        ).encode('ascii')
-    objects[2] = f'<< /Type /Pages /Count {len(pages)} /Kids [{" ".join(kids)}] >>'.encode('ascii')
-
-    out = bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
-    offsets = {0: 0}
-    max_id = max(objects)
-    for obj_id in range(1, max_id + 1):
-        offsets[obj_id] = len(out)
-        out.extend(f'{obj_id} 0 obj\n'.encode('ascii'))
-        out.extend(objects[obj_id])
-        out.extend(b'\nendobj\n')
-    xref = len(out)
-    out.extend(f'xref\n0 {max_id + 1}\n'.encode('ascii'))
-    out.extend(b'0000000000 65535 f \n')
-    for obj_id in range(1, max_id + 1):
-        out.extend(f'{offsets[obj_id]:010d} 00000 n \n'.encode('ascii'))
-    out.extend(f'trailer\n<< /Size {max_id + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode('ascii'))
-    return bytes(out)
-
+_pdf_text = pdf_report._pdf_text
+_pdf_escape = pdf_report._pdf_escape
+_SimplePdfPage = pdf_report._SimplePdfPage
+_build_pdf = pdf_report._build_pdf
 
 def business_pdf(period: str = 'month', year: str | None = None, month: str | None = None, preview: bool = False) -> Any:
-    settings = get_settings()
-    ref = now_local()
-    try:
-        if year is not None:
-            if period not in {'month', 'year'}:
-                raise ValueError()
-            ref = ref.replace(year=int(year), month=int(month or 1), day=1)
-        elif month is not None:
-            raise ValueError()
-        if not 1900 <= ref.year <= 9998:
-            raise ValueError()
-    except (ValueError, TypeError):
-        raise ValueError('Kies een geldig jaar (1900-9998) en een maand (1-12).') from None
-
-    safe_period = period if period in {'day', 'week', 'month', 'year'} else 'month'
-    selection_start, selection_end = period_bounds(safe_period, ref)
-    trips = []
-    for trip, stops in business_trips_raw():
-        if stops and (period == 'all' or selection_start <= parse_dt(stops[0]['created_at']) < selection_end):
-            trips.append(enrich_business_trip(trip, stops, resolve=False))
-    trips.sort(key=lambda trip: parse_dt(trip['stops'][0]['created_at']))
-
-    if period == 'all':
-        label = 'Alle geregistreerde ritten'
-        filename_label = 'alles'
-        period_stops = [
-            parse_dt(stop.get('created_at'))
-            for trip in trips
-            for stop in (trip.get('stops') or [])
-            if stop.get('created_at')
-        ]
-        period_start = min(period_stops) if period_stops else None
-        period_end = max(period_stops) if period_stops else None
-    else:
-        period_start, period_end_exclusive = selection_start, selection_end
-        label = period_label(safe_period, period_start)
-        if safe_period == 'year':
-            filename_label = period_start.strftime('%Y')
-        elif safe_period == 'month':
-            filename_label = period_start.strftime('%Y-%m')
-        else:
-            filename_label = safe_period
-        period_end = period_end_exclusive - timedelta(days=1)
-
-    if period_start and period_end:
-        year_label = str(period_start.year) if period_start.year == period_end.year else f'{period_start.year}-{period_end.year}'
-        date_range = f'{period_start:%d-%m-%Y} - {period_end:%d-%m-%Y}'
-    else:
-        year_label = '-'
-        date_range = 'Geen geregistreerde datums'
-
-    total_km = round(sum(float(t.get('km') or 0) for t in trips), 1)
-    business_km = round(sum(float(t.get('business_km') or 0) for t in trips), 1)
-    private_km = round(sum(float(t.get('private_km') or 0) for t in trips), 1)
-
-    company_name = str(settings.get('company_name') or 'Huisplan BV').strip() or 'Huisplan BV'
-    footer_company = 'Huisplan BV'
-    vehicle_bits = [x for x in [settings.get('vehicle_make'), settings.get('vehicle_model')] if x]
-    vehicle_name = ' '.join(str(x).strip() for x in vehicle_bits if str(x).strip()) or str(settings.get('vehicle_name') or '-').strip() or '-'
-    driver_name = str(settings.get('driver_name') or '-').strip() or '-'
-    license_plate = str(settings.get('license_plate') or '-').strip() or '-'
-    generated_label = now_local().strftime('%d-%m-%Y %H:%M')
-    footer_period_label = label if label else '-'
-    report_period_main = label if label else '-'
-    report_period_range = f'{period_start:%d-%m-%Y} t/m {period_end:%d-%m-%Y}' if period_start and period_end else ''
-
-    MM_TO_PT = 72 / 25.4
-    TOP_MARGIN_MM = 25
-    TOP_MARGIN_PT = TOP_MARGIN_MM * MM_TO_PT
-    PAGE_HEIGHT_PT = 842
-    HEADER_TOP_Y = PAGE_HEIGHT_PT - TOP_MARGIN_PT
-
-    BADGE_WIDTH = 65
-
-    palette = {
-        'text': (12, 15, 18),
-        'muted': (151, 167, 180),
-        'line': (43, 53, 64),
-        'blue': (82, 186, 255),
-        'teal': (88, 223, 177),
-        'card': (244, 247, 250),
-        'card2': (236, 243, 247),
-    }
-
-    def tint(rgb: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
-        return tuple(max(0, min(255, int(round(v + (255 - v) * ratio)))) for v in rgb)
-
-    def fmt_km(value: Any) -> str:
-        number = round(float(value or 0), 1)
-        if abs(number - round(number)) < 0.05:
-            return f'{int(round(number))}'
-        return f'{number:.1f}'
-
-    pdf_images: dict[str, tuple[int, int, bytes]] = {}
-    logo_path = Path(__file__).with_name('huisplan-logo.jpg')
-    try:
-        if logo_path.exists():
-            pdf_images['ImLogo'] = (900, 827, logo_path.read_bytes())
-    except OSError:
-        pass
-
-    pages: list[_SimplePdfPage] = []
-
-    def draw_header(page: _SimplePdfPage, compact: bool = False) -> None:
-        if not compact:
-            title_y = HEADER_TOP_Y
-            subtitle_y = HEADER_TOP_Y - 18
-            logo_y = HEADER_TOP_Y - 43
-            header_line_y = HEADER_TOP_Y - 52
-            page_y_after = HEADER_TOP_Y - 72
-        else:
-            title_y = 691
-            subtitle_y = 672
-            logo_y = 653
-            header_line_y = 642
-            page_y_after = 624
-        logo_w = 46 if not compact else 40
-        logo_h = 42 if not compact else 36
-        logo_x = 489 if not compact else 515
-        page.text('Rittenregistratie', 36, title_y, 26 if not compact else 15, bold=True, rgb=palette['text'])
-        page.text('Fiscale kilometeradministratie', 36, subtitle_y, 9.3 if not compact else 8.4, rgb=palette['muted'])
-        if 'ImLogo' in pdf_images:
-            page.image('ImLogo', logo_x, logo_y, logo_w, logo_h)
-        page.line(36, header_line_y, 559, header_line_y, 0.8, rgb=tint(palette['line'], 0.35))
-        page.y = page_y_after
-
-    def draw_field_icon(page: _SimplePdfPage, kind: str, x: float, y: float) -> None:
-        """Draw a small (~9x9pt) vector glyph to the left of a report-info label."""
-        c = tint(palette['blue'], 0.15)
-        if kind == 'calendar':
-            page.rect(x, y - 8, 9, 8, rgb=tint(palette['blue'], 0.82))
-            page.rect(x, y, 9, 1.6, rgb=c)
-            page.line(x + 2, y + 1.6, x + 2, y - 0.6, 0.8, rgb=c)
-            page.line(x + 7, y + 1.6, x + 7, y - 0.6, 0.8, rgb=c)
-        elif kind == 'person':
-            page.circle(x + 4.5, y - 1.5, 2.1, rgb=c)
-            page.rect(x + 1, y - 7.5, 7, 4.5, rgb=c)
-        elif kind == 'car':
-            page.rect(x, y - 5, 9, 3, rgb=c)
-            page.rect(x + 1.5, y - 2.2, 6, 2.2, rgb=c)
-            page.circle(x + 2, y - 6, 1.3, rgb=tint(palette['muted'], 0.1))
-            page.circle(x + 7, y - 6, 1.3, rgb=tint(palette['muted'], 0.1))
-        elif kind == 'plate':
-            page.rect(x, y - 6, 9, 6, rgb=c)
-            page.rect(x + 1, y - 5, 7, 1, rgb=(255, 255, 255))
-        elif kind == 'clock':
-            page.circle(x + 4.5, y - 4, 4.2, rgb=c)
-            page.line(x + 4.5, y - 4, x + 4.5, y - 1.3, 0.8, rgb=(255, 255, 255))
-            page.line(x + 4.5, y - 4, x + 6.6, y - 4, 0.8, rgb=(255, 255, 255))
-
-    def draw_report_table(page: _SimplePdfPage) -> None:
-        table_top = page.y
-        row_h = 44
-        left_x, right_x = 48, 304
-        page.rounded_rect(36, table_top - row_h * 3, 523, row_h * 3, radius=5, rgb=palette['card'])
-        for i in range(4):
-            y = table_top - i * row_h
-            page.line(36, y, 559, y, 0.5, rgb=tint(palette['line'], 0.72))
-        page.line(292, table_top, 292, table_top - row_h * 3, 0.5, rgb=tint(palette['line'], 0.72))
-        cells = [
-            (('Kalenderjaar', year_label, 'calendar'), ('Rapportperiode', None, 'calendar')),
-            (('Bestuurder', driver_name, 'person'), ('Auto', vehicle_name, 'car')),
-            (('Kenteken', license_plate, 'plate'), ('Gegenereerd op', generated_label, 'clock')),
-        ]
-        for row_idx, (left_cell, right_cell) in enumerate(cells):
-            baseline = table_top - row_idx * row_h - 13
-            for x, width, (key, value, icon) in ((left_x, 218, left_cell), (right_x, 215, right_cell)):
-                icon_x = x
-                text_x = x + 14
-                draw_field_icon(page, icon, icon_x, baseline + 11)
-                page.text(key.upper(), text_x, baseline, 7.2, bold=True, rgb=palette['muted'])
-                if key == 'Rapportperiode':
-                    page.text(report_period_main, text_x, baseline - 12, 9.2, bold=(row_idx == 0), rgb=palette['text'])
-                    page.text(report_period_range, text_x, baseline - 26, 7, rgb=palette['muted'])
-                    continue
-                value_lines = _SimplePdfPage.wrap_lines(value, width - 14, 9.2)[:2]
-                for line_idx, line in enumerate(value_lines):
-                    page.text(line, text_x, baseline - 13 - line_idx * 11, 9.2, bold=(row_idx == 0 and x == left_x), rgb=palette['text'])
-        page.y = table_top - row_h * 3 - 18
-
-    def draw_summary_cards(page: _SimplePdfPage) -> None:
-        card_y = page.y - 58
-        width = 165
-        gap = 14
-        cards = [
-            ('TOTAAL', format_dutch_km(total_km), palette['card2'], None),
-            ('ZAKELIJK', format_dutch_km(business_km), tint(palette['teal'], 0.85), palette['teal']),
-            ('PRIVÉ', format_dutch_km(private_km), tint(palette['blue'], 0.88), palette['blue']),
-        ]
-        for idx, (title, value, bg, bullet) in enumerate(cards):
-            x = 36 + idx * (width + gap)
-            page.rounded_rect(x, card_y, width, 58, radius=6, rgb=bg)
-            label_x = x + 14
-            if title == 'TOTAAL':
-                page.rect(x + 12, card_y + 36, 9, 11, rgb=tint(palette['muted'], 0.2))
-                page.line(x + 16.5, card_y + 38, x + 16.5, card_y + 45, 0.8, rgb=(255, 255, 255))
-                label_x = x + 26
-            elif bullet is not None:
-                page.circle(x + 16, card_y + 42.9, 3.6, rgb=bullet)
-                label_x = x + 26
-            page.text(title, label_x, card_y + 40, 8.2, bold=True, rgb=palette['muted'])
-            page.text(f'{value} km', x + 14, card_y + 18, 18, bold=True, rgb=palette['text'])
-        page.y = card_y - 22
-
-    def new_page(*, compact: bool = False, section_label: str | None = None) -> _SimplePdfPage:
-        page = _SimplePdfPage()
-        draw_header(page, compact=compact)
-        if section_label:
-            page.text(section_label, 36, page.y, 9.5, bold=True, rgb=palette['muted'])
-            page.y -= 18
-        pages.append(page)
-        return page
-
-    def dutch_day_abbr(dt: datetime) -> str:
-        days = ('ma', 'di', 'wo', 'do', 'vr', 'za', 'zo')
-        return days[dt.weekday()]
-
-    def format_dutch_date(dt: datetime) -> str:
-        return f'{dutch_day_abbr(dt)} {dt:%d-%m-%Y}'
-
-    def format_dutch_time(dt: datetime) -> str:
-        return dt.strftime('%H:%M')
-
-    def format_dutch_km(value: Any) -> str:
-        number = round(float(value or 0), 1)
-        if abs(number - round(number)) < 0.05:
-            formatted = f'{int(round(number))},0'
-        else:
-            formatted = f'{number:.1f}'.replace('.', ',')
-        return formatted
-
-    def trip_badge_text(trip: dict[str, Any]) -> tuple[str, tuple[int, int, int]]:
-        has_business = float(trip.get('business_km') or 0) > 0
-        has_private = float(trip.get('private_km') or 0) > 0
-        if has_business and has_private:
-            return 'Privé/Zakelijk', palette['line']
-        if has_private:
-            return 'Privé', palette['blue']
-        return 'Zakelijk', palette['teal']
-
-    def draw_table_header(page: _SimplePdfPage, x1: float, y_top: float) -> float:
-        """Draw table header and return the y position after header."""
-        header_h = 22
-        header_bg = (241, 244, 248)
-        page.rect(x1, y_top - header_h, 523, header_h, rgb=header_bg)
-        page.line(x1, y_top - header_h, x1 + 523, y_top - header_h, 0.4, rgb=tint(palette['line'], 0.5))
-        header_text_y = y_top - 15
-        page.text('#', 60, header_text_y, 9.5, bold=True, rgb=palette['text'])
-        page.text('Datum', 90, header_text_y, 9.5, bold=True, rgb=palette['text'])
-        page.text('Vertrek → Aankomst (adres)', 202, header_text_y, 9.5, bold=True, rgb=palette['text'])
-        page.text('Soort', 432, header_text_y, 9.5, bold=True, rgb=palette['text'])
-        page.text('Afstand', 557 - _SimplePdfPage.text_width('Afstand', 9.5, bold=True), header_text_y, 9.5, bold=True, rgb=palette['text'])
-        return y_top - header_h - 1
-
-    def draw_table_row(page: _SimplePdfPage, y_top: float, trip_num: int, trip: dict[str, Any],
-                       stops: list[dict[str, Any]]) -> float:
-        """Draw a single table row. Returns the next available y position."""
-        row_h = 43
-        x1, x2 = 36, 559
-
-        start_dt = parse_dt(stops[0]['created_at'])
-        end_dt = parse_dt(stops[-1]['created_at']) if len(stops) > 1 else start_dt
-
-        start_addr = (stops[0].get('location_address') or stops[0].get('location_label') or
-                     stops[0].get('manual_label') or 'Locatie onbekend')
-        end_addr = (stops[-1].get('location_address') or stops[-1].get('location_label') or
-                   stops[-1].get('manual_label') or 'Locatie onbekend')
-
-        trip_label, trip_color = trip_badge_text(trip)
-        trip_km = format_dutch_km(trip.get('km'))
-
-        page.line(x1, y_top, x2, y_top, 0.2, rgb=tint(palette['line'], 0.85))
-
-        mid_y = y_top - row_h / 2
-
-        page.text(str(trip_num), 60, mid_y + 2.5, 9, rgb=palette['text'])
-
-        date_text = format_dutch_date(start_dt)
-        time_text = f'{format_dutch_time(start_dt)} \u2013 {format_dutch_time(end_dt)}'
-        page.text(date_text, 90, y_top - 16, 9.5, bold=True, rgb=palette['text'])
-        page.text(time_text, 90, y_top - 30, 8, rgb=palette['muted'])
-
-        page.circle(182, y_top - 10, 4.3, rgb=(76, 175, 80))
-        page.text(start_addr[:44], 202, y_top - 13, 9.5, rgb=palette['text'])
-
-        page.circle(182, y_top - 26, 4.3, rgb=(244, 67, 54))
-        page.text(end_addr[:44], 202, y_top - 29, 9.5, rgb=palette['text'])
-
-        badge_w = BADGE_WIDTH
-        page.rounded_rect(423, mid_y - 8, badge_w, 16, radius=8, rgb=tint(trip_color, 0.87))
-        page.circle(432, mid_y, 3.4, rgb=trip_color)
-        page.text(trip_label, 449, mid_y - 2.9, 8.5, rgb=trip_color)
-
-        km_text = trip_km + ' km'
-        km_w = _SimplePdfPage.text_width(km_text, 9.5, bold=True)
-        page.text(km_text, 557 - km_w, mid_y - 2.9, 9.5, bold=True, rgb=palette['text'])
-
-        return y_top - row_h
-
-    page = new_page(compact=False)
-    draw_report_table(page)
-    draw_summary_cards(page)
-    page.text('Rittenoverzicht', 36, page.y, 14, bold=True, rgb=palette['text'])
-    page.y -= 20
-
-    if not trips:
-        page.text('Geen ritten in deze periode.', 36, page.y, 10.5, rgb=palette['text'])
-    else:
-        table_y = page.y
-        page.y = draw_table_header(page, 36, table_y)
-
-        for trip_num, trip in enumerate(trips, start=1):
-            stops = trip.get('stops') or []
-            if not stops:
-                continue
-
-            if page.need(22):
-                total_pages = len(pages)
-                for n, pg in enumerate(pages, start=1):
-                    pg.line(36, 34, 559, 34, 0.45, rgb=tint(palette['line'], 0.65))
-                    pg.text(footer_company, 36, 20, 7.4, bold=True, rgb=palette['muted'])
-                    pg.text(footer_period_label, 262, 20, 7.4, rgb=palette['muted'])
-                    pg.text(f'Pagina {n} van {total_pages}', 475, 20, 7.4, rgb=palette['muted'])
-
-                page = new_page(compact=True)
-                page.y = draw_table_header(page, 36, page.y)
-
-            page.y = draw_table_row(page, page.y, trip_num, trip, stops)
-
-    total_pages = len(pages)
-    for n, pg in enumerate(pages, start=1):
-        pg.line(36, 34, 559, 34, 0.45, rgb=tint(palette['line'], 0.65))
-        pg.text(footer_company, 36, 20, 7.4, bold=True, rgb=palette['muted'])
-        pg.text(footer_period_label, 262, 20, 7.4, rgb=palette['muted'])
-        pg.text(f'Pagina {n} van {total_pages}', 475, 20, 7.4, rgb=palette['muted'])
-
-    data = _build_pdf(pages, pdf_images)
-    filename = f'rittenregistratie_{filename_label}.pdf'
-    if preview:
-        return {'filename': filename, 'pdf_base64': base64.b64encode(data).decode('ascii'), 'pages': [p.svg(pdf_images) for p in pages]}
-    return data, filename
-
+    return pdf_report.business_pdf(
+        period, year, month, preview,
+        dependencies={
+            'get_settings': get_settings,
+            'now_local': now_local,
+            'period_bounds': period_bounds,
+            'business_trips_raw': business_trips_raw,
+            'enrich_business_trip': enrich_business_trip,
+            'parse_dt': parse_dt,
+            'period_label': period_label,
+        },
+    )
 
 def edit_business_trip(trip_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    with DB_LOCK, db() as con:
-        before=_snapshot_trip(con,trip_id)
-        if not before: raise ValueError('Rit niet gevonden.')
-        current=before['trip']; trip_type=str(payload.get('trip_type') or current.get('trip_type') or 'business').lower()
-        if trip_type not in {'business','private','mixed'}: trip_type='business'
-        purpose=str(payload.get('purpose') if payload.get('purpose') is not None else current.get('purpose') or '').strip()[:120]
-        client=str(payload.get('client') if payload.get('client') is not None else current.get('client') or '').strip()[:120]
-        note=str(payload.get('note') if payload.get('note') is not None else current.get('note') or '').strip()[:250]
-        route=str(payload.get('deviating_route') if payload.get('deviating_route') is not None else current.get('deviating_route') or '').strip()[:300]
-        detour=max(0.0,(to_float(payload.get('private_detour_km')) or 0.0) if payload.get('private_detour_km') is not None else float(current.get('private_detour_km') or 0))
-        con.execute('UPDATE business_trips SET trip_type=?,purpose=?,client=?,note=?,deviating_route=?,private_detour_km=?,modified_at=? WHERE id=?',(trip_type,purpose or None,client or None,note or None,route or None,detour,iso_local(),trip_id))
-        after=_snapshot_trip(con,trip_id); audit('update','trip',trip_id,{'before':before.get('trip',{}),'after':after.get('trip',{})},con=con); con.commit()
-    publish_sensors_async(); return {'ok':True,'trip':business_trip_by_id(trip_id)}
-
+    return trips.edit_business_trip(trip_id, payload, dependencies=_trips_dependencies())
 
 def delete_business_trip(trip_id: int) -> None:
-    with DB_LOCK, db() as con:
-        snapshot = _snapshot_trip(con, trip_id)
-        ids = [r['event_id'] for r in con.execute(
-            'SELECT event_id FROM trip_stops WHERE trip_id=? AND event_id IS NOT NULL',
-            (trip_id,)
-        )]
-        for event_id in ids:
-            con.execute('DELETE FROM events WHERE id=?', (event_id,))
-        con.execute('DELETE FROM business_trips WHERE id=?', (trip_id,))
-        audit('delete', 'trip', trip_id, snapshot, con=con)
-        con.commit()
-    publish_sensors_async()
-
+    return trips.delete_business_trip(trip_id, dependencies=_trips_dependencies())
 
 def delete_event(event_id: int) -> None:
     with DB_LOCK, db() as con:
@@ -4134,72 +2040,26 @@ def summary(period: str = 'month') -> dict[str, Any]:
     }
 
 def ha_post_state(entity_id: str, state: Any, attrs: dict[str, Any]) -> None:
-    token = os.getenv('SUPERVISOR_TOKEN', '')
-    if not token:
-        return
-    url = f'http://supervisor/core/api/states/{entity_id}'
-    body = json.dumps({'state': state, 'attributes': attrs}).encode('utf-8')
-    req = urllib.request.Request(url, data=body, method='POST', headers={
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/json',
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=4) as _:
-            pass
-    except Exception:
-        pass
+    return home_assistant.ha_post_state(entity_id, state, attrs)
 
 
 def publish_sensors() -> None:
-    try:
-        rows = rows_events()
-        settings = get_settings()
-        prefix = sanitize_prefix(str(load_options().get('entity_prefix') or 'auto'))
-        odo = current_odometer(rows)
-        if odo is not None:
-            ha_post_state(f'sensor.{prefix}_kilometerstand', round(odo,1), {
-                'friendly_name': f"{settings['vehicle_name']} kilometerstand",
-                'unit_of_measurement': 'km', 'icon': 'mdi:counter', 'state_class': 'measurement'
-            })
-        for p, label in [('week','week'),('month','maand'),('year','jaar')]:
-            st = stats_for_period(p, rows)
-            ft = full_tank_period_average(p, rows)
-            ha_post_state(f'sensor.{prefix}_kilometers_{label}', st['km'], {
-                'friendly_name': f"{settings['vehicle_name']} kilometers {label}", 'unit_of_measurement': 'km', 'icon': 'mdi:road-variant'
-            })
-            ha_post_state(f'sensor.{prefix}_verbruik_{label}', ft['l100'] if ft and ft['l100'] is not None else 'unknown', {
-                'friendly_name': f"{settings['vehicle_name']} werkelijk verbruik {label}",
-                'unit_of_measurement': 'L/100 km', 'icon': 'mdi:gas-station',
-                'measurement_method': 'full_tank', 'cycles': ft['cycles'] if ft else 0
-            })
-        overall = overall_full_tank_average(rows)
-        ha_post_state(f'sensor.{prefix}_verbruik_gemiddeld', overall['l100'] if overall and overall['l100'] is not None else 'unknown', {
-            'friendly_name': f"{settings['vehicle_name']} gemiddeld verbruik",
-            'unit_of_measurement': 'L/100 km', 'icon': 'mdi:gauge',
-            'measurement_method': 'full_tank', 'cycles': overall['cycles'] if overall else 0
-        })
-        st = stats_for_period('month', rows)
-        ha_post_state(f'sensor.{prefix}_brandstofkosten_maand', st['cost'], {
-            'friendly_name': f"{settings['vehicle_name']} brandstofkosten maand", 'unit_of_measurement': settings['currency'], 'icon': 'mdi:cash'
-        })
-        for p, label in [('week','week'),('month','maand'),('year','jaar')]:
-            bs = business_stats_for_period(p)
-            ha_post_state(f'sensor.{prefix}_zakelijke_km_{label}', bs['business_km'], {
-                'friendly_name': f"{settings['vehicle_name']} zakelijke kilometers {label}",
-                'unit_of_measurement': 'km', 'icon': 'mdi:briefcase-outline'
-            })
-        active = active_business_trip()
-        ha_post_state(f'sensor.{prefix}_zakelijke_rit_status', 'actief' if active else 'geen', {
-            'friendly_name': f"{settings['vehicle_name']} zakelijke rit status",
-            'icon': 'mdi:car-clock',
-            'trip_id': active['id'] if active else None,
-            'kilometers': active['km'] if active else 0,
-        })
-    except Exception:
-        pass
+    return home_assistant.publish_sensors(dependencies={
+        'rows_events': rows_events,
+        'get_settings': get_settings,
+        'sanitize_prefix': sanitize_prefix,
+        'load_options': load_options,
+        'current_odometer': current_odometer,
+        'stats_for_period': stats_for_period,
+        'full_tank_period_average': full_tank_period_average,
+        'overall_full_tank_average': overall_full_tank_average,
+        'business_stats_for_period': business_stats_for_period,
+        'active_business_trip': active_business_trip,
+        'ha_post_state': ha_post_state,
+    })
 
 def publish_sensors_async() -> None:
-    threading.Thread(target=publish_sensors, daemon=True).start()
+    return home_assistant.publish_sensors_async(dependencies={'publish_sensors': publish_sensors})
 
 
 def json_response(handler: BaseHTTPRequestHandler, payload: Any, status: int = 200, headers: dict[str, str] | None = None) -> None:
