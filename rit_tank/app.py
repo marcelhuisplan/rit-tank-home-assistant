@@ -1958,6 +1958,99 @@ def dismiss_assistant_arrival(arrival_id: int) -> None:
         con.commit()
 
 
+def correct_assistant_arrival_destination(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Handmatig corrigeer de gesuggeerde bestemming van een automatisch voorstel.
+    Recalculeer de afstand en bijgewerkte tellerstand.
+    """
+    with DB_LOCK, db() as con:
+        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
+    
+    if not row:
+        raise ValueError('Ritsuggestie niet gevonden.')
+    
+    r = dict(row)
+    if r.get('status') not in ('pending', 'confirmed'):
+        raise ValueError('Deze ritsuggestie kan niet meer worden aangepast.')
+    
+    # Parse corrected destination
+    dest_lat = to_float(payload.get('latitude'))
+    dest_lon = to_float(payload.get('longitude'))
+    dest_label = str(payload.get('address') or '').strip()[:180]
+    dest_place_id = payload.get('place_id')
+    
+    if dest_lat is None or dest_lon is None:
+        raise ValueError('Ongeldige doelcoördinaten.')
+    
+    if not (-90 <= dest_lat <= 90) or not (-180 <= dest_lon <= 180):
+        raise ValueError('Doelcoördinaten buiten bereik.')
+    
+    # Store original destination before correction
+    origin_lat = to_float(r.get('destination_latitude'))
+    origin_lon = to_float(r.get('destination_longitude'))
+    origin_label = str(r.get('destination_label') or '')
+    
+    # Calculate new route distance
+    route_info = get_route_distance(
+        float(r['destination_latitude']),
+        float(r['destination_longitude']),
+        float(dest_lat),
+        float(dest_lon)
+    ) if origin_lat and origin_lon else None
+    
+    # If we have a start point, calculate from there to new destination
+    if r.get('departure_at') and origin_lat and origin_lon:
+        # Use departure location as origin for the corrected route
+        departure_row = None
+        with DB_LOCK, db() as con:
+            # Try to find a trip stop near the departure time
+            departure_row = con.execute(
+                'SELECT latitude, longitude FROM trip_stops WHERE created_at<=? ORDER BY created_at DESC LIMIT 1',
+                (r.get('departure_at'),)
+            ).fetchone()
+        
+        if departure_row and departure_row['latitude'] and departure_row['longitude']:
+            route_info = get_route_distance(
+                float(departure_row['latitude']),
+                float(departure_row['longitude']),
+                float(dest_lat),
+                float(dest_lon)
+            )
+    
+    if not route_info:
+        route_info = {'type': 'gps', 'distance_m': haversine_m(origin_lat or 0, origin_lon or 0, dest_lat, dest_lon)}
+    
+    distance_m = route_info.get('distance_m', 0)
+    distance_source = route_info.get('type', 'gps')
+    
+    # Update the assistant arrival with corrected destination
+    with DB_LOCK, db() as con:
+        con.execute('''
+            UPDATE assistant_arrivals
+            SET corrected_destination_latitude=?,
+                corrected_destination_longitude=?,
+                corrected_destination_label=?,
+                corrected_destination_distance_m=?,
+                destination_distance_source=?,
+                destination_manually_corrected=1
+            WHERE id=?
+        ''', (
+            dest_lat, dest_lon, dest_label,
+            round(distance_m),
+            distance_source,
+            int(arrival_id)
+        ))
+        audit('assistant_correct_destination', 'assistant', int(arrival_id), {
+            'from': {'lat': origin_lat, 'lon': origin_lon, 'label': origin_label},
+            'to': {'lat': dest_lat, 'lon': dest_lon, 'label': dest_label},
+            'distance_m': round(distance_m),
+            'source': distance_source,
+        }, con=con)
+        con.commit()
+    
+    return next((x for x in assistant_arrivals(50, True) if int(x['id']) == int(arrival_id)), {})
+
+
 def complete_assistant_arrival(arrival_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     with DB_LOCK:
         return _complete_assistant_arrival(arrival_id, payload)
@@ -4474,6 +4567,9 @@ class Handler(BaseHTTPRequestHandler):
             mc = re.fullmatch(r'/api/assistant/(\d+)/complete', path)
             if mc:
                 return json_response(self, complete_assistant_arrival(int(mc.group(1)), payload), 201)
+            md = re.fullmatch(r'/api/assistant/(\d+)/correct-destination', path)
+            if md:
+                return json_response(self, {'arrival': correct_assistant_arrival_destination(int(md.group(1)), payload)})
             if path == '/api/known-places':
                 return json_response(self, {'place': save_known_place(payload)}, 201)
             mp=re.fullmatch(r'/api/known-places/(\d+)', path)
