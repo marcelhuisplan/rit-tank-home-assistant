@@ -698,6 +698,53 @@ class AddressCorrectionTests(unittest.TestCase):
         self.assertIn("addrUseBtn').disabled=true", catch_body)
         self.assertNotIn("addrUseBtn').disabled=false", catch_body)
 
+    def test_ui_shows_unknown_distance_instead_of_zero_km_when_missing(self):
+        """
+        Statische regressietest op de front-end JS: als
+        corrected_destination_distance_m ontbreekt/null is, moet de UI
+        'afstand onbekend' tonen in plaats van '0,0 km (GPS-schatting)'.
+        0,0 km mag alleen worden getoond als de afstand daadwerkelijk
+        numeriek 0 is.
+        """
+        src = Path(app.__file__).read_text(encoding='utf-8')
+        match = re.search(r"function renderAssistant\(\)\{.*?\n\}", src, re.S)
+        self.assertIsNotNone(match, "renderAssistant niet gevonden")
+        fn_src = match.group(0)
+        corrected_match = re.search(r"let corrected=x\.destination_manually_corrected\?.*?:''(?=;)", fn_src)
+        self.assertIsNotNone(corrected_match, "corrected-weergave niet gevonden in renderAssistant")
+        corrected_src = corrected_match.group(0)
+        # Mag NIET langer '||0' gebruiken (dat maakt null/undefined stil tot 0).
+        self.assertNotIn("corrected_destination_distance_m||0", corrected_src)
+        # Moet expliciet op null/undefined controleren en een tekstuele fallback tonen.
+        self.assertIn("corrected_destination_distance_m!=null", corrected_src)
+        self.assertIn('afstand onbekend', corrected_src)
+
+    def test_arrival_proposal_missing_distance_is_none_not_zero(self):
+        """
+        Backend-regressie: als corrected_destination_distance_m ontbreekt,
+        moet de opgehaalde rij dat als None doorgeven (geen 0), zodat de UI
+        het onderscheid tussen 'onbekend' en 'daadwerkelijk 0 meter' kan maken.
+        """
+        arrival = app.create_assistant_arrival(
+            origin_place_id=None, destination_place_id=None,
+            lat=52.9, lon=6.9, accuracy=20, departure_at=None,
+            destination_label='Bouwstraat, Rijssen',
+        )
+        arrival_id = int(arrival['id'])
+        # Corrigeer de bestemming, maar simuleer dat er geen afstand bekend kon
+        # worden (bijv. mislukte route-call zonder telefoon-snapshot).
+        with app.db() as con:
+            con.execute(
+                "UPDATE assistant_arrivals SET destination_manually_corrected=1, "
+                "corrected_destination_label='Eikenlaan 8, Rijssen', "
+                "corrected_destination_latitude=53.5, corrected_destination_longitude=7.5, "
+                "corrected_destination_distance_m=NULL, destination_distance_source='gps' WHERE id=?",
+                (arrival_id,)
+            )
+            con.commit()
+        row = next(x for x in app.assistant_arrivals(50, True) if int(x['id']) == arrival_id)
+        self.assertIsNone(row['corrected_destination_distance_m'])
+
 
 class PdfRedesignTests(unittest.TestCase):
     """Test PDF redesign for 7.00."""
