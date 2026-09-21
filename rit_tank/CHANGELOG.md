@@ -1,5 +1,18 @@
 # Changelog
 
+## 8.00
+- Fiscale rittenregistratie-PDF volledig opnieuw opgebouwd volgens compacte tabel-layout.
+- Één rit per tabelrij (niet meer grote verticale blokken).
+- Vertrek en aankomst compact in dezelfde adreskolom met gekleurde indicatoren (groen voor vertrek, rood voor aankomst).
+- Privé/zakelijk als gekleurde badges (blauw voor privé, groen voor zakelijk) met ronde indicator.
+- Datum en tijd op twee regels in compacte formattering (b.v. "za 19-09-2026" + "15:05 – 15:52").
+- Afstand rechts uitgelijnd met Nederlandse kommanotatie (b.v. "1,0 km").
+- Compactere paginering: veel meer ritten per pagina (verwacht 6-10 per pagina in plaats van 3).
+- Tabelkop op elke pagina behouden, ook na paginering.
+- Header, overzichtskaarten en footer afgestemd op het goedgekeurde Huisplan-referentieontwerp.
+- Obsolete verticale rit-card rendering verwijderd.
+- Alle onderlying business-logic en database-integriteit behouden.
+
 ## 7.00
 - Ritvoorstellen kunnen vóór opslaan een gecorrigeerde bestemming krijgen via handmatige adresselectie (zoekveld, Places-resultaten, preview van vertrek/bestemming/afstand/eindstand, "Gebruik dit adres").
 - Routeafstand wordt opnieuw berekend van de oorspronkelijke vertreklocatie naar de nieuw gekozen bestemming (nooit vanaf de oude bestemming of (0,0)); fallback naar de bestaande GPS-afstand wanneer geen betrouwbare vertreklocatie bekend is.

@@ -38,7 +38,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '7.00'
+APP_VERSION = '8.00'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -3211,7 +3211,7 @@ def business_trips_for_period(period: str) -> list[dict[str, Any]]:
 def _pdf_text(value: Any) -> str:
     """Text safe for the built-in PDF WinAnsi fonts."""
     s = str(value if value is not None else '')
-    return s.replace('\u2013', '-').replace('\u2014', '-').replace('\u2192', '->').replace('\u2022', '-').replace('\u00a0', ' ')
+    return s.replace('\u2192', '->').replace('\u00a0', ' ')
 
 
 def _pdf_escape(value: Any) -> bytes:
@@ -3289,6 +3289,35 @@ class _SimplePdfPage:
             f'{self._fill_command(gray, rgb)} {x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n'.encode('ascii')
         )
 
+    def rounded_rect(self, x: float, y: float, width: float, height: float, radius: float = 4.0,
+                      gray: float | None = 0.94, rgb: tuple[int, int, int] | None = None):
+        """Filled rectangle with subtly rounded corners (radius clamped to half the smallest side)."""
+        r = max(0.0, min(radius, width / 2, height / 2))
+        color = self._svg_color(gray, rgb)
+        self.preview.append(
+            f'<rect x="{x}" y="{842-y-height}" width="{width}" height="{height}" rx="{r}" ry="{r}" fill="{color}"/>'
+        )
+        if r <= 0:
+            self.commands.append(
+                f'{self._fill_command(gray, rgb)} {x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n'.encode('ascii')
+            )
+            return
+        k = r * 0.5522847498
+        x0, x1 = x, x + width
+        y0, y1 = y, y + height
+        path = (
+            f'{x0 + r:.2f} {y0:.2f} m '
+            f'{x1 - r:.2f} {y0:.2f} l '
+            f'{x1 - r + k:.2f} {y0:.2f} {x1:.2f} {y0 + r - k:.2f} {x1:.2f} {y0 + r:.2f} c '
+            f'{x1:.2f} {y1 - r:.2f} l '
+            f'{x1:.2f} {y1 - r + k:.2f} {x1 - r + k:.2f} {y1:.2f} {x1 - r:.2f} {y1:.2f} c '
+            f'{x0 + r:.2f} {y1:.2f} l '
+            f'{x0 + r - k:.2f} {y1:.2f} {x0:.2f} {y1 - r + k:.2f} {x0:.2f} {y1 - r:.2f} c '
+            f'{x0:.2f} {y0 + r:.2f} l '
+            f'{x0:.2f} {y0 + r - k:.2f} {x0 + r - k:.2f} {y0:.2f} {x0 + r:.2f} {y0:.2f} c h f\n'
+        )
+        self.commands.append((f'{self._fill_command(gray, rgb)} ' + path).encode('ascii'))
+
     def circle(self, x: float, y: float, radius: float,
                gray: float | None = 0.75, rgb: tuple[int, int, int] | None = None):
         color = self._svg_color(gray, rgb)
@@ -3301,7 +3330,7 @@ class _SimplePdfPage:
                 f'{x + radius:.2f} {y + c:.2f} {x + c:.2f} {y + radius:.2f} {x:.2f} {y + radius:.2f} c '
                 f'{x - c:.2f} {y + radius:.2f} {x - radius:.2f} {y + c:.2f} {x - radius:.2f} {y:.2f} c '
                 f'{x - radius:.2f} {y - c:.2f} {x - c:.2f} {y - radius:.2f} {x:.2f} {y - radius:.2f} c '
-                f'{x + c:.2f} {y - radius:.2f} {x + radius:.2f} {y - c:.2f} {x + radius:.2f} {y:.2f} c f\n'
+                f'{x + c:.2f} {y - radius:.2f} {x + radius:.2f} {y - c:.2f} {x + radius:.2f} {y:.2f} c h f\n'
             ).encode('ascii')
         )
 
@@ -3311,6 +3340,12 @@ class _SimplePdfPage:
         self.commands.append(
             f'q {width:.2f} 0 0 {height:.2f} {x:.2f} {y:.2f} cm /{name} Do Q\n'.encode('ascii')
         )
+
+    @staticmethod
+    def text_width(value: str, size: float = 8.5, bold: bool = False) -> float:
+        """Rough estimate of rendered text width for Helvetica(-Bold) at a given size."""
+        factor = 0.60 if bold else 0.52
+        return len(str(value)) * size * factor
 
     @staticmethod
     def wrap_lines(value: Any, width: float, size: float = 8.5) -> list[str]:
@@ -3455,8 +3490,9 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     driver_name = str(settings.get('driver_name') or '-').strip() or '-'
     license_plate = str(settings.get('license_plate') or '-').strip() or '-'
     generated_label = now_local().strftime('%d-%m-%Y %H:%M')
-    footer_period_label = label.capitalize() if label else '-'
-    report_period_label = f'{label.capitalize()} [{date_range}]' if date_range else label.capitalize()
+    footer_period_label = label if label else '-'
+    report_period_main = label if label else '-'
+    report_period_range = f'{period_start:%d-%m-%Y} t/m {period_end:%d-%m-%Y}' if period_start and period_end else ''
 
     palette = {
         'text': (12, 15, 18),
@@ -3477,19 +3513,6 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             return f'{int(round(number))}'
         return f'{number:.1f}'
 
-    def address_parts(value: Any) -> tuple[str, str]:
-        text = str(value or '').strip() or 'Locatie onbekend'
-        parts = [part.strip() for part in text.split(',') if part.strip()]
-        if len(parts) >= 2:
-            return parts[0], ', '.join(parts[1:])
-        match = re.search(r'(\b\d{4}\s?[A-Za-z]{2}\b.*)$', text)
-        if match and match.start() > 0:
-            return text[:match.start()].strip(' ,'), match.group(1).strip(' ,')
-        return text, ''
-
-    def month_heading(dt: datetime) -> str:
-        return period_label('month', dt).capitalize()
-
     pdf_images: dict[str, tuple[int, int, bytes]] = {}
     logo_path = Path(__file__).with_name('huisplan-logo.jpg')
     try:
@@ -3501,41 +3524,72 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     pages: list[_SimplePdfPage] = []
 
     def draw_header(page: _SimplePdfPage, compact: bool = False) -> None:
-        title_y = 806
-        subtitle_y = 788 if not compact else 790
-        logo_w = 70 if not compact else 42
-        logo_h = 64 if not compact else 38
+        title_y = 688 if not compact else 691
+        subtitle_y = 670 if not compact else 672
+        logo_w = 46 if not compact else 40
+        logo_h = 42 if not compact else 36
         logo_x = 489 if not compact else 515
-        logo_y = 760 if not compact else 770
-        page.text('Rittenregistratie', 36, title_y, 20 if not compact else 15, bold=True, rgb=palette['text'])
+        logo_y = 645 if not compact else 653
+        page.text('Rittenregistratie', 36, title_y, 26 if not compact else 15, bold=True, rgb=palette['text'])
         page.text('Fiscale kilometeradministratie', 36, subtitle_y, 9.3 if not compact else 8.4, rgb=palette['muted'])
         if 'ImLogo' in pdf_images:
             page.image('ImLogo', logo_x, logo_y, logo_w, logo_h)
-        header_line_y = 754 if not compact else 760
+        header_line_y = 636 if not compact else 642
         page.line(36, header_line_y, 559, header_line_y, 0.8, rgb=tint(palette['line'], 0.35))
-        page.y = 734 if not compact else 742
+        page.y = 616 if not compact else 624
+
+    def draw_field_icon(page: _SimplePdfPage, kind: str, x: float, y: float) -> None:
+        """Draw a small (~9x9pt) vector glyph to the left of a report-info label."""
+        c = tint(palette['blue'], 0.15)
+        if kind == 'calendar':
+            page.rect(x, y - 8, 9, 8, rgb=tint(palette['blue'], 0.82))
+            page.rect(x, y, 9, 1.6, rgb=c)
+            page.line(x + 2, y + 1.6, x + 2, y - 0.6, 0.8, rgb=c)
+            page.line(x + 7, y + 1.6, x + 7, y - 0.6, 0.8, rgb=c)
+        elif kind == 'person':
+            page.circle(x + 4.5, y - 1.5, 2.1, rgb=c)
+            page.rect(x + 1, y - 7.5, 7, 4.5, rgb=c)
+        elif kind == 'car':
+            page.rect(x, y - 5, 9, 3, rgb=c)
+            page.rect(x + 1.5, y - 2.2, 6, 2.2, rgb=c)
+            page.circle(x + 2, y - 6, 1.3, rgb=tint(palette['muted'], 0.1))
+            page.circle(x + 7, y - 6, 1.3, rgb=tint(palette['muted'], 0.1))
+        elif kind == 'plate':
+            page.rect(x, y - 6, 9, 6, rgb=c)
+            page.rect(x + 1, y - 5, 7, 1, rgb=(255, 255, 255))
+        elif kind == 'clock':
+            page.circle(x + 4.5, y - 4, 4.2, rgb=c)
+            page.line(x + 4.5, y - 4, x + 4.5, y - 1.3, 0.8, rgb=(255, 255, 255))
+            page.line(x + 4.5, y - 4, x + 6.6, y - 4, 0.8, rgb=(255, 255, 255))
 
     def draw_report_table(page: _SimplePdfPage) -> None:
         table_top = page.y
-        row_h = 32
+        row_h = 38
         left_x, right_x = 48, 304
-        page.rect(36, table_top - row_h * 3, 523, row_h * 3, rgb=palette['card'])
+        page.rounded_rect(36, table_top - row_h * 3, 523, row_h * 3, radius=5, rgb=palette['card'])
         for i in range(4):
             y = table_top - i * row_h
             page.line(36, y, 559, y, 0.5, rgb=tint(palette['line'], 0.72))
         page.line(292, table_top, 292, table_top - row_h * 3, 0.5, rgb=tint(palette['line'], 0.72))
         cells = [
-            (('Kalenderjaar', year_label), ('Rapportperiode', report_period_label)),
-            (('Bestuurder', driver_name), ('Auto', vehicle_name)),
-            (('Kenteken', license_plate), ('Gegenereerd op', generated_label)),
+            (('Kalenderjaar', year_label, 'calendar'), ('Rapportperiode', None, 'calendar')),
+            (('Bestuurder', driver_name, 'person'), ('Auto', vehicle_name, 'car')),
+            (('Kenteken', license_plate, 'plate'), ('Gegenereerd op', generated_label, 'clock')),
         ]
         for row_idx, (left_cell, right_cell) in enumerate(cells):
-            baseline = table_top - row_idx * row_h - 12
-            for x, width, (key, value) in ((left_x, 218, left_cell), (right_x, 215, right_cell)):
-                page.text(key.upper(), x, baseline, 7.2, bold=True, rgb=palette['muted'])
-                value_lines = _SimplePdfPage.wrap_lines(value, width, 9.2)[:2]
+            baseline = table_top - row_idx * row_h - 13
+            for x, width, (key, value, icon) in ((left_x, 218, left_cell), (right_x, 215, right_cell)):
+                icon_x = x
+                text_x = x + 14
+                draw_field_icon(page, icon, icon_x, baseline + 11)
+                page.text(key.upper(), text_x, baseline, 7.2, bold=True, rgb=palette['muted'])
+                if key == 'Rapportperiode':
+                    page.text(report_period_main, text_x, baseline - 13, 9.2, bold=(row_idx == 0), rgb=palette['text'])
+                    page.text(report_period_range, text_x, baseline - 24, 7.6, rgb=palette['muted'])
+                    continue
+                value_lines = _SimplePdfPage.wrap_lines(value, width - 14, 9.2)[:2]
                 for line_idx, line in enumerate(value_lines):
-                    page.text(line, x, baseline - 12 - line_idx * 10, 9.2, bold=(row_idx == 0 and x == left_x), rgb=palette['text'])
+                    page.text(line, text_x, baseline - 13 - line_idx * 11, 9.2, bold=(row_idx == 0 and x == left_x), rgb=palette['text'])
         page.y = table_top - row_h * 3 - 18
 
     def draw_summary_cards(page: _SimplePdfPage) -> None:
@@ -3543,16 +3597,20 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         width = 165
         gap = 14
         cards = [
-            ('TOTAAL', fmt_km(total_km), palette['card2'], None),
-            ('ZAKELIJK', fmt_km(business_km), tint(palette['teal'], 0.85), palette['teal']),
-            ('PRIVÉ', fmt_km(private_km), tint(palette['blue'], 0.88), palette['blue']),
+            ('TOTAAL', format_dutch_km(total_km), palette['card2'], None),
+            ('ZAKELIJK', format_dutch_km(business_km), tint(palette['teal'], 0.85), palette['teal']),
+            ('PRIVÉ', format_dutch_km(private_km), tint(palette['blue'], 0.88), palette['blue']),
         ]
         for idx, (title, value, bg, bullet) in enumerate(cards):
             x = 36 + idx * (width + gap)
-            page.rect(x, card_y, width, 58, rgb=bg)
+            page.rounded_rect(x, card_y, width, 58, radius=6, rgb=bg)
             label_x = x + 14
-            if bullet is not None:
-                page.circle(x + 16, card_y + 42, 3.2, rgb=bullet)
+            if title == 'TOTAAL':
+                page.rect(x + 12, card_y + 36, 9, 11, rgb=tint(palette['muted'], 0.2))
+                page.line(x + 16.5, card_y + 38, x + 16.5, card_y + 45, 0.8, rgb=(255, 255, 255))
+                label_x = x + 26
+            elif bullet is not None:
+                page.circle(x + 16, card_y + 42.9, 3.6, rgb=bullet)
                 label_x = x + 26
             page.text(title, label_x, card_y + 40, 8.2, bold=True, rgb=palette['muted'])
             page.text(f'{value} km', x + 14, card_y + 18, 18, bold=True, rgb=palette['text'])
@@ -3567,48 +3625,91 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         pages.append(page)
         return page
 
-    def stop_height(stop: dict[str, Any]) -> float:
-        primary, secondary = address_parts(stop.get('location_address') or stop.get('location_label') or stop.get('manual_label') or '')
-        primary_lines = _SimplePdfPage.wrap_lines(primary, 415, 10.7)
-        secondary_lines = _SimplePdfPage.wrap_lines(secondary, 415, 8.4) if secondary else []
-        note_lines = _SimplePdfPage.wrap_lines(f'Notitie: {stop.get("note")}', 415, 7.8) if stop.get('note') else []
-        height = 14 + len(primary_lines) * 12 + len(secondary_lines) * 10 + 11
-        if note_lines:
-            height += len(note_lines) * 9 + 4
-        return height
+    def dutch_day_abbr(dt: datetime) -> str:
+        days = ('ma', 'di', 'wo', 'do', 'vr', 'za', 'zo')
+        return days[dt.weekday()]
 
-    def draw_segment(page: _SimplePdfPage, distance_km: float) -> None:
-        page.line(58, page.y + 4, 58, page.y - 8, 0.8, rgb=tint(palette['line'], 0.45))
-        page.text(f'{fmt_km(distance_km)} km', 72, page.y - 2, 8.4, bold=True, rgb=palette['muted'])
-        page.y -= 20
+    def format_dutch_date(dt: datetime) -> str:
+        return f'{dutch_day_abbr(dt)} {dt:%d-%m-%Y}'
 
-    def draw_stop(page: _SimplePdfPage, stop: dict[str, Any], role: str) -> None:
-        primary, secondary = address_parts(stop.get('location_address') or stop.get('location_label') or stop.get('manual_label') or '')
-        page.text(f'{role} · {stop.get("time_label") or "-"}', 48, page.y, 8.4, bold=True, rgb=palette['muted'])
-        page.y -= 13
-        for line in _SimplePdfPage.wrap_lines(primary, 415, 10.7):
-            page.text(line, 48, page.y, 10.7, bold=True, rgb=palette['text'])
-            page.y -= 12
-        if secondary:
-            for line in _SimplePdfPage.wrap_lines(secondary, 415, 8.4):
-                page.text(line, 48, page.y, 8.4, rgb=palette['muted'])
-                page.y -= 10
-        page.text(f'Tellerstand: {fmt_km(stop.get("odometer"))} km', 48, page.y, 8.4, rgb=palette['text'])
-        page.y -= 11
-        if stop.get('note'):
-            for line in _SimplePdfPage.wrap_lines(f'Notitie: {stop.get("note")}', 415, 7.8):
-                page.text(line, 48, page.y, 7.8, rgb=palette['muted'])
-                page.y -= 9
-            page.y -= 1
+    def format_dutch_time(dt: datetime) -> str:
+        return dt.strftime('%H:%M')
 
-    def trip_badge(trip: dict[str, Any]) -> tuple[str, tuple[int, int, int]]:
+    def format_dutch_km(value: Any) -> str:
+        number = round(float(value or 0), 1)
+        if abs(number - round(number)) < 0.05:
+            formatted = f'{int(round(number))},0'
+        else:
+            formatted = f'{number:.1f}'.replace('.', ',')
+        return formatted
+
+    def trip_badge_text(trip: dict[str, Any]) -> tuple[str, tuple[int, int, int]]:
         has_business = float(trip.get('business_km') or 0) > 0
         has_private = float(trip.get('private_km') or 0) > 0
         if has_business and has_private:
-            return 'PRIVÉ/ZAKELIJK', palette['line']
+            return 'Privé/Zakelijk', palette['line']
         if has_private:
-            return 'PRIVÉ', palette['blue']
-        return 'ZAKELIJK', palette['teal']
+            return 'Privé', palette['blue']
+        return 'Zakelijk', palette['teal']
+
+    def draw_table_header(page: _SimplePdfPage, x1: float, y_top: float) -> float:
+        """Draw table header and return the y position after header."""
+        header_h = 22
+        header_bg = (241, 244, 248)
+        page.rect(x1, y_top - header_h, 523, header_h, rgb=header_bg)
+        page.line(x1, y_top - header_h, x1 + 523, y_top - header_h, 0.4, rgb=tint(palette['line'], 0.5))
+        header_text_y = y_top - 15
+        page.text('#', 60, header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('Datum', 90, header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('Vertrek → Aankomst (adres)', 202, header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('Soort', 432, header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('Afstand', 557 - _SimplePdfPage.text_width('Afstand', 9.5, bold=True), header_text_y, 9.5, bold=True, rgb=palette['text'])
+        return y_top - header_h - 1
+
+    def draw_table_row(page: _SimplePdfPage, y_top: float, trip_num: int, trip: dict[str, Any],
+                       stops: list[dict[str, Any]]) -> float:
+        """Draw a single table row. Returns the next available y position."""
+        row_h = 43
+        x1, x2 = 36, 559
+
+        start_dt = parse_dt(stops[0]['created_at'])
+        end_dt = parse_dt(stops[-1]['created_at']) if len(stops) > 1 else start_dt
+
+        start_addr = (stops[0].get('location_address') or stops[0].get('location_label') or
+                     stops[0].get('manual_label') or 'Locatie onbekend')
+        end_addr = (stops[-1].get('location_address') or stops[-1].get('location_label') or
+                   stops[-1].get('manual_label') or 'Locatie onbekend')
+
+        trip_label, trip_color = trip_badge_text(trip)
+        trip_km = format_dutch_km(trip.get('km'))
+
+        page.line(x1, y_top, x2, y_top, 0.2, rgb=tint(palette['line'], 0.85))
+
+        mid_y = y_top - row_h / 2
+
+        page.text(str(trip_num), 60, mid_y + 2.5, 9, rgb=palette['text'])
+
+        date_text = format_dutch_date(start_dt)
+        time_text = f'{format_dutch_time(start_dt)} \u2013 {format_dutch_time(end_dt)}'
+        page.text(date_text, 90, y_top - 16, 9.5, bold=True, rgb=palette['text'])
+        page.text(time_text, 90, y_top - 30, 8, rgb=palette['muted'])
+
+        page.circle(182, y_top - 10, 4.3, rgb=(76, 175, 80))
+        page.text(start_addr[:44], 202, y_top - 13, 9.5, rgb=palette['text'])
+
+        page.circle(182, y_top - 26, 4.3, rgb=(244, 67, 54))
+        page.text(end_addr[:44], 202, y_top - 29, 9.5, rgb=palette['text'])
+
+        badge_w = 15 + _SimplePdfPage.text_width(trip_label, 8.5, bold=False)
+        page.rounded_rect(423, mid_y - 8, badge_w, 16, radius=8, rgb=tint(trip_color, 0.87))
+        page.circle(432, mid_y, 3.4, rgb=trip_color)
+        page.text(trip_label, 449, mid_y - 2.9, 8.5, rgb=trip_color)
+
+        km_text = trip_km + ' km'
+        km_w = _SimplePdfPage.text_width(km_text, 9.5, bold=True)
+        page.text(km_text, 557 - km_w, mid_y - 2.9, 9.5, bold=True, rgb=palette['text'])
+
+        return y_top - row_h
 
     page = new_page(compact=False)
     draw_report_table(page)
@@ -3618,71 +3719,27 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
 
     if not trips:
         page.text('Geen ritten in deze periode.', 36, page.y, 10.5, rgb=palette['text'])
+    else:
+        table_y = page.y
+        page.y = draw_table_header(page, 36, table_y)
 
-    previous_month = None
-    for idx, trip in enumerate(trips, start=1):
-        stops = trip.get('stops') or []
-        if not stops:
-            continue
-        start_dt = parse_dt(stops[0]['created_at'])
-        month_key = start_dt.strftime('%Y-%m')
-        if safe_period == 'year' and month_key != previous_month:
-            if previous_month is not None and page.need(62):
-                page = new_page(compact=True)
-            page.text(month_heading(start_dt), 36, page.y, 12.5, bold=True, rgb=palette['text'])
-            page.y -= 18
-            page.line(36, page.y, 559, page.y, 0.6, rgb=tint(palette['line'], 0.55))
-            page.y -= 16
-            previous_month = month_key
-
-        if page.need(72):
-            page = new_page(compact=True)
-            if safe_period == 'year':
-                page.text(month_heading(start_dt), 36, page.y, 12.5, bold=True, rgb=palette['text'])
-                page.y -= 18
-                page.line(36, page.y, 559, page.y, 0.6, rgb=tint(palette['line'], 0.55))
-                page.y -= 16
-
-        trip_label, trip_color = trip_badge(trip)
-        page.circle(40, page.y - 3, 3.6, rgb=trip_color)
-        page.text(trip_label, 52, page.y, 10.4, bold=True, rgb=palette['text'])
-        page.text(f'{fmt_km(trip.get("km"))} km', 498, page.y, 10.4, bold=True, rgb=palette['text'])
-        page.y -= 15
-        page.text(f'Rit {idx:02d} · {dutch_date(start_dt)}', 52, page.y, 9, rgb=palette['muted'])
-        page.y -= 16
-
-        for stop_index, stop in enumerate(stops):
-            role = 'VERTREK' if stop_index == 0 else ('AANKOMST' if stop_index == len(stops) - 1 and trip.get('status') == 'completed' else 'TUSSENSTOP')
-            required = stop_height(stop) + (24 if stop_index > 0 else 0)
-            if page.need(required):
-                page = new_page(compact=True, section_label=f'Rit {idx:02d} · vervolg')
-            if stop_index > 0:
-                draw_segment(page, float(stop.get('segment_km') or 0))
-            draw_stop(page, stop, role)
-
-        if float(trip.get('business_km') or 0) > 0 and (trip.get('purpose') or trip.get('client')):
-            purpose = str(trip.get('purpose') or '').strip()
-            client = str(trip.get('client') or '').strip()
-            detail = f'Doel: {purpose or "-"}' + (f' · Klant/opdracht: {client}' if client else '')
-            for line in _SimplePdfPage.wrap_lines(detail, 475, 8.2):
-                if page.need(12):
-                    page = new_page(compact=True, section_label=f'Rit {idx:02d} · vervolg')
-                page.text(line, 48, page.y, 8.2, rgb=palette['text'])
-                page.y -= 10
-        for extra in [
-            f'Afwijkende route: {trip.get("deviating_route")}' if trip.get('deviating_route') else '',
-            f'Toelichting: {trip.get("note")}' if trip.get('note') else '',
-        ]:
-            if not extra:
+        for trip_num, trip in enumerate(trips, start=1):
+            stops = trip.get('stops') or []
+            if not stops:
                 continue
-            for line in _SimplePdfPage.wrap_lines(extra, 475, 7.8):
-                if page.need(11):
-                    page = new_page(compact=True, section_label=f'Rit {idx:02d} · vervolg')
-                page.text(line, 48, page.y, 7.8, rgb=palette['muted'])
-                page.y -= 9
-        page.y -= 4
-        page.line(36, page.y, 559, page.y, 0.45, rgb=tint(palette['line'], 0.65))
-        page.y -= 16
+
+            if page.need(22):
+                total_pages = len(pages)
+                for n, pg in enumerate(pages, start=1):
+                    pg.line(36, 34, 559, 34, 0.45, rgb=tint(palette['line'], 0.65))
+                    pg.text(footer_company, 36, 20, 7.4, bold=True, rgb=palette['muted'])
+                    pg.text(footer_period_label, 262, 20, 7.4, rgb=palette['muted'])
+                    pg.text(f'Pagina {n} van {total_pages}', 475, 20, 7.4, rgb=palette['muted'])
+
+                page = new_page(compact=True)
+                page.y = draw_table_header(page, 36, page.y)
+
+            page.y = draw_table_row(page, page.y, trip_num, trip, stops)
 
     total_pages = len(pages)
     for n, pg in enumerate(pages, start=1):
