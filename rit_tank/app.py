@@ -554,6 +554,11 @@ try:
 except ImportError:
     import home_assistant
 
+try:
+    from . import trips
+except ImportError:
+    import trips
+
 
 def _places_dependencies() -> dict[str, Any]:
     return {
@@ -1009,12 +1014,7 @@ def recent_audit(limit: int = 30) -> list[dict[str, Any]]:
 
 
 def _snapshot_trip(con: sqlite3.Connection, trip_id: int) -> dict[str, Any]:
-    row=con.execute('SELECT * FROM business_trips WHERE id=?',(trip_id,)).fetchone()
-    if not row:
-        return {}
-    stops=[dict(r) for r in con.execute('SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no,id',(trip_id,))]
-    return {'trip':dict(row),'stops':stops}
-
+    return trips.snapshot_trip(con, trip_id)
 
 def save_receipt_data(data_url: str, event_id: int) -> str | None:
     if not data_url:
@@ -2512,341 +2512,84 @@ def start_assistant_threads() -> None:
     threading.Thread(target=_backup_worker, daemon=True, name='rit-tank-backup').start()
 
 
-def _route_memory_suggestion(origin_place_id: int | None, dest_lat: float, dest_lon: float) -> dict[str, Any] | None:
-    if not origin_place_id:
-        return None
-    with DB_LOCK, db() as con:
-        rows=[dict(r) for r in con.execute('SELECT * FROM route_memory WHERE origin_known_place_id=? ORDER BY last_seen_at DESC',(int(origin_place_id),))]
-    best=None; best_dist=None
-    for r in rows:
-        d=haversine_m(dest_lat,dest_lon,float(r['destination_latitude']),float(r['destination_longitude']))
-        if d<=450 and (best_dist is None or d<best_dist): best,best_dist=r,d
-    if not best: return None
-    b,p=int(best.get('business_count') or 0),int(best.get('private_count') or 0); total=b+p
-    if total<2: return None
-    winner='business' if b>=p else 'private'; count=max(b,p); ratio=count/total
-    if ratio<0.70: return None
-    return {'suggested_type':winner,'reason':f'Eerder {count}x zo geregistreerd vanaf deze plek','confidence':round(min(.94,.68+.06*count),2),'source':'learned'}
-
-
-def suggest_segment(origin_stop: dict[str, Any] | None, dest_lat: float, dest_lon: float) -> dict[str, Any]:
-    dest=match_known_place(dest_lat,dest_lon)
-    origin=None
-    if origin_stop:
-        origin=known_place_by_id(origin_stop.get('known_place_id')) or match_known_place(to_float(origin_stop.get('latitude')),to_float(origin_stop.get('longitude')))
-    if dest and str(dest.get('arrival_trip_type') or 'ask') in {'business','private'}:
-        t=str(dest['arrival_trip_type'])
-        return {'suggested_type':t,'reason':f'Bestemming {dest["name"]} staat als {trip_type_label(t).lower()} ingesteld','confidence':.98,'source':'destination_rule','origin_place':origin,'destination_place':dest}
-    if origin and not dest and str(origin.get('unknown_departure_trip_type') or 'ask') in {'business','private'}:
-        t=str(origin['unknown_departure_trip_type'])
-        return {'suggested_type':t,'reason':f'Vanaf {origin["name"]} naar onbekende bestemming: {trip_type_label(t)}','confidence':.90,'source':'origin_rule','origin_place':origin,'destination_place':None}
-    memory=_route_memory_suggestion(int(origin['id']) if origin else None,dest_lat,dest_lon)
-    if memory:
-        return {**memory,'origin_place':origin,'destination_place':dest}
-    return {'suggested_type':'','reason':'Geen vaste regel gevonden — kies zelf','confidence':0.0,'source':'manual','origin_place':origin,'destination_place':dest}
-
-
-def remember_segment(origin_stop: dict[str, Any], destination_point: dict[str, Any], trip_type: str, *, con: sqlite3.Connection | None = None) -> None:
-    t=normalize_segment_type(trip_type)
-    if not t: return
-    origin=known_place_by_id(origin_stop.get('known_place_id')) or match_known_place(to_float(origin_stop.get('latitude')),to_float(origin_stop.get('longitude')))
-    if not origin: return
-    lat,lon=to_float(destination_point.get('latitude')),to_float(destination_point.get('longitude'))
-    if lat is None or lon is None: return
-    dest=match_known_place(lat,lon)
-    owned = con is None
-    c = con or db()
-    try:
-        rows=[dict(r) for r in c.execute('SELECT * FROM route_memory WHERE origin_known_place_id=?',(int(origin['id']),))]
-        target=None
-        for r in rows:
-            if haversine_m(lat,lon,float(r['destination_latitude']),float(r['destination_longitude']))<=350:
-                target=r; break
-        if target:
-            field='business_count' if t=='business' else 'private_count'
-            c.execute(f'UPDATE route_memory SET {field}={field}+1,destination_known_place_id=?,destination_latitude=?,destination_longitude=?,last_seen_at=? WHERE id=?',
-                      (int(dest['id']) if dest else None,lat,lon,iso_local(),int(target['id'])))
-        else:
-            c.execute('''INSERT INTO route_memory(origin_known_place_id,destination_known_place_id,destination_latitude,destination_longitude,business_count,private_count,last_seen_at) VALUES(?,?,?,?,?,?,?)''',
-                      (int(origin['id']),int(dest['id']) if dest else None,lat,lon,1 if t=='business' else 0,1 if t=='private' else 0,iso_local()))
-        if owned: c.commit()
-    finally:
-        if owned: c.close()
-
-
-def trip_type_label(value: str) -> str:
-    return {'business':'Zakelijk','private':'Prive','mixed':'Gemengd'}.get(value,'Zakelijk')
-
-
-def active_business_trip() -> dict[str, Any] | None:
-    with DB_LOCK, db() as con:
-        row = con.execute("SELECT * FROM business_trips WHERE status='active' ORDER BY id DESC LIMIT 1").fetchone()
-        if not row:
-            return None
-        trip = dict(row)
-        stops = [dict(r) for r in con.execute('SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no ASC, id ASC', (trip['id'],))]
-    return enrich_business_trip(trip, stops)
-
-
-def _trip_point_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    odo = to_float(payload.get('odometer'))
-    if odo is None or odo < 0:
-        raise ValueError('Vul een geldige kilometerstand in.')
-    dt = parse_dt(payload.get('created_at'))
-    created = iso_local(dt)
-    ok, msg = validate_odometer(created, odo)
-    if not ok:
-        raise ValueError(msg)
-    lat = to_float(payload.get('latitude'))
-    lon = to_float(payload.get('longitude'))
-    accuracy = to_float(payload.get('location_accuracy'))
-    source = str(payload.get('location_source') or '').strip()[:40]
-    if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
-        raise ValueError('Leg eerst de huidige locatie vast met de 📍-knop.')
-    place_id = str(payload.get('place_id') or '').strip()[:255]
-    if not place_id and not payload.get('manual_label'):
-        geo = google_reverse_geocode(lat, lon)
-        place_id = str(geo.get('place_id') or '')[:255]
+def _trips_dependencies() -> dict[str, Any]:
     return {
-        'odometer': odo,
-        'created_at': created,
-        'latitude': lat,
-        'longitude': lon,
-        'location_accuracy': accuracy,
-        'location_source': source or 'browser',
-        'place_id': place_id or None,
-        'manual_label': str(payload.get('manual_label') or '').strip()[:120] or None,
-        'note': str(payload.get('note') or '').strip()[:250] or None,
-        'known_place_id': (match_known_place(lat, lon) or {}).get('id'),
+        'db': db,
+        'DB_LOCK': DB_LOCK,
+        'haversine_m': haversine_m,
+        'match_known_place': match_known_place,
+        'known_place_by_id': known_place_by_id,
+        'to_float': to_float,
+        'normalize_segment_type': normalize_segment_type,
+        'iso_local': iso_local,
+        'parse_dt': parse_dt,
+        'now_local': now_local,
+        'validate_odometer': validate_odometer,
+        'google_reverse_geocode': google_reverse_geocode,
+        'audit': audit,
+        'reset_trip_distance_tracking': reset_trip_distance_tracking,
+        'publish_sensors_async': publish_sensors_async,
+        'assistant_state_get': assistant_state_get,
+        'assistant_state_set': assistant_state_set,
+        'learn_distance': learn_distance,
+        'trip_location_details': trip_location_details,
+        'dutch_date': dutch_date,
+        'period_bounds': period_bounds,
     }
 
+
+def _route_memory_suggestion(origin_place_id: int | None, dest_lat: float, dest_lon: float) -> dict[str, Any] | None:
+    return trips._route_memory_suggestion(origin_place_id, dest_lat, dest_lon, dependencies=_trips_dependencies())
+
+def suggest_segment(origin_stop: dict[str, Any] | None, dest_lat: float, dest_lon: float) -> dict[str, Any]:
+    return trips.suggest_segment(origin_stop, dest_lat, dest_lon, dependencies=_trips_dependencies())
+
+def remember_segment(origin_stop: dict[str, Any], destination_point: dict[str, Any], trip_type: str, *, con: sqlite3.Connection | None = None) -> None:
+    return trips.remember_segment(origin_stop, destination_point, trip_type, con=con, dependencies=_trips_dependencies())
+
+def trip_type_label(value: str) -> str:
+    return trips.trip_type_label(value)
+
+def active_business_trip() -> dict[str, Any] | None:
+    return trips.active_business_trip(dependencies=_trips_dependencies())
+
+def _trip_point_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return trips._trip_point_payload(payload, dependencies=_trips_dependencies())
 
 def _insert_trip_stop(con: sqlite3.Connection, trip_id: int, point: dict[str, Any], sequence_no: int, event_note: str,
                       segment_trip_type: str = '', suggestion: dict[str, Any] | None = None,
                       destination_audit: dict[str, Any] | None = None) -> int:
-    suggestion = suggestion or {}
-    destination_audit = destination_audit or {}
-    seg_type = normalize_segment_type(segment_trip_type)
-    suggested = normalize_segment_type(suggestion.get('suggested_type'))
-    source = 'start' if sequence_no == 0 else ('user-confirmed' if suggested and seg_type == suggested else 'user-override' if suggested else 'manual')
-    cur = con.execute('''
-        INSERT INTO trip_stops(
-            trip_id,sequence_no,created_at,odometer,latitude,longitude,
-            location_accuracy,location_source,place_id,manual_label,note,known_place_id,
-            segment_trip_type,segment_suggested_type,segment_suggestion_reason,
-            segment_suggestion_confidence,segment_classification_source,
-            original_destination_latitude,original_destination_longitude,original_destination_address,
-            original_destination_distance_m,destination_distance_source,destination_manually_corrected
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ''', (
-        trip_id, sequence_no, point['created_at'], point['odometer'], point['latitude'], point['longitude'],
-        point['location_accuracy'], point['location_source'], point['place_id'], point['manual_label'], point['note'], point.get('known_place_id'),
-        seg_type or None, suggested or None, str(suggestion.get('reason') or '')[:220] or None,
-        float(suggestion.get('confidence') or 0), source,
-        destination_audit.get('original_latitude'), destination_audit.get('original_longitude'),
-        (str(destination_audit.get('original_address') or '')[:180] or None) if destination_audit.get('original_address') else None,
-        destination_audit.get('original_distance_m'), destination_audit.get('distance_source'),
-        1 if destination_audit.get('manually_corrected') else 0,
-    ))
-    stop_id = int(cur.lastrowid)
-    ev = con.execute('''
-        INSERT INTO events(created_at,type,odometer,note,source_kind,business_trip_stop_id)
-        VALUES(?,?,?,?,?,?)
-    ''', (point['created_at'], 'odometer', point['odometer'], event_note[:200], 'business', stop_id))
-    con.execute('UPDATE trip_stops SET event_id=? WHERE id=?', (int(ev.lastrowid), stop_id))
-    return stop_id
-
+    return trips._insert_trip_stop(
+        con, trip_id, point, sequence_no, event_note, segment_trip_type, suggestion,
+        destination_audit, dependencies=_trips_dependencies(),
+    )
 
 def start_business_trip(payload: dict[str, Any]) -> dict[str, Any]:
-    if active_business_trip() is not None:
-        raise ValueError('Er staat al een ritregistratie open. Voeg een volgende locatie toe of sluit de dagrit af.')
-    point = _trip_point_payload(payload)
-    purpose = str(payload.get('purpose') or '').strip()[:120]
-    client = str(payload.get('client') or '').strip()[:120]
-    trip_note = str(payload.get('trip_note') or '').strip()[:250]
-    with DB_LOCK, db() as con:
-        cur = con.execute('''
-            INSERT INTO business_trips(started_at,status,purpose,client,note,trip_type,private_detour_km,modified_at)
-            VALUES(?,'active',?,?,?,'mixed',0,?)
-        ''', (point['created_at'], purpose or None, client or None, trip_note or None, iso_local()))
-        trip_id = int(cur.lastrowid)
-        _insert_trip_stop(con, trip_id, point, 0, 'Ritregistratie start')
-        audit('create', 'trip', trip_id, {'mode': 'segment_classification', 'purpose': purpose, 'client': client, 'start': point}, con=con)
-        con.commit()
-    trip_now = active_business_trip()
-    reset_trip_distance_tracking(trip_now)
-    publish_sensors_async()
-    return {'ok': True, 'trip': trip_now}
+    return trips.start_business_trip(payload, dependencies=_trips_dependencies())
 
 def add_business_stop(payload: dict[str, Any], *, finish: bool = False, destination_audit: dict[str, Any] | None = None) -> dict[str, Any]:
-    trip = active_business_trip()
-    if not trip:
-        raise ValueError('Er is geen actieve ritregistratie.')
-    point = _trip_point_payload(payload)
-    tracking = assistant_state_get('trip_distance_tracking', {}) or {}
-    with DB_LOCK, db() as con:
-        last = con.execute('SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no DESC LIMIT 1', (trip['id'],)).fetchone()
-        if not last:
-            raise ValueError('De actieve rit heeft geen startpunt.')
-        lastd=dict(last)
-        if point['odometer'] < float(last['odometer']):
-            raise ValueError(f'Kilometerstand is lager dan de vorige stop ({float(last["odometer"]):.0f} km).')
-        suggestion=suggest_segment(lastd,float(point['latitude']),float(point['longitude']))
-        seg_type=normalize_segment_type(payload.get('segment_trip_type'))
-        if not seg_type:
-            seg_type=normalize_segment_type(suggestion.get('suggested_type'))
-        if not seg_type:
-            raise ValueError('Kies of dit traject zakelijk of prive was.')
-        seq = int(last['sequence_no']) + 1
-        label = 'einde' if finish else 'stop'
-        stop_id = _insert_trip_stop(con, int(trip['id']), point, seq, f'Rit {label} ({trip_type_label(seg_type)})', seg_type, suggestion, destination_audit=destination_audit)
-        if (int(tracking.get('trip_id') or -1) == int(trip['id']) and
-                int(tracking.get('stop_id') or -1) == int(last['id']) and not tracking.get('incomplete') and
-                abs((parse_dt(point['created_at']) - now_local()).total_seconds()) < 300):
-            learn_distance(f'stop:{stop_id}', float(tracking.get('segment_m') or 0) / 1000,
-                           float(point['odometer']) - float(last['odometer']), int(tracking.get('sample_count') or 0),
-                           payload.get('odometer_checked') is True, con=con)
-        remember_segment(lastd, point, seg_type, con=con)
-        # Overall trip type is derived from all classified legs.
-        types=[str(r['segment_trip_type'] or '') for r in con.execute('SELECT segment_trip_type FROM trip_stops WHERE trip_id=? AND sequence_no>0',(trip['id'],))]
-        types=[t for t in types if t in {'business','private'}]
-        overall = types[0] if types and all(t==types[0] for t in types) else 'mixed'
-        if finish:
-            route = str(payload.get('deviating_route') or '').strip()[:300]
-            detour = max(0.0, to_float(payload.get('private_detour_km')) or 0.0)
-            con.execute("UPDATE business_trips SET status='completed', ended_at=?, trip_type=?, deviating_route=?, private_detour_km=?, modified_at=? WHERE id=?",
-                        (point['created_at'], overall, route or None, detour, iso_local(), trip['id']))
-            audit('finish','trip',int(trip['id']),{'stop_id':stop_id,'segment_trip_type':seg_type,'overall_trip_type':overall,'suggestion':suggestion.get('reason'),'end':point},con=con)
-        else:
-            con.execute('UPDATE business_trips SET trip_type=?,modified_at=? WHERE id=?',(overall,iso_local(),trip['id']))
-            audit('stop','trip',int(trip['id']),{'stop_id':stop_id,'segment_trip_type':seg_type,'suggestion':suggestion.get('reason'),'point':point},con=con)
-        con.commit()
-    result_trip = active_business_trip() if not finish else business_trip_by_id(int(trip['id']))
-    if finish:
-        assistant_state_set('trip_distance_tracking', {})
-    else:
-        reset_trip_distance_tracking(result_trip)
-    publish_sensors_async()
-    return {'ok': True, 'trip': result_trip}
+    return trips.add_business_stop(
+        payload, finish=finish, destination_audit=destination_audit,
+        dependencies=_trips_dependencies(),
+    )
 
 def business_trip_by_id(trip_id: int) -> dict[str, Any] | None:
-    with DB_LOCK, db() as con:
-        row = con.execute('SELECT * FROM business_trips WHERE id=?', (trip_id,)).fetchone()
-        if not row:
-            return None
-        stops = [dict(r) for r in con.execute('SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no ASC, id ASC', (trip_id,))]
-    return enrich_business_trip(dict(row), stops)
-
+    return trips.business_trip_by_id(trip_id, dependencies=_trips_dependencies())
 
 def enrich_business_trip(trip: dict[str, Any], stops: list[dict[str, Any]], resolve: bool = True) -> dict[str, Any]:
-    out = dict(trip)
-    enriched = []
-    prev_odo = None
-    total = business_km = private_km = 0.0
-    segment_types=[]
-    for stop in stops:
-        x = dict(stop)
-        dt = parse_dt(x['created_at'])
-        x['date_label'] = dutch_date(dt)
-        x['time_label'] = dt.strftime('%H:%M')
-        km = max(0.0, float(x['odometer']) - prev_odo) if prev_odo is not None else 0.0
-        x['segment_km'] = round(km, 1)
-        total += km
-        seg=normalize_segment_type(x.get('segment_trip_type'))
-        x['segment_trip_type']=seg
-        x['segment_trip_type_label']=trip_type_label(seg) if seg else ''
-        if seg:
-            segment_types.append(seg)
-            if seg=='private': private_km += km
-            else: business_km += km
-        kp=known_place_by_id(x.get('known_place_id'))
-        x['known_place_name']=kp.get('name') if kp else ''
-        loc = trip_location_details(x, resolve=resolve)
-        x['location_label'] = loc['label']
-        x['location_address'] = loc['address']
-        x['google_maps_uri'] = loc['google_maps_uri']
-        enriched.append(x)
-        prev_odo = float(x['odometer'])
-    out['stops'] = enriched
-    out['km'] = round(total, 1)
-    # New V3.4 records use per-leg classifications. Legacy records fall back to old trip-level logic.
-    if segment_types:
-        overall=segment_types[0] if all(t==segment_types[0] for t in segment_types) else 'mixed'
-        out['trip_type']=overall
-        out['business_km']=round(business_km,1)
-        out['private_km']=round(private_km,1)
-    else:
-        out['trip_type'] = str(out.get('trip_type') or 'business')
-        detour = max(0.0, min(total, float(out.get('private_detour_km') or 0)))
-        if out['trip_type'] == 'private': out['business_km'],out['private_km']=0.0,round(total,1)
-        elif out['trip_type'] == 'mixed': out['private_km'],out['business_km']=round(detour,1),round(max(0.0,total-detour),1)
-        else: out['business_km'],out['private_km']=round(total,1),0.0
-    out['trip_type_label'] = trip_type_label(out['trip_type'])
-    out['start_odometer'] = float(stops[0]['odometer']) if stops else None
-    out['last_odometer'] = float(stops[-1]['odometer']) if stops else None
-    out['stop_count'] = len(stops)
-    if stops:
-        out['start_location'] = enriched[0]['location_label']
-        out['last_location'] = enriched[-1]['location_label']
-        out['started_label'] = dutch_date(stops[0]['created_at']) + ' ' + parse_dt(stops[0]['created_at']).strftime('%H:%M')
-        out['ended_label'] = dutch_date(stops[-1]['created_at']) + ' ' + parse_dt(stops[-1]['created_at']).strftime('%H:%M') if out.get('status') == 'completed' else None
-    else:
-        out['start_location'] = out['last_location'] = ''
-        out['started_label'] = out['ended_label'] = None
-    return out
-
+    return trips.enrich_business_trip(trip, stops, resolve, dependencies=_trips_dependencies())
 
 def business_trips_raw() -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
-    with DB_LOCK, db() as con:
-        trips = [dict(r) for r in con.execute('SELECT * FROM business_trips ORDER BY started_at ASC, id ASC')]
-        result = []
-        for t in trips:
-            stops = [dict(r) for r in con.execute('SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no ASC, id ASC', (t['id'],))]
-            result.append((t, stops))
-    return result
-
+    return trips.business_trips_raw(dependencies=_trips_dependencies())
 
 def business_stats_for_period(period: str) -> dict[str, Any]:
-    trips = business_trips_for_period(period)
-    total_km = sum(float(t.get('km') or 0) for t in trips)
-    business_km = sum(float(t.get('business_km') or 0) for t in trips)
-    private_km = sum(float(t.get('private_km') or 0) for t in trips)
-    stop_count = sum(int(t.get('stop_count') or 0) for t in trips)
-    return {
-        'km': round(total_km,1), 'business_km': round(business_km,1), 'private_km': round(private_km,1),
-        'trips': len(trips), 'segments': sum(max(0,int(t.get('stop_count') or 0)-1) for t in trips),
-        'stops': stop_count, 'avg_km': round(total_km/len(trips),1) if trips else 0.0,
-    }
+    return trips.business_stats_for_period(period, dependencies=_trips_dependencies())
 
 def recent_business_trips(period: str, limit: int = 12) -> list[dict[str, Any]]:
-    start, end = period_bounds(period)
-    selected = []
-    for trip, stops in reversed(business_trips_raw()):
-        if not stops:
-            continue
-        if trip.get('status') == 'active' or any(start <= parse_dt(s['created_at']) < end for s in stops):
-            selected.append(enrich_business_trip(trip, stops))
-        if len(selected) >= limit:
-            break
-    return selected
-
-
+    return trips.recent_business_trips(period, limit, dependencies=_trips_dependencies())
 
 def business_trips_for_period(period: str) -> list[dict[str, Any]]:
-    """Return complete trips that touch the selected reporting period."""
-    if period == 'all':
-        return [enrich_business_trip(t, stops) for t, stops in business_trips_raw() if stops]
-    if period not in {'day', 'week', 'month', 'year'}:
-        period = 'month'
-    start, end = period_bounds(period)
-    out = []
-    for trip, stops in business_trips_raw():
-        if not stops:
-            continue
-        if any(start <= parse_dt(stop['created_at']) < end for stop in stops):
-            out.append(enrich_business_trip(trip, stops))
-    return out
-
+    return trips.business_trips_for_period(period, dependencies=_trips_dependencies())
 
 try:
     from . import pdf_report
@@ -2873,35 +2616,10 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     )
 
 def edit_business_trip(trip_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    with DB_LOCK, db() as con:
-        before=_snapshot_trip(con,trip_id)
-        if not before: raise ValueError('Rit niet gevonden.')
-        current=before['trip']; trip_type=str(payload.get('trip_type') or current.get('trip_type') or 'business').lower()
-        if trip_type not in {'business','private','mixed'}: trip_type='business'
-        purpose=str(payload.get('purpose') if payload.get('purpose') is not None else current.get('purpose') or '').strip()[:120]
-        client=str(payload.get('client') if payload.get('client') is not None else current.get('client') or '').strip()[:120]
-        note=str(payload.get('note') if payload.get('note') is not None else current.get('note') or '').strip()[:250]
-        route=str(payload.get('deviating_route') if payload.get('deviating_route') is not None else current.get('deviating_route') or '').strip()[:300]
-        detour=max(0.0,(to_float(payload.get('private_detour_km')) or 0.0) if payload.get('private_detour_km') is not None else float(current.get('private_detour_km') or 0))
-        con.execute('UPDATE business_trips SET trip_type=?,purpose=?,client=?,note=?,deviating_route=?,private_detour_km=?,modified_at=? WHERE id=?',(trip_type,purpose or None,client or None,note or None,route or None,detour,iso_local(),trip_id))
-        after=_snapshot_trip(con,trip_id); audit('update','trip',trip_id,{'before':before.get('trip',{}),'after':after.get('trip',{})},con=con); con.commit()
-    publish_sensors_async(); return {'ok':True,'trip':business_trip_by_id(trip_id)}
-
+    return trips.edit_business_trip(trip_id, payload, dependencies=_trips_dependencies())
 
 def delete_business_trip(trip_id: int) -> None:
-    with DB_LOCK, db() as con:
-        snapshot = _snapshot_trip(con, trip_id)
-        ids = [r['event_id'] for r in con.execute(
-            'SELECT event_id FROM trip_stops WHERE trip_id=? AND event_id IS NOT NULL',
-            (trip_id,)
-        )]
-        for event_id in ids:
-            con.execute('DELETE FROM events WHERE id=?', (event_id,))
-        con.execute('DELETE FROM business_trips WHERE id=?', (trip_id,))
-        audit('delete', 'trip', trip_id, snapshot, con=con)
-        con.commit()
-    publish_sensors_async()
-
+    return trips.delete_business_trip(trip_id, dependencies=_trips_dependencies())
 
 def delete_event(event_id: int) -> None:
     with DB_LOCK, db() as con:
