@@ -712,7 +712,7 @@ def send_active_trip_stop_notification(trip: dict[str, Any], tracked_m: float, p
     svc = service.split('.', 1)[1]
     km = tracked_m / 1000.0
     address = str(geo.get('address') or province or 'huidige locatie')
-    payload = {'title': f'🏁 Rit & Tank · gestopt in {province}', 'message': f'Wil je je actieve rit opslaan? Je lijkt gestopt bij {address}. Achtergrondroute: ca. {km:.1f} km. Open Rit & Tank om de tellerstand te controleren en de rit af te sluiten.', 'data': {'tag': f"rit_tank_stop_{int(trip['id'])}", 'url': 'https://rit.huisplanadvies.nl', 'actions': [{'action': 'URI', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'}]}}
+    payload = {'title': f'🏁 Rit & Tank · gestopt in {province}', 'message': f'Wil je je actieve rit opslaan? Je lijkt gestopt bij {address}. Achtergrondroute: ca. {km:.1f} km. Open Rit & Tank om de tellerstand te controleren en de rit af te sluiten.', 'data': {'tag': f"rit_tank_stop_{int(trip['id'])}", 'url': 'https://rit.huisplanadvies.nl', 'actions': [{'action': 'OPEN', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'}]}}
     try:
         _provider(dependencies, 'ha_post')(f'services/notify/{svc}', payload)
         return True
@@ -737,7 +737,7 @@ def send_assistant_notification(item: dict[str, Any], *, dependencies: Mapping[s
     suggestion_text = f" · voorstel: {_provider(dependencies, 'trip_type_label')(suggested)}" if suggested else ''
     message = f"{item.get('origin_name', 'Vertrek')} → {item.get('destination_name', 'Bestemming')}{suggestion_text}. Bevestig ritsoort; kilometerstand vul je later in Rit & Tank in."
     aid = int(item['id'])
-    payload = {'title': f"🚗 Rit & Tank · {item.get('destination_name', 'Aankomst')} · {province}", 'message': message, 'data': {'tag': f'rit_tank_arrival_{aid}', 'url': 'https://rit.huisplanadvies.nl', 'actions': [{'action': f'RITTANK_PRIVATE_{aid}', 'title': 'Privé'}, {'action': f'RITTANK_BUSINESS_{aid}', 'title': 'Zakelijk'}, {'action': 'URI', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'}]}}
+    payload = {'title': f"🚗 Rit & Tank · {item.get('destination_name', 'Aankomst')} · {province}", 'message': message, 'data': {'tag': f'rit_tank_arrival_{aid}', 'url': 'https://rit.huisplanadvies.nl', 'actions': [{'action': f'RITTANK_PRIVATE_{aid}', 'title': 'Privé'}, {'action': f'RITTANK_BUSINESS_{aid}', 'title': 'Zakelijk'}, {'action': 'OPEN', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'}]}}
     try:
         _provider(dependencies, 'ha_post')(f'services/notify/{svc}', payload)
         with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
