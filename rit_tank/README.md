@@ -1,4 +1,4 @@
-# Rit & Tank 19.00
+# Rit & Tank 20.00
 
 De applicatie is intern opgesplitst in featuremodules voor PDF, Google Places, routing, Home Assistant, zakelijke ritten en ritassistent.
 

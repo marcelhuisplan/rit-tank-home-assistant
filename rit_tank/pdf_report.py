@@ -198,6 +198,15 @@ ADDRESS_X = 202.0
 ADDRESS_MAX_WIDTH = BADGE_X - 8 - ADDRESS_X
 ROW_HEIGHT = 43.0
 
+# Shared vertical layout for the top metadata table so all 6 cells (icon, label,
+# value, optional secondary line) use identical internal padding/alignment.
+METADATA_ROW_HEIGHT = 52.0
+METADATA_ICON_TOP_OFFSET = 9.6
+METADATA_LABEL_BASELINE_OFFSET = 17.0
+METADATA_VALUE_BASELINE_OFFSET = 29.0
+METADATA_SECONDARY_BASELINE_OFFSET = 41.0
+METADATA_VALUE_LINE_GAP = 11.0
+
 
 def _fit_text(value: Any, width: float, size: float = 9.5) -> str:
     """Clip text so it stays inside the available column width."""
@@ -411,7 +420,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
 
     def draw_report_table(page: _SimplePdfPage) -> None:
         table_top = page.y
-        row_h = 44
+        row_h = METADATA_ROW_HEIGHT
         left_x, right_x = 48, 304
         page.rounded_rect(36, table_top - row_h * 3, 523, row_h * 3, radius=5, rgb=palette['card'])
         for i in range(4):
@@ -424,19 +433,19 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             (('Kenteken', license_plate, 'plate'), ('Gegenereerd op', generated_label, 'clock')),
         ]
         for row_idx, (left_cell, right_cell) in enumerate(cells):
-            baseline = table_top - row_idx * row_h - 13
+            row_top = table_top - row_idx * row_h
             for x, width, (key, value, icon) in ((left_x, 218, left_cell), (right_x, 215, right_cell)):
                 icon_x = x
                 text_x = x + 14
-                draw_field_icon(page, icon, icon_x, baseline + 11)
-                page.text(key.upper(), text_x, baseline, 7.2, bold=True, rgb=palette['muted'])
+                draw_field_icon(page, icon, icon_x, row_top - METADATA_ICON_TOP_OFFSET)
+                page.text(key.upper(), text_x, row_top - METADATA_LABEL_BASELINE_OFFSET, 7.2, bold=True, rgb=palette['muted'])
                 if key == 'Rapportperiode':
-                    page.text(report_period_main, text_x, baseline - 12, 9.2, bold=(row_idx == 0), rgb=palette['text'])
-                    page.text(report_period_range, text_x, baseline - 26, 7, rgb=palette['muted'])
+                    page.text(report_period_main, text_x, row_top - METADATA_VALUE_BASELINE_OFFSET, 9.2, bold=(row_idx == 0), rgb=palette['text'])
+                    page.text(report_period_range, text_x, row_top - METADATA_SECONDARY_BASELINE_OFFSET, 7, rgb=palette['muted'])
                     continue
                 value_lines = _SimplePdfPage.wrap_lines(value, width - 14, 9.2)[:2]
                 for line_idx, line in enumerate(value_lines):
-                    page.text(line, text_x, baseline - 13 - line_idx * 11, 9.2, bold=(row_idx == 0 and x == left_x), rgb=palette['text'])
+                    page.text(line, text_x, row_top - METADATA_VALUE_BASELINE_OFFSET - line_idx * METADATA_VALUE_LINE_GAP, 9.2, bold=(row_idx == 0 and x == left_x), rgb=palette['text'])
         page.y = table_top - row_h * 3 - 18
 
     def draw_summary_cards(page: _SimplePdfPage) -> None:
