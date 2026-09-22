@@ -1,5 +1,13 @@
 # Changelog
 
+## 17.00
+- Controleren bevat nu vertrek- én aankomstadrescontrole.
+- Beide adressen kunnen vanuit dezelfde controleflow worden aangepast.
+- De bestaande dicteerfunctie is beschikbaar voor beide adresvelden.
+- Legacy/pending voorstellen blijven compatibel.
+- Routeafstand en tellerstandsvoorstel worden direct bijgewerkt na correctie.
+- De bestaande losse Route-knop blijft als shortcut beschikbaar.
+
 ## 16.00
 - Mobiele bottom-sheet modals scrollen nu zelfstandig.
 - De achtergrondpagina wordt vergrendeld zolang een modal open is.

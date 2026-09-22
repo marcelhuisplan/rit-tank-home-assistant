@@ -37,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '16.00'
+APP_VERSION = '17.00'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -2384,23 +2384,14 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <input id="assistantId" type="hidden"><input id="assistantOdo" type="hidden">
   <div class="assistant-route-big" id="assistantRoute">—</div>
   <div class="assistant-note" id="assistantReason"></div>
-  <div class="odo-suggest show" id="arrivalProposal" aria-live="polite"><div class="odo-suggest-label">Voorgestelde tellerstand</div><div class="odo-suggest-value"><b id="arrivalOdoValue">—</b> <span>km</span></div><div class="odo-suggest-detail" id="arrivalOdoDetail"></div><button class="odo-suggest-edit" type="button" onclick="editArrivalProposal()">Aanpassen</button></div>
-  <div class="field"><label>Ritsoort</label><div class="segment-choice"><button type="button" id="assistantBusiness" class="business" onclick="setAssistantType('business')">💼 Zakelijk</button><button type="button" id="assistantPrivate" class="private" onclick="setAssistantType('private')">🏠 Privé</button></div></div>
-  <div class="odo-editor" id="arrivalEditor"><div class="field"><label>Kilometerstand bij vertrek</label><input id="assistantStartOdo" type="number" inputmode="numeric" min="0" step="1"><div style="font-size:10px;color:var(--muted);margin-top:5px">Wordt vooringevuld met de laatst bekende stand. Controleer deze vóór opslaan.</div></div>
-  <div class="guide-section active" id="assistantStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand bij aankomst</b><small>Scroll de cijfers</small></div><div class="odo-wheelbox" id="assistantOdoWheels"></div><div class="odo-live"><b id="assistantOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="assistantOdoLast"></div></div>
-  <label class="assistant-note"><input type="checkbox" id="arrivalOdoChecked"> Ik heb de vertrek- én aankomststand op de echte teller gecontroleerd. Gebruik dit traject voor kilometerleren.</label></div>
-  <label class="assistant-note" id="arrivalFinishWrap"><input type="checkbox" id="arrivalFinish"> Ook mijn actieve ritregistratie afsluiten</label>
-  <button class="save" id="arrivalSave" onclick="saveAssistantArrival()">✓ Alles akkoord</button>
-</div></div>
-
-<div class="modal" id="assistantAddressModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>✏️ Route aanpassen</h2><button class="close" onclick="closeModal('assistantAddressModal')">✕</button></div>
-  <input id="addrArrivalId" type="hidden">
-  <div class="assistant-note"><b>VERTREK</b><br><span id="addrCurrentOrigin">—</span><br><br><b>AANKOMST</b><br><span id="addrCurrentLabel">—</span></div>
-  <div class="assistant-actions"><button class="edit-address" type="button" onclick="chooseAssistantRouteSide('origin')">✏️ Vertrekadres aanpassen</button><button class="edit-address" type="button" onclick="chooseAssistantRouteSide('destination')">✏️ Aankomstadres aanpassen</button></div>
-  <div class="field"><label id="addrQueryLabel">Zoek adres</label><input id="addrQuery" placeholder="Straat, huisnummer, plaats" onkeydown="if(event.key==='Enter')searchAssistantAddress()"></div>
-  <div class="assistant-actions"><button class="odo-suggest-edit" type="button" onclick="searchAssistantAddress()">🔍 Zoeken</button><button class="odo-suggest-edit" type="button" onclick="startAddressDictation('addrQuery',searchAssistantAddress)">🎙️ Dicteren</button></div>
-  <div class="known-list" id="addrResults"></div>
-  <div class="odo-suggest" id="addrPreview">
+  <div class="guide-section" id="assistantRouteSection">
+   <div class="guide-head"><span class="step-badge">1</span><b>ROUTE</b><small>Adrescontrole</small></div>
+   <div class="assistant-note"><b>VERTREK</b><br><span id="addrCurrentOrigin">—</span><br><br><b>AANKOMST</b><br><span id="addrCurrentLabel">—</span></div>
+   <div class="assistant-actions"><button class="edit-address" type="button" onclick="chooseAssistantRouteSide('origin')">✏️ Vertrekadres aanpassen</button><button class="edit-address" type="button" onclick="chooseAssistantRouteSide('destination')">✏️ Aankomstadres aanpassen</button></div>
+   <div class="field"><label id="addrQueryLabel">Zoek adres</label><input id="addrQuery" placeholder="Straat, huisnummer, plaats" onkeydown="if(event.key==='Enter')searchAssistantAddress()"></div>
+   <div class="assistant-actions"><button class="odo-suggest-edit" type="button" onclick="searchAssistantAddress()">🔍 Zoeken</button><button class="odo-suggest-edit" type="button" onclick="startAddressDictation('addrQuery',searchAssistantAddress)">🎙️ Dicteren</button></div>
+   <div class="known-list" id="addrResults"></div>
+   <div class="odo-suggest" id="addrPreview">
     <div class="odo-suggest-label">Effectief vertrek</div>
     <div class="assistant-route-big" id="addrPreviewOrigin" style="font-size:14px">—</div>
     <div class="odo-suggest-label" style="margin-top:8px">Effectieve aankomst</div>
@@ -2411,7 +2402,15 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
     <div class="odo-suggest-label" style="margin-top:8px" id="addrPreviewOdoLabel">Voorgestelde eindstand</div>
     <div class="odo-suggest-detail" id="addrPreviewOdo">—</div>
     <button class="save" type="button" id="addrUseBtn" onclick="useAssistantAddressResult()" disabled>✓ Gebruik dit adres</button>
+   </div>
   </div>
+  <div class="odo-suggest show" id="arrivalProposal" aria-live="polite"><div class="odo-suggest-label">Voorgestelde tellerstand</div><div class="odo-suggest-value"><b id="arrivalOdoValue">—</b> <span>km</span></div><div class="odo-suggest-detail" id="arrivalOdoDetail"></div><button class="odo-suggest-edit" type="button" onclick="editArrivalProposal()">Aanpassen</button></div>
+  <div class="field"><label>Ritsoort</label><div class="segment-choice"><button type="button" id="assistantBusiness" class="business" onclick="setAssistantType('business')">💼 Zakelijk</button><button type="button" id="assistantPrivate" class="private" onclick="setAssistantType('private')">🏠 Privé</button></div></div>
+  <div class="odo-editor" id="arrivalEditor"><div class="field"><label>Kilometerstand bij vertrek</label><input id="assistantStartOdo" type="number" inputmode="numeric" min="0" step="1"><div style="font-size:10px;color:var(--muted);margin-top:5px">Wordt vooringevuld met de laatst bekende stand. Controleer deze vóór opslaan.</div></div>
+  <div class="guide-section active" id="assistantStepOdo"><div class="guide-head"><span class="step-badge">2</span><b>Kilometerstand bij aankomst</b><small>Scroll de cijfers</small></div><div class="odo-wheelbox" id="assistantOdoWheels"></div><div class="odo-live"><b id="assistantOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="assistantOdoLast"></div></div>
+  <label class="assistant-note"><input type="checkbox" id="arrivalOdoChecked"> Ik heb de vertrek- én aankomststand op de echte teller gecontroleerd. Gebruik dit traject voor kilometerleren.</label></div>
+  <label class="assistant-note" id="arrivalFinishWrap"><input type="checkbox" id="arrivalFinish"> Ook mijn actieve ritregistratie afsluiten</label>
+  <button class="save" id="arrivalSave" onclick="saveAssistantArrival()">✓ Alles akkoord</button>
 </div></div>
 
 <div class="modal" id="settingsModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>⚙️ Instellingen</h2><button class="close" onclick="closeModal('settingsModal')">✕</button></div>
@@ -2490,13 +2489,14 @@ async function confirmAssistant(id,type){try{await api(`api/assistant/${id}/conf
 async function dismissAssistant(id){try{await api(`api/assistant/${id}`,{method:'DELETE'});toast('Suggestie gesloten');reloadData()}catch(e){toast(e.message,true)}}
 let ADDR_ARRIVAL=null,ADDR_RESULTS=[],ADDR_SELECTED=null,ADDR_SIDE='destination';
 function startAddressDictation(inputId,searchCallback){let input=$(inputId),Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;if(!input||!Recognition){toast('Dicteren is hier niet beschikbaar. Typ het adres of gebruik de microfoon van het toetsenbord.',true);return}let recognition=new Recognition(),button=window.event?.currentTarget;recognition.lang='nl-NL';recognition.interimResults=false;recognition.maxAlternatives=1;recognition.onresult=e=>{input.value=e.results[0][0].transcript;searchCallback()};recognition.onerror=()=>toast('Dicteren is hier niet beschikbaar. Typ het adres of gebruik de microfoon van het toetsenbord.',true);recognition.onend=()=>{if(button)button.textContent='🎙️ Dicteren'};if(button)button.textContent='🎙️ Luisteren…';try{recognition.start()}catch(e){toast('Dicteren is hier niet beschikbaar. Typ het adres of gebruik de microfoon van het toetsenbord.',true)}}
+function updateAssistantRouteUI(x){if(!x)return;let origin=x.origin_name||'Onbekende vertrekplek',destination=x.destination_name||'Onbekende bestemming';$('addrCurrentOrigin').textContent=origin+(x.origin_manually_corrected?' · ✏️ Handmatig gecorrigeerd':'');$('addrCurrentLabel').textContent=destination+(x.destination_manually_corrected?' · ✏️ Handmatig gecorrigeerd':'');$('assistantRoute').textContent=`${origin} → ${destination}`;$('addrPreview').classList.remove('show');$('addrResults').innerHTML='';$('addrUseBtn').disabled=true}
 function chooseAssistantRouteSide(side){ADDR_SIDE=side;$('addrQueryLabel').textContent=side==='origin'?'Zoek nieuw vertrekadres':'Zoek nieuwe aankomst';$('addrQuery').value='';$('addrResults').innerHTML='';$('addrPreview').classList.remove('show');$('addrUseBtn').disabled=true;$('addrQuery').focus()}
-function openAssistantAddressCorrection(id){let a=DATA?.business?.assistant||{},x=(a.pending||[]).find(v=>Number(v.id)===Number(id));if(!x){toast('Dit voorstel is al verwerkt.');return}ADDR_ARRIVAL=x;ADDR_RESULTS=[];ADDR_SELECTED=null;$('addrArrivalId').value=x.id;$('addrCurrentOrigin').textContent=x.corrected_origin_label||x.origin_name||'—';$('addrCurrentLabel').textContent=x.corrected_destination_label||x.destination_name||'—';chooseAssistantRouteSide('destination');openModal('assistantAddressModal')}
+async function openAssistantAddressCorrection(id){await openAssistantComplete(id);if(!ADDR_ARRIVAL)return;guideTo('assistantRouteSection');chooseAssistantRouteSide('destination')}
 async function searchAssistantAddress(){let q=$('addrQuery').value.trim();if(!q){toast('Vul een adres of zoekterm in.',true);return}try{let r=await api('api/places/search-address',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})});ADDR_RESULTS=r.places||[];renderAssistantAddressResults()}catch(e){toast(e.message,true)}}
 function renderAssistantAddressResults(){let list=$('addrResults');list.innerHTML='';if(!ADDR_RESULTS.length){list.innerHTML='<div class="empty" style="padding:6px 0">Geen adressen gevonden.</div>';return}ADDR_RESULTS.forEach((p,i)=>{let d=document.createElement('div');d.className='known-row';d.style.cursor='pointer';d.innerHTML=`<b>${esc(p.name||p.address||'Adres')}</b><br><small>${esc(p.address||'')}</small>`;d.onclick=()=>selectAssistantAddressResult(i);list.appendChild(d)})}
 function assistantRoutePayload(){let address=ADDR_SELECTED.address||ADDR_SELECTED.name,part={latitude:ADDR_SELECTED.latitude,longitude:ADDR_SELECTED.longitude,address,place_id:ADDR_SELECTED.place_id||null};return {[ADDR_SIDE]:part}}
 async function selectAssistantAddressResult(i){ADDR_SELECTED=ADDR_RESULTS[i];if(!ADDR_SELECTED)return;let selected=ADDR_SELECTED.name||ADDR_SELECTED.address||'—';$('addrPreviewOrigin').textContent=ADDR_SIDE==='origin'?selected:ADDR_ARRIVAL?.origin_name||'—';$('addrPreviewLabel').textContent=ADDR_SIDE==='destination'?selected:ADDR_ARRIVAL?.destination_name||'—';$('addrPreviewDetail').textContent=ADDR_SELECTED.address||'';$('addrPreviewDistance').textContent='Bezig met berekenen…';$('addrPreviewOdo').textContent='—';$('addrUseBtn').disabled=true;$('addrPreview').classList.add('show');try{let r=await api(`api/assistant/${ADDR_ARRIVAL.id}/preview-route`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(assistantRoutePayload())});let km=r.distance_m!=null?r.distance_m/1000:null;$('addrPreviewDistance').textContent=km!=null?`${fmt(km,1)} km ${r.distance_source==='route'?'via wegroute':'GPS-schatting'}`:'Afstand nog onbekend';$('addrPreviewOdo').textContent=r.suggested_odometer!=null?`${fmt(r.suggested_odometer,0)} km`:'—';$('addrUseBtn').disabled=false}catch(e){$('addrPreviewDistance').textContent='Kon afstand niet berekenen';$('addrUseBtn').disabled=true;toast(e.message,true)}}
-async function useAssistantAddressResult(){if(!ADDR_SELECTED||!ADDR_ARRIVAL){toast('Kies eerst een adres uit de resultaten.',true);return}try{await api(`api/assistant/${ADDR_ARRIVAL.id}/correct-route`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(assistantRoutePayload())});closeModal('assistantAddressModal');toast('Route aangepast');ADDR_ARRIVAL=null;ADDR_SELECTED=null;await reloadData()}catch(e){toast(e.message,true)}}
+async function useAssistantAddressResult(){if(!ADDR_SELECTED||!ADDR_ARRIVAL){toast('Kies eerst een adres uit de resultaten.',true);return}try{await api(`api/assistant/${ADDR_ARRIVAL.id}/correct-route`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(assistantRoutePayload())});let fresh=await api('api/assistant/arrivals'),updated=(fresh.arrivals||[]).find(v=>Number(v.id)===Number(ADDR_ARRIVAL.id));if(!updated)throw new Error('Bijgewerkt voorstel niet gevonden.');ADDR_ARRIVAL=updated;ASSISTANT_ITEM=updated;updateAssistantRouteUI(updated);ADDR_SELECTED=null;ADDR_RESULTS=[];$('addrQuery').value='';await reloadData();let current=(DATA.business?.assistant?.pending||[]).find(v=>Number(v.id)===Number(updated.id));if(current){ADDR_ARRIVAL=current;ASSISTANT_ITEM=current;updateAssistantRouteUI(current)}guideTo('assistantRouteSection');toast('Route aangepast en controle bijgewerkt')}catch(e){toast(e.message,true)}}
 function setAssistantType(type){ASSISTANT_TYPE=type;$('assistantBusiness').classList.toggle('active',type==='business');$('assistantPrivate').classList.toggle('active',type==='private')}
 async function openAssistantComplete(id){
   try {
@@ -2505,7 +2505,7 @@ async function openAssistantComplete(id){
     ASSISTANT_ITEM=x;ASSISTANT_TYPE=x.confirmed_type||x.suggested_type||'';
     let p=x.proposal||{},active=DATA.business?.active_trip,last=active?.stops?.at(-1);
     let usable=p.suggested_odometer!=null&&p.route_complete&&(!last||Number(last.odometer)===Number(p.start_odometer));
-    $('assistantId').value=x.id;$('assistantRoute').textContent=`${x.origin_name} → ${x.destination_name}`;
+    $('assistantId').value=x.id;ADDR_ARRIVAL=x;ADDR_RESULTS=[];ADDR_SELECTED=null;updateAssistantRouteUI(x);
     $('assistantReason').textContent=`${x.date_label} · ${x.suggestion_reason||'Kies zelf de ritsoort.'}${x.suggested_type?' · Regelzekerheid '+Math.round(Number(x.suggestion_confidence||0)*100)+'%':''}`;
     $('assistantStartOdo').value=last?.odometer??p.start_odometer??'';
     $('assistantStartOdo').disabled=!!active;$('arrivalOdoChecked').checked=false;
