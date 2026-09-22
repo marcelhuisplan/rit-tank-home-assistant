@@ -1,5 +1,10 @@
 # Changelog
 
+## 18.00
+- Bekende plekken bewaren en tonen nu het volledige gekozen adres; oudere records blijven compatibel.
+- Volgende locatie ondersteunt adres dicteren via de bestaande adreszoeker; gesproken tekst wordt eerst gevalideerd.
+- Een actieve rit toont live GPS-status ongeveer iedere 5 seconden, zonder de volledige dashboardrefresh te versnellen.
+
 ## 17.00
 - Controleren bevat nu vertrek- én aankomstadrescontrole.
 - Beide adressen kunnen vanuit dezelfde controleflow worden aangepast.
