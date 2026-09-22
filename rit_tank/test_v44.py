@@ -122,7 +122,7 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(len(snapshot['stops']), len(event_ids))
 
     def test_current_version_is_consistent_across_runtime_and_docs(self):
-        version = '12.00'
+        version = '14.00'
         root = Path(__file__).parent
         self.assertEqual(app.APP_VERSION, version)
         self.assertRegex((root / 'config.yaml').read_text(encoding='utf-8'), rf"(?m)^version: ['\"]{re.escape(version)}['\"]$")
@@ -299,6 +299,110 @@ class AutonomyTests(unittest.TestCase):
                 with patch.object(app,'now_local',return_value=now+timedelta(seconds=seconds)):
                     app.track_active_trip_distance({'latitude':52,'longitude':6,'speed':0},app.assistant_config())
                 self.assertEqual(bool(app.trip_distance_tracking_public().get('stop_prompt')),seconds>=30)
+
+    def test_14_00_always_calculates_odometer_suggestion_when_tracked_m_exists(self):
+        """Release 14.00: Altijd tellerstandsuggestie berekenen wanneer base en tracked_m > 0"""
+        trip = app.start_business_trip({'odometer': 63845, 'created_at': app.iso_local(), 'latitude': 52, 'longitude': 6, 'purpose': 'Test'})
+        state = app.assistant_state_get('trip_distance_tracking', {})
+        state['segment_m'] = 30100.0
+        state['sample_count'] = 5  # >= 3 samples
+        state['incomplete'] = False
+        app.assistant_state_set('trip_distance_tracking', state)
+
+        tracking = app.trip_distance_tracking_public()
+        self.assertTrue(tracking['active'])
+        self.assertEqual(tracking['tracked_km'], 30.1)
+        # base_odometer (63845) + tracked_km (30.1) * calibration_factor (default ~1.0)
+        self.assertIsNotNone(tracking['suggested_odometer'])
+        self.assertGreaterEqual(tracking['suggested_odometer'], 63875)
+        self.assertTrue(tracking['suggestion_reliable'])
+        self.assertIsNone(tracking['distance_warning'])
+
+    def test_14_00_incomplete_gps_keeps_suggestion_but_marks_unreliable(self):
+        """Release 14.00: Onvolledige GPS toont waarschuwing maar behoudt suggestie"""
+        trip = app.start_business_trip({'odometer': 63845, 'created_at': app.iso_local(), 'latitude': 52, 'longitude': 6})
+        state = app.assistant_state_get('trip_distance_tracking', {})
+        state['segment_m'] = 15000.0
+        state['sample_count'] = 5
+        state['incomplete'] = True
+        app.assistant_state_set('trip_distance_tracking', state)
+
+        tracking = app.trip_distance_tracking_public()
+        self.assertIsNotNone(tracking['suggested_odometer'])
+        self.assertFalse(tracking['suggestion_reliable'])
+        self.assertIsNotNone(tracking['distance_warning'])
+        self.assertIn('onderbroken', tracking['distance_warning'].lower())
+
+    def test_14_00_few_samples_shows_suggestion_but_unreliable(self):
+        """Release 14.00: Weinig samples: suggestie zichtbaar maar onbetrouwbaar"""
+        trip = app.start_business_trip({'odometer': 63845, 'created_at': app.iso_local(), 'latitude': 52, 'longitude': 6})
+        state = app.assistant_state_get('trip_distance_tracking', {})
+        state['segment_m'] = 10000.0
+        state['sample_count'] = 1
+        state['incomplete'] = False
+        app.assistant_state_set('trip_distance_tracking', state)
+
+        tracking = app.trip_distance_tracking_public()
+        self.assertIsNotNone(tracking['suggested_odometer'])
+        self.assertFalse(tracking['suggestion_reliable'])
+        self.assertIsNotNone(tracking['distance_warning'])
+        self.assertIn('samples', tracking['distance_warning'].lower())
+
+    def test_14_00_no_suggestion_when_tracked_m_zero(self):
+        """Release 14.00: tracked_m = 0: geen suggestie"""
+        trip = app.start_business_trip({'odometer': 63845, 'created_at': app.iso_local(), 'latitude': 52, 'longitude': 6})
+        state = app.assistant_state_get('trip_distance_tracking', {})
+        state['segment_m'] = 0.0
+        state['sample_count'] = 0
+        app.assistant_state_set('trip_distance_tracking', state)
+
+        tracking = app.trip_distance_tracking_public()
+        self.assertIsNone(tracking['suggested_odometer'])
+        self.assertTrue(tracking['suggestion_reliable'])
+        self.assertIsNone(tracking['distance_warning'])
+
+    def test_14_00_no_suggestion_without_base_odometer(self):
+        """Release 14.00: geen geldige base: geen suggestie"""
+        trip = app.start_business_trip({'odometer': 10100, 'created_at': app.iso_local(), 'latitude': 52, 'longitude': 6})
+        state = app.assistant_state_get('trip_distance_tracking', {})
+        state['segment_m'] = 10000.0
+        state['sample_count'] = 5
+        app.assistant_state_set('trip_distance_tracking', state)
+
+        tracking = app.trip_distance_tracking_public()
+        self.assertIsNotNone(tracking['suggested_odometer'])  # 10100 is a valid base
+
+    def test_14_00_zero_coordinates_valid_for_distance_tracking(self):
+        """Release 14.00: 0.0 latitude/longitude blijven geldige coördinaten"""
+        trip = app.start_business_trip({'odometer': 63845, 'created_at': app.iso_local(), 'latitude': 0.0, 'longitude': 0.0})
+        state = app.assistant_state_get('trip_distance_tracking', {})
+        state['segment_m'] = 5000.0
+        state['sample_count'] = 3
+        state['incomplete'] = False
+        state['last_lat'] = 0.0
+        state['last_lon'] = 0.0
+        app.assistant_state_set('trip_distance_tracking', state)
+
+        tracking = app.trip_distance_tracking_public()
+        self.assertTrue(tracking['active'])
+        self.assertIsNotNone(tracking['suggested_odometer'])
+
+    def test_14_00_calibration_factor_applied_correctly(self):
+        """Release 14.00: bestaande kalibratiefactor blijft exact toegepast"""
+        trip = app.start_business_trip({'odometer': 10000, 'created_at': app.iso_local(), 'latitude': 52, 'longitude': 6})
+
+        # Learn a calibration: actual 10.2 km, gps 10 km => factor 1.02
+        self.learn('test', actual=10.2, gps=10, checked=True)
+        cal = app.distance_calibration()
+
+        state = app.assistant_state_get('trip_distance_tracking', {})
+        state['segment_m'] = 10000.0
+        state['sample_count'] = 5
+        state['incomplete'] = False
+        app.assistant_state_set('trip_distance_tracking', state)
+        tracking = app.trip_distance_tracking_public()
+        expected = round(10000 + 10000 / 1000.0 * cal['factor'])
+        self.assertEqual(tracking['suggested_odometer'], expected)
 
 
 if __name__ == '__main__':

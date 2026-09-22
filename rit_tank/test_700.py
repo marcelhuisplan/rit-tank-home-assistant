@@ -24,20 +24,20 @@ spec.loader.exec_module(app)
 class Version700Tests(unittest.TestCase):
     """Test release 7.00 version consistency."""
     
-    def test_app_version_is_7_00(self):
-        self.assertEqual(app.APP_VERSION, '12.00')
+    def test_app_version_is_14_00(self):
+        self.assertEqual(app.APP_VERSION, '14.00')
     
-    def test_config_yaml_version_is_7_00(self):
+    def test_config_yaml_version_is_14_00(self):
         config_path = Path(__file__).with_name('config.yaml')
         if config_path.exists():
             content = config_path.read_text()
-            self.assertIn("version: '12.00'", content)
+            self.assertIn("version: '14.00'", content)
     
-    def test_readme_title_has_7_00(self):
+    def test_readme_title_has_14_00(self):
         readme_path = Path(__file__).with_name('README.md')
         if readme_path.exists():
             content = readme_path.read_text()
-            self.assertIn('# Rit & Tank 12.00', content)
+            self.assertIn('# Rit & Tank 14.00', content)
     
     def test_changelog_has_7_00_section(self):
         changelog_path = Path(__file__).with_name('CHANGELOG.md')
@@ -744,6 +744,54 @@ class AddressCorrectionTests(unittest.TestCase):
             con.commit()
         row = next(x for x in app.assistant_arrivals(50, True) if int(x['id']) == arrival_id)
         self.assertIsNone(row['corrected_destination_distance_m'])
+
+
+class Release1400UiTests(unittest.TestCase):
+    """Static regression tests for the release 14.00 dashboard contract."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = Path(app.__file__).read_text(encoding='utf-8')
+
+    def test_active_trip_renders_single_live_gps_view(self):
+        render_business = re.search(r"function renderBusiness\(\)\{.*?\}renderAssistant", self.src, re.S)
+        self.assertIsNotNone(render_business, "renderBusiness niet gevonden")
+        source = render_business.group(0)
+        self.assertIn('Live GPS-afstand', source)
+        self.assertIn('Laatste tellerstand', source)
+        self.assertIn('Voorgestelde eindstand', source)
+        self.assertIn('os.distance_warning', source)
+
+    def test_assistant_draft_distance_is_hidden_for_active_trip(self):
+        render_assistant = re.search(r"function renderAssistant\(\)\{.*?\n", self.src, re.S)
+        self.assertIsNotNone(render_assistant, "renderAssistant niet gevonden")
+        self.assertIn("rt.draft_active&&!DATA?.business?.active_trip", render_assistant.group(0))
+
+    def test_trip_modal_refreshes_before_it_opens_and_keeps_warning(self):
+        open_trip = re.search(r"async function openTripPoint\(mode\)\{.*?\n", self.src, re.S)
+        self.assertIsNotNone(open_trip, "openTripPoint niet gevonden")
+        source = open_trip.group(0)
+        self.assertLess(source.index('await refreshTripOdoProposal'), source.index("openModal('tripModal')"))
+        proposal = re.search(r"function showTripOdoProposal\(sug\)\{.*?\n", self.src, re.S)
+        self.assertIsNotNone(proposal, "showTripOdoProposal niet gevonden")
+        self.assertIn('sug?.distance_warning', proposal.group(0))
+        self.assertIn("initOdometerWheel('trip',proposed)", proposal.group(0))
+
+    def test_known_place_location_flow_uses_existing_endpoints(self):
+        self.assertIn('📍 Gebruik huidige locatie', self.src)
+        self.assertIn("api/location/addresses", self.src)
+        self.assertIn("api/places/search-address", self.src)
+        self.assertIn('🔎 Ander adres zoeken', self.src)
+        self.assertIn('📍 Alleen huidige GPS-positie gebruiken', self.src)
+        self.assertIn('(candidates||[]).slice(0,10)', self.src)
+
+    def test_known_place_edit_preserves_coordinates_without_explicit_selection(self):
+        edit = re.search(r"function editKnownPlace\(id\)\{.*?\n", self.src, re.S)
+        self.assertIsNotNone(edit, "editKnownPlace niet gevonden")
+        source = edit.group(0)
+        self.assertIn("$('knownLat').value=p.latitude", source)
+        self.assertIn("$('knownLon').value=p.longitude", source)
+        self.assertNotIn('useKnownPlaceCurrentLocation()', source)
 
 
 class PdfRedesignTests(unittest.TestCase):
