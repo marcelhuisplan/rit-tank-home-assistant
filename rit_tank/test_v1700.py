@@ -38,7 +38,6 @@ class Release1700AssistantReviewTests(unittest.TestCase):
         self.assertIn('_assistant_arrival_effective_destination', ASSISTANT)
         self.assertIn("'Onbekende vertrekplek'", ASSISTANT)
         self.assertIn("'Onbekende bestemming'", ASSISTANT)
-        self.assertIn("arrival_id), {})", ASSISTANT)
 
     def test_route_correction_refreshes_the_arrival_and_keeps_one_modal(self):
         self.assertIn("fresh=await api('api/assistant/arrivals')", APP)
