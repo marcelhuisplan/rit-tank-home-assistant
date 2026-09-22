@@ -1,5 +1,10 @@
 # Changelog
 
+## 20.00
+- Interne verticale positionering (padding/uitlijning) van de bovenste metadata-tabel (Kalenderjaar, Rapportperiode, Bestuurder, Auto, Kenteken, Gegenereerd op) verfijnd; iconen en labels raken niet langer de celrand.
+- Alle 6 metadata-cellen gebruiken nu identieke gedeelde padding-constanten voor icoon-, label-, waarde- en secundaire-regelpositionering.
+- Header, logo, samenvattingskaarten, rittenoverzicht, badges, adressen, paginering en footer zijn ongewijzigd.
+
 ## 19.00
 - De fiscale PDF toont volledige adressen voor bekende plekken, waaronder Thuis en Ouders.
 - Labels van bekende plekken worden niet meer als primair PDF-adres gebruikt wanneer een volledig adres beschikbaar is.
