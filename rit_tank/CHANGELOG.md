@@ -1,5 +1,13 @@
 # Changelog
 
+## 15.00
+- Pushmeldingen openen voortaan direct `https://rit.huisplanadvies.nl`.
+- Te controleren is volledig mobiel responsive met een vaste dismiss-knop.
+- Vertrek- en aankomstadres zijn beide handmatig corrigeerbaar.
+- Afstand en tellerstandsvoorstel worden opnieuw berekend na routecorrectie.
+- Dicteren is toegevoegd aan adreszoekvelden via browser speech recognition.
+- Audio wordt niet opgeslagen of naar de backend verzonden.
+
 ## 14.00
 - Één live GPS-afstand weergegeven tijdens actieve rit; geen concurrerende draft-afstanden meer.
 - Tellerstandsuggestie altijd berekend wanneer geldige basisstand en tracked_m > 0 beschikbaar zijn.

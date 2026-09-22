@@ -122,8 +122,10 @@ def arrival_proposal(row: dict[str, Any], *, dependencies: Mapping[str, Any]) ->
     """
     base = _provider(dependencies, 'latest_odometer_before')(row.get('departure_at') or row['detected_at'])
     calibration = _provider(dependencies, 'distance_calibration')()
-    corrected_m = _provider(dependencies, 'to_float')(row.get('corrected_destination_distance_m'))
-    if row.get('destination_manually_corrected') and corrected_m is not None:
+    corrected_m = _provider(dependencies, 'to_float')(row.get('corrected_route_distance_m'))
+    if corrected_m is None:
+        corrected_m = _provider(dependencies, 'to_float')(row.get('corrected_destination_distance_m'))
+    if (row.get('origin_manually_corrected') or row.get('destination_manually_corrected')) and corrected_m is not None:
         corrected_km = corrected_m / 1000
         source = str(row.get('destination_distance_source') or 'gps')
         usable = bool(base is not None and corrected_km > 0)
@@ -145,7 +147,8 @@ def assistant_arrivals(limit: int=12, include_done: bool=False, *, dependencies:
     for r in rows:
         origin = _provider(dependencies, 'known_place_by_id')(r.get('origin_known_place_id'))
         dest = _provider(dependencies, 'known_place_by_id')(r.get('destination_known_place_id'))
-        r['origin_name'] = (origin or {}).get('name') or 'Onbekende vertrekplek'
+        effective_origin = _provider(dependencies, '_assistant_arrival_effective_origin')(r)
+        r['origin_name'] = effective_origin['label'] if effective_origin['manually_corrected'] else (origin or {}).get('name') or 'Onbekende vertrekplek'
         effective = _provider(dependencies, '_assistant_arrival_effective_destination')(r)
         r['destination_name'] = effective['label'] if effective['manually_corrected'] else (dest or {}).get('name') or r.get('destination_label') or 'Onbekende bestemming'
         r['suggested_type_label'] = _provider(dependencies, 'trip_type_label')(str(r.get('suggested_type') or '')) if r.get('suggested_type') else ''
@@ -259,6 +262,19 @@ def _assistant_arrival_effective_destination(r: dict[str, Any], *, dependencies:
         return {'latitude': corrected_lat, 'longitude': corrected_lon, 'label': str(r.get('corrected_destination_label') or '').strip() or original_label, 'place_id': str(r.get('corrected_destination_place_id') or '').strip() or None, 'distance_m': _provider(dependencies, 'to_float')(r.get('corrected_destination_distance_m')), 'distance_source': str(r.get('destination_distance_source') or 'gps'), 'manually_corrected': True, 'original_latitude': original_lat, 'original_longitude': original_lon, 'original_label': original_label}
     return {'latitude': original_lat, 'longitude': original_lon, 'label': original_label, 'place_id': None, 'distance_m': None, 'distance_source': None, 'manually_corrected': False, 'original_latitude': None, 'original_longitude': None, 'original_label': None}
 
+def _assistant_arrival_effective_origin(r: dict[str, Any], *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the corrected origin when present while preserving its original source."""
+    origin_place = _provider(dependencies, 'known_place_by_id')(r.get('origin_known_place_id')) or {}
+    original_lat = _provider(dependencies, 'to_float')(origin_place.get('latitude'))
+    original_lon = _provider(dependencies, 'to_float')(origin_place.get('longitude'))
+    original_label = str(origin_place.get('name') or '').strip() or None
+    corrected_lat = _provider(dependencies, 'to_float')(r.get('corrected_origin_latitude'))
+    corrected_lon = _provider(dependencies, 'to_float')(r.get('corrected_origin_longitude'))
+    manually_corrected = bool(r.get('origin_manually_corrected')) and corrected_lat is not None and corrected_lon is not None
+    if manually_corrected:
+        return {'latitude': corrected_lat, 'longitude': corrected_lon, 'label': str(r.get('corrected_origin_label') or '').strip() or original_label, 'place_id': str(r.get('corrected_origin_place_id') or '').strip() or None, 'manually_corrected': True, 'original_latitude': original_lat, 'original_longitude': original_lon, 'original_label': original_label}
+    return {'latitude': original_lat, 'longitude': original_lon, 'label': original_label, 'place_id': None, 'manually_corrected': False, 'original_latitude': None, 'original_longitude': None, 'original_label': None}
+
 def _assistant_arrival_origin_coords(r: dict[str, Any], *, dependencies: Mapping[str, Any]) -> tuple[float, float] | None:
     """
     Bepaal de meest betrouwbare vertreklocatie die bij dit ritvoorstel hoort.
@@ -274,6 +290,9 @@ def _assistant_arrival_origin_coords(r: dict[str, Any], *, dependencies: Mapping
     Retourneert None als er geen betrouwbare vertreklocatie is; de aanroeper
     mag dan NOOIT (0,0) of de oude bestemming als origin gebruiken.
     """
+    effective = _provider(dependencies, '_assistant_arrival_effective_origin')(r)
+    if effective['manually_corrected']:
+        return (effective['latitude'], effective['longitude'])
     active = _provider(dependencies, 'active_business_trip')()
     if active and active.get('stops'):
         last_stop = active['stops'][-1]
@@ -397,6 +416,70 @@ def correct_assistant_arrival_destination(arrival_id: int, payload: dict[str, An
         con.commit()
     return next((x for x in _provider(dependencies, 'assistant_arrivals')(50, True) if int(x['id']) == int(arrival_id)), {})
 
+def _route_correction_part(payload: dict[str, Any], side: str, *, dependencies: Mapping[str, Any]) -> dict[str, Any] | None:
+    part = payload.get(side)
+    if part is None:
+        return None
+    if not isinstance(part, dict):
+        raise ValueError(f'Ongeldige {side}correctie.')
+    lat = _provider(dependencies, 'to_float')(part.get('latitude'))
+    lon = _provider(dependencies, 'to_float')(part.get('longitude'))
+    if lat is None or lon is None or not -90 <= lat <= 90 or not -180 <= lon <= 180:
+        raise ValueError(f'Ongeldige {side}coördinaten.')
+    return {'latitude': lat, 'longitude': lon, 'label': str(part.get('address') or '').strip()[:180], 'place_id': str(part.get('place_id') or '').strip()[:255] or None}
+
+def preview_assistant_arrival_route(arrival_id: int, payload: dict[str, Any], *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
+    with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
+        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
+    if not row:
+        raise ValueError('Ritsuggestie niet gevonden.')
+    r = dict(row)
+    if r.get('status') not in ('pending', 'confirmed'):
+        raise ValueError('Deze ritsuggestie kan niet meer worden aangepast.')
+    origin, destination = (_route_correction_part(payload, 'origin', dependencies=dependencies), _route_correction_part(payload, 'destination', dependencies=dependencies))
+    if origin:
+        r.update(corrected_origin_latitude=origin['latitude'], corrected_origin_longitude=origin['longitude'], corrected_origin_label=origin['label'], corrected_origin_place_id=origin['place_id'], origin_manually_corrected=1)
+    if destination:
+        r.update(corrected_destination_latitude=destination['latitude'], corrected_destination_longitude=destination['longitude'], corrected_destination_label=destination['label'], corrected_destination_place_id=destination['place_id'], destination_manually_corrected=1)
+    effective_destination = _provider(dependencies, '_assistant_arrival_effective_destination')(r)
+    if effective_destination['latitude'] is None or effective_destination['longitude'] is None:
+        raise ValueError('Bestemming van deze aankomst is onbekend.')
+    distance = _provider(dependencies, '_assistant_arrival_destination_distance')(r, arrival_id, effective_destination['latitude'], effective_destination['longitude'])
+    distance_m, source = distance['distance_m'], distance['distance_source']
+    base = _provider(dependencies, 'latest_odometer_before')(r.get('departure_at') or r.get('detected_at'))
+    suggested = None
+    if base is not None and distance_m is not None and distance_m > 0:
+        km = distance_m / 1000
+        suggested = round(base + km) if source == 'route' else round(base + km * _provider(dependencies, 'distance_calibration')()['factor'])
+    return {'distance_m': round(distance_m) if distance_m is not None else None, 'distance_source': source, 'start_odometer': base, 'suggested_odometer': suggested, 'origin_available': distance['origin_available']}
+
+def correct_assistant_arrival_route(arrival_id: int, payload: dict[str, Any], *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
+    with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
+        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
+    if not row:
+        raise ValueError('Ritsuggestie niet gevonden.')
+    r = dict(row)
+    if r.get('status') not in ('pending', 'confirmed'):
+        raise ValueError('Deze ritsuggestie kan niet meer worden aangepast.')
+    origin, destination = (_route_correction_part(payload, 'origin', dependencies=dependencies), _route_correction_part(payload, 'destination', dependencies=dependencies))
+    if not origin and not destination:
+        raise ValueError('Kies een vertrekadres of aankomstadres.')
+    preview = preview_assistant_arrival_route(arrival_id, payload, dependencies=dependencies)
+    assignments, values = [], []
+    if origin:
+        assignments.extend(('corrected_origin_latitude=?', 'corrected_origin_longitude=?', 'corrected_origin_label=?', 'corrected_origin_place_id=?', 'origin_manually_corrected=1'))
+        values.extend((origin['latitude'], origin['longitude'], origin['label'], origin['place_id']))
+    if destination:
+        assignments.extend(('corrected_destination_latitude=?', 'corrected_destination_longitude=?', 'corrected_destination_label=?', 'corrected_destination_place_id=?', 'destination_manually_corrected=1'))
+        values.extend((destination['latitude'], destination['longitude'], destination['label'], destination['place_id']))
+    assignments.extend(('corrected_route_distance_m=?', 'destination_distance_source=?'))
+    values.extend((preview['distance_m'], preview['distance_source'], int(arrival_id)))
+    with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
+        con.execute(f"UPDATE assistant_arrivals SET {','.join(assignments)} WHERE id=?", values)
+        _provider(dependencies, 'audit')('assistant_correct_route', 'assistant', int(arrival_id), {'original_origin': _provider(dependencies, '_assistant_arrival_effective_origin')(r), 'original_destination': _provider(dependencies, '_assistant_arrival_effective_destination')(r), 'corrected_origin': origin, 'corrected_destination': destination, 'distance_m': preview['distance_m'], 'distance_source': preview['distance_source']}, con=con)
+        con.commit()
+    return next((x for x in _provider(dependencies, 'assistant_arrivals')(50, True) if int(x['id']) == int(arrival_id)), {})
+
 def complete_assistant_arrival(arrival_id: int, payload: dict[str, Any], *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
     with _provider(dependencies, 'DB_LOCK'):
         return _provider(dependencies, '_complete_assistant_arrival')(arrival_id, payload)
@@ -432,8 +515,8 @@ def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any], *, dep
         result = _provider(dependencies, 'add_business_stop')({'odometer': end_odo, 'created_at': r['detected_at'], 'latitude': point['latitude'], 'longitude': point['longitude'], 'location_accuracy': point['location_accuracy'], 'location_source': point['location_source'], 'manual_label': point['manual_label'], 'note': point['note'], 'segment_trip_type': trip_type}, finish=payload.get('finish') is True, destination_audit=destination_audit)
         trip_id = int((result.get('trip') or {}).get('id') or active['id'])
     else:
-        origin = _provider(dependencies, 'known_place_by_id')(r.get('origin_known_place_id'))
-        if not origin:
+        origin = _provider(dependencies, '_assistant_arrival_effective_origin')(r)
+        if origin['latitude'] is None or origin['longitude'] is None:
             raise ValueError('Startpunt van deze automatische rit is onbekend. Gebruik de gewone ritregistratie.')
         start_odo = _provider(dependencies, 'to_float')(payload.get('start_odometer'))
         if start_odo is None:
@@ -453,7 +536,7 @@ def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any], *, dep
             valid, message = _provider(dependencies, 'validate_odometer')(timestamp, odo)
             if not valid:
                 raise ValueError(message)
-        start_point = {'odometer': start_odo, 'created_at': start_at, 'latitude': float(origin['latitude']), 'longitude': float(origin['longitude']), 'location_accuracy': None, 'location_source': 'background_assistant', 'place_id': None, 'manual_label': str(origin.get('name') or '')[:120] or None, 'note': 'Automatisch herkend vertrek', 'known_place_id': int(origin['id'])}
+        start_point = {'odometer': start_odo, 'created_at': start_at, 'latitude': origin['latitude'], 'longitude': origin['longitude'], 'location_accuracy': None, 'location_source': 'background_assistant', 'place_id': origin['place_id'], 'manual_label': str(origin['label'] or '')[:120] or None, 'note': 'Automatisch herkend vertrek' + (' (adres handmatig gecorrigeerd)' if origin['manually_corrected'] else ''), 'known_place_id': r.get('origin_known_place_id') if not origin['manually_corrected'] else None}
         suggestion = {'suggested_type': _provider(dependencies, 'normalize_segment_type')(r.get('suggested_type')), 'reason': str(r.get('suggestion_reason') or ''), 'confidence': float(r.get('suggestion_confidence') or 0)}
         with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
             cur = con.execute("\n                INSERT INTO business_trips(started_at,ended_at,status,purpose,client,note,trip_type,private_detour_km,modified_at)\n                VALUES(?,?,'completed',NULL,NULL,?,?,0,?)\n            ", (start_at, r['detected_at'], 'Automatisch herkende rit', trip_type, _provider(dependencies, 'iso_local')()))
@@ -461,7 +544,7 @@ def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any], *, dep
             _provider(dependencies, '_insert_trip_stop')(con, trip_id, start_point, 0, 'Automatische rit start')
             _provider(dependencies, '_insert_trip_stop')(con, trip_id, point, 1, f"Automatische rit einde ({_provider(dependencies, 'trip_type_label')(trip_type)})", trip_type, suggestion, destination_audit=destination_audit)
             _provider(dependencies, 'remember_segment')(start_point, point, trip_type, con=con)
-            _provider(dependencies, 'audit')('assistant_complete', 'trip', trip_id, {'assistant_arrival_id': int(arrival_id), 'trip_type': trip_type, 'destination_manually_corrected': dest['manually_corrected'], 'effective_destination': {'lat': dest['latitude'], 'lon': dest['longitude'], 'label': dest['label']}, 'original_destination': {'lat': dest['original_latitude'], 'lon': dest['original_longitude'], 'label': dest['original_label']} if dest['manually_corrected'] else None}, con=con)
+            _provider(dependencies, 'audit')('assistant_complete', 'trip', trip_id, {'assistant_arrival_id': int(arrival_id), 'trip_type': trip_type, 'origin_manually_corrected': origin['manually_corrected'], 'effective_origin': {'lat': origin['latitude'], 'lon': origin['longitude'], 'label': origin['label']}, 'original_origin': {'lat': origin['original_latitude'], 'lon': origin['original_longitude'], 'label': origin['original_label']} if origin['manually_corrected'] else None, 'destination_manually_corrected': dest['manually_corrected'], 'effective_destination': {'lat': dest['latitude'], 'lon': dest['longitude'], 'label': dest['label']}, 'original_destination': {'lat': dest['original_latitude'], 'lon': dest['original_longitude'], 'label': dest['original_label']} if dest['manually_corrected'] else None}, con=con)
             con.commit()
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
         snapshot = _provider(dependencies, 'assistant_state_get')(f'arrival_route_{arrival_id}', {}) or {}
@@ -629,7 +712,7 @@ def send_active_trip_stop_notification(trip: dict[str, Any], tracked_m: float, p
     svc = service.split('.', 1)[1]
     km = tracked_m / 1000.0
     address = str(geo.get('address') or province or 'huidige locatie')
-    payload = {'title': f'🏁 Rit & Tank · gestopt in {province}', 'message': f'Wil je je actieve rit opslaan? Je lijkt gestopt bij {address}. Achtergrondroute: ca. {km:.1f} km. Open Rit & Tank om de tellerstand te controleren en de rit af te sluiten.', 'data': {'tag': f"rit_tank_stop_{int(trip['id'])}", 'url': '/675b3933_rit_tank', 'actions': [{'action': 'URI', 'title': 'Open Rit & Tank', 'uri': '/675b3933_rit_tank'}]}}
+    payload = {'title': f'🏁 Rit & Tank · gestopt in {province}', 'message': f'Wil je je actieve rit opslaan? Je lijkt gestopt bij {address}. Achtergrondroute: ca. {km:.1f} km. Open Rit & Tank om de tellerstand te controleren en de rit af te sluiten.', 'data': {'tag': f"rit_tank_stop_{int(trip['id'])}", 'url': 'https://rit.huisplanadvies.nl', 'actions': [{'action': 'URI', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'}]}}
     try:
         _provider(dependencies, 'ha_post')(f'services/notify/{svc}', payload)
         return True
@@ -654,7 +737,7 @@ def send_assistant_notification(item: dict[str, Any], *, dependencies: Mapping[s
     suggestion_text = f" · voorstel: {_provider(dependencies, 'trip_type_label')(suggested)}" if suggested else ''
     message = f"{item.get('origin_name', 'Vertrek')} → {item.get('destination_name', 'Bestemming')}{suggestion_text}. Bevestig ritsoort; kilometerstand vul je later in Rit & Tank in."
     aid = int(item['id'])
-    payload = {'title': f"🚗 Rit & Tank · {item.get('destination_name', 'Aankomst')} · {province}", 'message': message, 'data': {'tag': f'rit_tank_arrival_{aid}', 'url': '/675b3933_rit_tank', 'actions': [{'action': f'RITTANK_PRIVATE_{aid}', 'title': 'Privé'}, {'action': f'RITTANK_BUSINESS_{aid}', 'title': 'Zakelijk'}, {'action': 'URI', 'title': 'Open Rit & Tank', 'uri': '/675b3933_rit_tank'}]}}
+    payload = {'title': f"🚗 Rit & Tank · {item.get('destination_name', 'Aankomst')} · {province}", 'message': message, 'data': {'tag': f'rit_tank_arrival_{aid}', 'url': 'https://rit.huisplanadvies.nl', 'actions': [{'action': f'RITTANK_PRIVATE_{aid}', 'title': 'Privé'}, {'action': f'RITTANK_BUSINESS_{aid}', 'title': 'Zakelijk'}, {'action': 'URI', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'}]}}
     try:
         _provider(dependencies, 'ha_post')(f'services/notify/{svc}', payload)
         with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
@@ -671,7 +754,7 @@ def send_assistant_test_notification(*, dependencies: Mapping[str, Any]) -> None
     if not service.startswith('notify.'):
         raise ValueError('Kies eerst een Home Assistant mobiele meldingsservice.')
     svc = service.split('.', 1)[1]
-    _provider(dependencies, 'ha_post')(f'services/notify/{svc}', {'title': '🚗 Rit & Tank', 'message': 'Achtergrond-ritassistent is gekoppeld. Meldingen komen op dit apparaat binnen.', 'data': {'url': '/675b3933_rit_tank'}})
+    _provider(dependencies, 'ha_post')(f'services/notify/{svc}', {'title': '🚗 Rit & Tank', 'message': 'Achtergrond-ritassistent is gekoppeld. Meldingen komen op dit apparaat binnen.', 'data': {'url': 'https://rit.huisplanadvies.nl'}})
 
 def _assistant_action_listener(*, dependencies: Mapping[str, Any]) -> None:
     backoff = 3

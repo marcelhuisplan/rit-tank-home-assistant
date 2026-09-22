@@ -24,20 +24,20 @@ spec.loader.exec_module(app)
 class Version700Tests(unittest.TestCase):
     """Test release 7.00 version consistency."""
     
-    def test_app_version_is_14_00(self):
-        self.assertEqual(app.APP_VERSION, '14.00')
+    def test_app_version_is_15_00(self):
+        self.assertEqual(app.APP_VERSION, '15.00')
     
-    def test_config_yaml_version_is_14_00(self):
+    def test_config_yaml_version_is_15_00(self):
         config_path = Path(__file__).with_name('config.yaml')
         if config_path.exists():
             content = config_path.read_text()
-            self.assertIn("version: '14.00'", content)
+            self.assertIn("version: '15.00'", content)
     
-    def test_readme_title_has_14_00(self):
+    def test_readme_title_has_15_00(self):
         readme_path = Path(__file__).with_name('README.md')
         if readme_path.exists():
             content = readme_path.read_text()
-            self.assertIn('# Rit & Tank 14.00', content)
+            self.assertIn('# Rit & Tank 15.00', content)
     
     def test_changelog_has_7_00_section(self):
         changelog_path = Path(__file__).with_name('CHANGELOG.md')
@@ -146,6 +146,28 @@ class AddressCorrectionTests(unittest.TestCase):
         self.assertEqual(int(corrected['destination_manually_corrected']), 1)
         self.assertEqual(float(corrected['corrected_destination_latitude']), 52.2)
         self.assertEqual(float(corrected['corrected_destination_longitude']), 5.2)
+
+    def test_route_correction_uses_effective_origin_and_preserves_original_place(self):
+        """A->B, A->C, D->B and D->C retain the original origin separately."""
+        origin_a = self._add_known_place('Vertrek A', 51.0, 4.0)
+        arrival = app.create_assistant_arrival(
+            origin_place_id=origin_a, destination_place_id=None,
+            lat=52.0, lon=5.0, accuracy=10, departure_at=None,
+            destination_label='Bestemming B',
+        )
+        arrival_id = int(arrival['id'])
+        with patch.object(app, 'get_route_distance', return_value={'type': 'route', 'distance_m': 2500}) as route:
+            corrected = app.correct_assistant_arrival_route(arrival_id, {
+                'origin': {'latitude': 53.0, 'longitude': 6.0, 'address': 'Vertrek D'},
+                'destination': {'latitude': 54.0, 'longitude': 7.0, 'address': 'Bestemming C'},
+            })
+        self.assertEqual((route.call_args.args[0], route.call_args.args[1]), (53.0, 6.0))
+        self.assertEqual((route.call_args.args[2], route.call_args.args[3]), (54.0, 7.0))
+        self.assertEqual(int(corrected['origin_manually_corrected']), 1)
+        self.assertEqual(int(corrected['destination_manually_corrected']), 1)
+        self.assertEqual(float(corrected['corrected_origin_latitude']), 53.0)
+        self.assertEqual(float(corrected['corrected_destination_latitude']), 54.0)
+        self.assertEqual(app.known_place_by_id(origin_a)['name'], 'Vertrek A')
 
     def test_correction_routes_from_original_departure_never_from_old_destination(self):
         """
