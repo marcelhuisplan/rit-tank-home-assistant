@@ -4,6 +4,11 @@
 - Bekende plekken bewaren en tonen nu het volledige gekozen adres; oudere records blijven compatibel.
 - Volgende locatie ondersteunt adres dicteren via de bestaande adreszoeker; gesproken tekst wordt eerst gevalideerd.
 - Een actieve rit toont live GPS-status ongeveer iedere 5 seconden, zonder de volledige dashboardrefresh te versnellen.
+- GPS-only bewaart voortaan expliciet de gekozen GPS-coördinaten van de bekende plek.
+- Een adresvoorstel voor een legacy bekende plek is selecteerbaar en wordt pas na opslaan persistent.
+- De fiscale PDF exporteert iedere daadwerkelijke etappe als eigen regel; tussenstops verdwijnen niet meer.
+- PDF-soortbadges Privé, Zakelijk en Privé/Zakelijk hebben exact dezelfde breedte en bedekken de volledige tekst.
+- PDF-totalen blijven uit één bron komen, dus het opsplitsen van regels veroorzaakt geen dubbeltelling.
 
 ## 17.00
 - Controleren bevat nu vertrek- én aankomstadrescontrole.

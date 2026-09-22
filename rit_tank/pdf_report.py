@@ -182,6 +182,31 @@ class _SimplePdfPage:
         return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" role="img" aria-label="Pagina rittenregistratie" style="font-family:Arial,Helvetica,sans-serif;background:white">' + markup + '</svg>'
 
 
+BADGE_LABELS = ('Privé', 'Zakelijk', 'Privé/Zakelijk')
+BADGE_TEXT_SIZE = 8.5
+BADGE_TEXT_OFFSET = 26.0
+BADGE_RIGHT_PADDING = 8.0
+BADGE_HEIGHT = 16.0
+BADGE_RADIUS = 8.0
+BADGE_X = 402.0
+BADGE_WIDTH = round(
+    max(_SimplePdfPage.text_width(label, BADGE_TEXT_SIZE) for label in BADGE_LABELS)
+    + BADGE_TEXT_OFFSET + BADGE_RIGHT_PADDING,
+    1,
+)
+ADDRESS_X = 202.0
+ADDRESS_MAX_WIDTH = BADGE_X - 8 - ADDRESS_X
+ROW_HEIGHT = 43.0
+
+
+def _fit_text(value: Any, width: float, size: float = 9.5) -> str:
+    """Clip text so it stays inside the available column width."""
+    text = _pdf_text(value)
+    if _SimplePdfPage.text_width(text, size) <= width:
+        return text
+    return text[:max(1, int(width / (size * 0.52)))]
+
+
 def _build_pdf(pages: list[_SimplePdfPage], images: dict[str, tuple[int, int, bytes]] | None = None) -> bytes:
     """Minimal dependency-free PDF writer using core Helvetica fonts and JPEGs."""
     objects: dict[int, bytes] = {}
@@ -314,8 +339,6 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     TOP_MARGIN_PT = TOP_MARGIN_MM * MM_TO_PT
     PAGE_HEIGHT_PT = 842
     HEADER_TOP_Y = PAGE_HEIGHT_PT - TOP_MARGIN_PT
-
-    BADGE_WIDTH = 65
 
     palette = {
         'text': (12, 15, 18),
@@ -483,6 +506,29 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             return 'Privé', palette['blue']
         return 'Zakelijk', palette['teal']
 
+    def segment_badge(trip: dict[str, Any], destination: dict[str, Any]) -> tuple[str, tuple[int, int, int]]:
+        """Badge for one leg; only an unclassified leg falls back to the trip classification."""
+        segment_type = str(destination.get('segment_trip_type') or '')
+        if segment_type == 'business':
+            return 'Zakelijk', palette['teal']
+        if segment_type == 'private':
+            return 'Privé', palette['blue']
+        return trip_badge_text(trip)
+
+    def trip_segment_rows(trip: dict[str, Any], stops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Every destination stop after the first becomes its own exported leg."""
+        if len(stops) < 2:
+            label, color = trip_badge_text(trip)
+            return [{'origin': stops[0], 'destination': stops[0], 'km': trip.get('km'),
+                     'label': label, 'color': color}]
+        rows = []
+        for idx in range(1, len(stops)):
+            destination = stops[idx]
+            label, color = segment_badge(trip, destination)
+            rows.append({'origin': stops[idx - 1], 'destination': destination,
+                         'km': destination.get('segment_km'), 'label': label, 'color': color})
+        return rows
+
     def draw_table_header(page: _SimplePdfPage, x1: float, y_top: float) -> float:
         """Draw table header and return the y position after header."""
         header_h = 22
@@ -492,33 +538,33 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         header_text_y = y_top - 15
         page.text('#', 60, header_text_y, 9.5, bold=True, rgb=palette['text'])
         page.text('Datum', 90, header_text_y, 9.5, bold=True, rgb=palette['text'])
-        page.text('Vertrek → Aankomst (adres)', 202, header_text_y, 9.5, bold=True, rgb=palette['text'])
-        page.text('Soort', 432, header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('Vertrek → Aankomst (adres)', ADDRESS_X, header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('Soort', BADGE_X, header_text_y, 9.5, bold=True, rgb=palette['text'])
         page.text('Afstand', 557 - _SimplePdfPage.text_width('Afstand', 9.5, bold=True), header_text_y, 9.5, bold=True, rgb=palette['text'])
         return y_top - header_h - 1
 
-    def draw_table_row(page: _SimplePdfPage, y_top: float, trip_num: int, trip: dict[str, Any],
-                       stops: list[dict[str, Any]]) -> float:
-        """Draw a single table row. Returns the next available y position."""
-        row_h = 43
+    def draw_table_row(page: _SimplePdfPage, y_top: float, row_num: int, row: dict[str, Any]) -> float:
+        """Draw a single leg row. Returns the next available y position."""
+        row_h = ROW_HEIGHT
         x1, x2 = 36, 559
+        origin, destination = row['origin'], row['destination']
 
-        start_dt = parse_dt(stops[0]['created_at'])
-        end_dt = parse_dt(stops[-1]['created_at']) if len(stops) > 1 else start_dt
+        start_dt = parse_dt(origin['created_at'])
+        end_dt = parse_dt(destination['created_at'])
 
-        start_addr = (stops[0].get('location_address') or stops[0].get('location_label') or
-                     stops[0].get('manual_label') or 'Locatie onbekend')
-        end_addr = (stops[-1].get('location_address') or stops[-1].get('location_label') or
-                   stops[-1].get('manual_label') or 'Locatie onbekend')
+        start_addr = (origin.get('location_address') or origin.get('location_label') or
+                      origin.get('manual_label') or 'Locatie onbekend')
+        end_addr = (destination.get('location_address') or destination.get('location_label') or
+                    destination.get('manual_label') or 'Locatie onbekend')
 
-        trip_label, trip_color = trip_badge_text(trip)
-        trip_km = format_dutch_km(trip.get('km'))
+        trip_label, trip_color = row['label'], row['color']
+        trip_km = format_dutch_km(row['km'])
 
         page.line(x1, y_top, x2, y_top, 0.2, rgb=tint(palette['line'], 0.85))
 
         mid_y = y_top - row_h / 2
 
-        page.text(str(trip_num), 60, mid_y + 2.5, 9, rgb=palette['text'])
+        page.text(str(row_num), 60, mid_y + 2.5, 9, rgb=palette['text'])
 
         date_text = format_dutch_date(start_dt)
         time_text = f'{format_dutch_time(start_dt)} \u2013 {format_dutch_time(end_dt)}'
@@ -526,15 +572,15 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         page.text(time_text, 90, y_top - 30, 8, rgb=palette['muted'])
 
         page.circle(182, y_top - 10, 4.3, rgb=(76, 175, 80))
-        page.text(start_addr[:44], 202, y_top - 13, 9.5, rgb=palette['text'])
+        page.text(_fit_text(start_addr, ADDRESS_MAX_WIDTH), ADDRESS_X, y_top - 13, 9.5, rgb=palette['text'])
 
         page.circle(182, y_top - 26, 4.3, rgb=(244, 67, 54))
-        page.text(end_addr[:44], 202, y_top - 29, 9.5, rgb=palette['text'])
+        page.text(_fit_text(end_addr, ADDRESS_MAX_WIDTH), ADDRESS_X, y_top - 29, 9.5, rgb=palette['text'])
 
-        badge_w = BADGE_WIDTH
-        page.rounded_rect(423, mid_y - 8, badge_w, 16, radius=8, rgb=tint(trip_color, 0.87))
-        page.circle(432, mid_y, 3.4, rgb=trip_color)
-        page.text(trip_label, 449, mid_y - 2.9, 8.5, rgb=trip_color)
+        page.rounded_rect(BADGE_X, mid_y - BADGE_HEIGHT / 2, BADGE_WIDTH, BADGE_HEIGHT,
+                          radius=BADGE_RADIUS, rgb=tint(trip_color, 0.87))
+        page.circle(BADGE_X + 9, mid_y, 3.4, rgb=trip_color)
+        page.text(trip_label, BADGE_X + BADGE_TEXT_OFFSET, mid_y - 2.9, BADGE_TEXT_SIZE, rgb=trip_color)
 
         km_text = trip_km + ' km'
         km_w = _SimplePdfPage.text_width(km_text, 9.5, bold=True)
@@ -554,23 +600,20 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         table_y = page.y
         page.y = draw_table_header(page, 36, table_y)
 
-        for trip_num, trip in enumerate(trips, start=1):
+        row_num = 0
+        for trip in trips:
             stops = trip.get('stops') or []
             if not stops:
                 continue
 
-            if page.need(22):
-                total_pages = len(pages)
-                for n, pg in enumerate(pages, start=1):
-                    pg.line(36, 34, 559, 34, 0.45, rgb=tint(palette['line'], 0.65))
-                    pg.text(footer_company, 36, 20, 7.4, bold=True, rgb=palette['muted'])
-                    pg.text(footer_period_label, 262, 20, 7.4, rgb=palette['muted'])
-                    pg.text(f'Pagina {n} van {total_pages}', 475, 20, 7.4, rgb=palette['muted'])
+            for row in trip_segment_rows(trip, stops):
+                row_num += 1
 
-                page = new_page(compact=True)
-                page.y = draw_table_header(page, 36, page.y)
+                if page.need(ROW_HEIGHT + 3):
+                    page = new_page(compact=True)
+                    page.y = draw_table_header(page, 36, page.y)
 
-            page.y = draw_table_row(page, page.y, trip_num, trip, stops)
+                page.y = draw_table_row(page, page.y, row_num, row)
 
     total_pages = len(pages)
     for n, pg in enumerate(pages, start=1):
