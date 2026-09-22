@@ -1,5 +1,12 @@
 # Changelog
 
+## 16.00
+- Mobiele bottom-sheet modals scrollen nu zelfstandig.
+- De achtergrondpagina wordt vergrendeld zolang een modal open is.
+- iPhone safe-area en dynamic viewport worden ondersteund.
+- De scrollpositie van de onderliggende pagina wordt na sluiten hersteld.
+- Geen functionele wijzigingen aan ritregistratie.
+
 ## 15.00
 - Pushmeldingen openen voortaan direct `https://rit.huisplanadvies.nl`.
 - Te controleren is volledig mobiel responsive met een vaste dismiss-knop.

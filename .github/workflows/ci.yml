@@ -29,7 +29,7 @@ jobs:
         run: python -m py_compile rit_tank/app.py rit_tank/pdf_report.py rit_tank/google_places.py rit_tank/routing.py rit_tank/home_assistant.py rit_tank/trips.py rit_tank/assistant.py
       - name: Smoke-test runtime imports
         working-directory: rit_tank
-        run: python -c "import app, pdf_report, google_places, routing, home_assistant, trips, assistant; assert app.APP_VERSION == '15.00'; print('runtime imports OK')"
+        run: python -c "import app, pdf_report, google_places, routing, home_assistant, trips, assistant; assert app.APP_VERSION == '16.00'; print('runtime imports OK')"
       - name: Check whitespace errors
         run: git diff --check HEAD^ HEAD
 
@@ -41,10 +41,10 @@ jobs:
         with:
           fetch-depth: 2
       - name: Build production image
-        run: docker build --build-arg BUILD_VERSION=15.00 --build-arg BUILD_ARCH=amd64 -t rit-tank-ci ./rit_tank
+        run: docker build --build-arg BUILD_VERSION=16.00 --build-arg BUILD_ARCH=amd64 -t rit-tank-ci ./rit_tank
       - name: Verify packaged runtime files
         run: docker run --rm --entrypoint /bin/sh rit-tank-ci -c 'test -f /app/app.py && test -f /app/pdf_report.py && test -f /app/google_places.py && test -f /app/routing.py && test -f /app/home_assistant.py && test -f /app/trips.py && test -f /app/assistant.py && test -f /app/run.sh'
       - name: Smoke-test runtime imports in production image
-        run: docker run --rm --entrypoint python rit-tank-ci -c "import app, pdf_report, google_places, routing, home_assistant, trips, assistant; assert app.APP_VERSION == '15.00'; print('runtime imports OK')"
+        run: docker run --rm --entrypoint python rit-tank-ci -c "import app, pdf_report, google_places, routing, home_assistant, trips, assistant; assert app.APP_VERSION == '16.00'; print('runtime imports OK')"
       - name: Check whitespace errors
         run: git diff --check HEAD^ HEAD
