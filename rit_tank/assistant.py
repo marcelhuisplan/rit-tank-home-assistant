@@ -480,7 +480,13 @@ def province_allowed_for_push(lat: float, lon: float, *, dependencies: Mapping[s
     return (allowed, province, geo)
 
 def trip_distance_tracking_public(*, dependencies: Mapping[str, Any]) -> dict[str, Any]:
-    """Publieke schatting voor de actieve rit, gebaseerd op achtergrond-GPS."""
+    """Publieke schatting voor de actieve rit, gebaseerd op achtergrond-GPS.
+    
+    Release 14.00: 
+    - Altijd tellerstandsuggestie berekenen wanneer base_odometer geldig is en tracked_m > 0
+    - Onvolledige GPS toont waarschuwing maar behoudt suggestie
+    - Weinig samples: suggestie zichtbaar maar onbetrouwbaar gemarkeerd
+    """
     trip = _provider(dependencies, 'active_business_trip')()
     if not trip or not trip.get('stops'):
         _provider(dependencies, 'diagnostic_event')('geen_actieve_rit_met_startpunt')
@@ -492,8 +498,39 @@ def trip_distance_tracking_public(*, dependencies: Mapping[str, Any]) -> dict[st
     tracked_m = float(state.get('segment_m') or 0.0) if same_trip and same_stop else 0.0
     base = float(last['odometer'])
     calibration = _provider(dependencies, 'distance_calibration')()
-    suggested = round(base + tracked_m / 1000.0 * calibration['factor'])
-    return {'active': True, 'trip_id': int(trip['id']), 'stop_id': int(last.get('id') or 0), 'base_odometer': base, 'stop_prompt': state.get('stop_prompt') if same_trip and same_stop else None, 'calibration': calibration, 'tracked_km': round(tracked_m / 1000.0, 1), 'suggested_odometer': suggested if not state.get('incomplete') and same_trip and same_stop and (int(state.get('sample_count') or 0) >= 3) else None, 'sample_count': int(state.get('sample_count') or 0) if same_trip and same_stop else 0, 'last_update': state.get('last_update') if same_trip and same_stop else None}
+    
+    # 14.00: Altijd suggestie berekenen als base geldig is en tracked_m > 0
+    suggested = None
+    suggestion_reliable = True
+    distance_warning = None
+    
+    if same_trip and same_stop and tracked_m > 0:
+        suggested = round(base + tracked_m / 1000.0 * calibration['factor'])
+        
+        # Markeer als onbetrouwbaar wanneer:
+        # - incomplete GPS;
+        # - sample_count < 3
+        if state.get('incomplete'):
+            suggestion_reliable = False
+            distance_warning = 'GPS-route mogelijk onderbroken — controleer de tellerstand.'
+        elif int(state.get('sample_count') or 0) < 3:
+            suggestion_reliable = False
+            distance_warning = 'Onvoldoende GPS-samples — gelieve te controleren.'
+    
+    return {
+        'active': True,
+        'trip_id': int(trip['id']),
+        'stop_id': int(last.get('id') or 0),
+        'base_odometer': base,
+        'stop_prompt': state.get('stop_prompt') if same_trip and same_stop else None,
+        'calibration': calibration,
+        'tracked_km': round(tracked_m / 1000.0, 1),
+        'suggested_odometer': suggested,
+        'suggestion_reliable': suggestion_reliable,
+        'distance_warning': distance_warning,
+        'sample_count': int(state.get('sample_count') or 0) if same_trip and same_stop else 0,
+        'last_update': state.get('last_update') if same_trip and same_stop else None
+    }
 
 def reset_trip_distance_tracking(trip: dict[str, Any] | None=None, *, dependencies: Mapping[str, Any]) -> None:
     if not trip or not trip.get('stops'):

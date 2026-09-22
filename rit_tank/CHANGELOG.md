@@ -1,5 +1,19 @@
 # Changelog
 
+## 14.00
+- Één live GPS-afstand weergegeven tijdens actieve rit; geen concurrerende draft-afstanden meer.
+- Tellerstandsuggestie altijd berekend wanneer geldige basisstand en tracked_m > 0 beschikbaar zijn.
+- Incompleet GPS toont waarschuwing maar behoudt bruikbare suggestie.
+- Weinig GPS-samples: suggestie zichtbaar maar onbetrouwbaar gemarkeerd.
+- Volgend adres / Rit afsluiten halen meeste recente GPS-status op vóór modalvulling.
+- Bekende plek: altijd "Gebruik huidige locatie" knop beschikbaar.
+- Na huidige locatie: maximaal 10 nabijgelegen adressen gesuggereerd.
+- Geselecteerd adres bepaalt coördinaten, niet ruwe telefoonpositie.
+- Handmatige adreszoekfunctie wanneer juiste adres niet in 10 gevonden.
+- Handmatig zoeken werkt ook zonder beschikbare GPS.
+- Expliciete GPS-only fallback als niet-automatische laatste optie.
+- Bestaande plaats wijzigt alleen locatie na expliciete gebruikerskeuze.
+
 ## 12.00
 - GitHub Actions CI toegevoegd voor pull requests, pushes naar main en handmatige runs.
 - De volledige Python-testsuite draait automatisch, inclusief compile- en importchecks.
