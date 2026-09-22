@@ -1,5 +1,14 @@
 # Changelog
 
+## 19.00
+- De fiscale PDF toont volledige adressen voor bekende plekken, waaronder Thuis en Ouders.
+- Labels van bekende plekken worden niet meer als primair PDF-adres gebruikt wanneer een volledig adres beschikbaar is.
+- Alle PDF-pagina's gebruiken dezelfde headerpositie en bovenmarge.
+- Het Huisplan-logo staat subtiel hoger, met behoud van de exacte beeldverhouding.
+- De per-etappe-export en uniforme typebadges Privé, Zakelijk en Privé/Zakelijk blijven behouden.
+- Versietests controleren de actuele release 19.00.
+- CI controleert release 19.00 tijdens runtime-imports en de productie-Dockerbuild.
+
 ## 18.00
 - Bekende plekken bewaren en tonen nu het volledige gekozen adres; oudere records blijven compatibel.
 - Volgende locatie ondersteunt adres dicteren via de bestaande adreszoeker; gesproken tekst wordt eerst gevalideerd.

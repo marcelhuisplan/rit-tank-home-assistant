@@ -370,21 +370,14 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     pages: list[_SimplePdfPage] = []
 
     def draw_header(page: _SimplePdfPage, compact: bool = False) -> None:
-        if not compact:
-            title_y = HEADER_TOP_Y
-            subtitle_y = HEADER_TOP_Y - 18
-            logo_y = HEADER_TOP_Y - 43
-            header_line_y = HEADER_TOP_Y - 52
-            page_y_after = HEADER_TOP_Y - 72
-        else:
-            title_y = 691
-            subtitle_y = 672
-            logo_y = 653
-            header_line_y = 642
-            page_y_after = 624
-        logo_w = 46 if not compact else 40
-        logo_h = 42 if not compact else 36
-        logo_x = 489 if not compact else 515
+        title_y = HEADER_TOP_Y
+        subtitle_y = HEADER_TOP_Y - 18
+        logo_w = 46
+        logo_h = logo_w * 827 / 900
+        logo_x = 489
+        logo_y = HEADER_TOP_Y - 40
+        header_line_y = HEADER_TOP_Y - 45
+        page_y_after = HEADER_TOP_Y - 63
         page.text('Rittenregistratie', 36, title_y, 26 if not compact else 15, bold=True, rgb=palette['text'])
         page.text('Fiscale kilometeradministratie', 36, subtitle_y, 9.3 if not compact else 8.4, rgb=palette['muted'])
         if 'ImLogo' in pdf_images:

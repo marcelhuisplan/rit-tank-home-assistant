@@ -37,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '18.00'
+APP_VERSION = '19.00'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -646,10 +646,18 @@ def trip_location_details(stop: dict[str, Any], resolve: bool = True) -> dict[st
     if address:
         name = str(kp.get('name') or '') if kp else ''
         label = (name + ' - ' if name else '') + address
-        return {'label': label, 'address': label, 'google_maps_uri': f'https://www.google.com/maps/search/?api=1&query={lat},{lon}'}
+        return {'label': label, 'address': address, 'google_maps_uri': f'https://www.google.com/maps/search/?api=1&query={lat},{lon}'}
     if kp:
-        maps = f'https://www.google.com/maps/search/?api=1&query={lat},{lon}' if lat is not None and lon is not None else ''
-        return {'label': str(kp.get('name') or 'Bekende plek'), 'address': str(kp.get('name') or ''), 'google_maps_uri': maps}
+        name = str(kp.get('name') or 'Bekende plek').strip()
+        known_address = str(kp.get('address') or '').strip()
+        label = f'{name} - {known_address}' if known_address else name
+        if lat is not None and lon is not None:
+            maps = f'https://www.google.com/maps/search/?api=1&query={lat},{lon}'
+        elif known_address:
+            maps = 'https://www.google.com/maps/search/?api=1&query=' + quote(known_address)
+        else:
+            maps = ''
+        return {'label': label, 'address': known_address or name, 'google_maps_uri': maps}
     place_id = str(stop.get('place_id') or '').strip()
     if place_id and resolve:
         details = google_place_details(place_id)
