@@ -481,8 +481,8 @@ def province_allowed_for_push(lat: float, lon: float, *, dependencies: Mapping[s
 
 def trip_distance_tracking_public(*, dependencies: Mapping[str, Any]) -> dict[str, Any]:
     """Publieke schatting voor de actieve rit, gebaseerd op achtergrond-GPS.
-    
-    Release 14.00: 
+
+    Release 14.00:
     - Altijd tellerstandsuggestie berekenen wanneer base_odometer geldig is en tracked_m > 0
     - Onvolledige GPS toont waarschuwing maar behoudt suggestie
     - Weinig samples: suggestie zichtbaar maar onbetrouwbaar gemarkeerd
@@ -498,15 +498,15 @@ def trip_distance_tracking_public(*, dependencies: Mapping[str, Any]) -> dict[st
     tracked_m = float(state.get('segment_m') or 0.0) if same_trip and same_stop else 0.0
     base = float(last['odometer'])
     calibration = _provider(dependencies, 'distance_calibration')()
-    
+
     # 14.00: Altijd suggestie berekenen als base geldig is en tracked_m > 0
     suggested = None
     suggestion_reliable = True
     distance_warning = None
-    
+
     if same_trip and same_stop and tracked_m > 0:
         suggested = round(base + tracked_m / 1000.0 * calibration['factor'])
-        
+
         # Markeer als onbetrouwbaar wanneer:
         # - incomplete GPS;
         # - sample_count < 3
@@ -516,7 +516,7 @@ def trip_distance_tracking_public(*, dependencies: Mapping[str, Any]) -> dict[st
         elif int(state.get('sample_count') or 0) < 3:
             suggestion_reliable = False
             distance_warning = 'Onvoldoende GPS-samples — gelieve te controleren.'
-    
+
     return {
         'active': True,
         'trip_id': int(trip['id']),
