@@ -25,19 +25,19 @@ class Version700Tests(unittest.TestCase):
     """Test release 7.00 version consistency."""
     
     def test_app_version_is_7_00(self):
-        self.assertEqual(app.APP_VERSION, '11.00')
+        self.assertEqual(app.APP_VERSION, '12.00')
     
     def test_config_yaml_version_is_7_00(self):
         config_path = Path(__file__).with_name('config.yaml')
         if config_path.exists():
             content = config_path.read_text()
-            self.assertIn("version: '11.00'", content)
+            self.assertIn("version: '12.00'", content)
     
     def test_readme_title_has_7_00(self):
         readme_path = Path(__file__).with_name('README.md')
         if readme_path.exists():
             content = readme_path.read_text()
-            self.assertIn('# Rit & Tank 11.00', content)
+            self.assertIn('# Rit & Tank 12.00', content)
     
     def test_changelog_has_7_00_section(self):
         changelog_path = Path(__file__).with_name('CHANGELOG.md')
