@@ -38,6 +38,37 @@ class KnownPlaceAddressTests(unittest.TestCase):
         }, place['id'])
         self.assertEqual(updated['address'], 'Verenlandweg 4, 7461 AP Rijssen')
 
+    def test_gps_only_new_place_stores_current_position_without_address(self):
+        place = app.save_known_place({
+            'name': 'Nieuwe plek', 'latitude': 52.31554, 'longitude': 6.52766, 'address': '',
+        })
+        self.assertEqual(place['latitude'], 52.31554)
+        self.assertEqual(place['longitude'], 6.52766)
+        self.assertFalse(place['address'])
+
+    def test_gps_only_moves_existing_place_and_clears_address(self):
+        place = app.save_known_place({
+            'name': 'Thuis', 'latitude': 52.0, 'longitude': 6.0,
+            'address': 'Oude straat 1, Rijssen',
+        })
+        updated = app.save_known_place({
+            'name': 'Thuis', 'latitude': 52.31554, 'longitude': 6.52766, 'address': '',
+        }, place['id'])
+        self.assertEqual((updated['latitude'], updated['longitude']), (52.31554, 6.52766))
+        self.assertEqual(updated['address'], '')
+
+    def test_edit_without_location_choice_keeps_coordinates_and_address(self):
+        place = app.save_known_place({
+            'name': 'Thuis', 'latitude': 52.0, 'longitude': 6.0, 'radius_m': 180,
+            'address': 'Verenlandweg 4, 7461 AP Rijssen',
+        })
+        updated = app.save_known_place({
+            'name': 'Thuis hernoemd', 'latitude': 52.0, 'longitude': 6.0, 'radius_m': 250,
+        }, place['id'])
+        self.assertEqual((updated['latitude'], updated['longitude']), (52.0, 6.0))
+        self.assertEqual(updated['address'], 'Verenlandweg 4, 7461 AP Rijssen')
+        self.assertEqual(updated['radius_m'], 250)
+
     def test_gps_only_clears_address_without_changing_coordinates(self):
         place = app.save_known_place({
             'name': 'GPS', 'latitude': 52.0, 'longitude': 6.0,
@@ -57,10 +88,30 @@ class KnownPlaceAddressTests(unittest.TestCase):
 
 
 class Release1800SourceTests(unittest.TestCase):
+    def _function_body(self, signature):
+        start = APP.index(signature)
+        return APP[start:APP.index('\n', start)]
+
     def test_ui_keeps_legacy_and_selected_address_distinct(self):
         self.assertIn('Adres nog niet opgeslagen', APP)
         self.assertIn('address:KNOWN_EDIT_LOCATION?.address||\'\'', APP)
-        self.assertIn('Voorstel (nog niet opgeslagen)', APP)
+        self.assertIn('Voorstel gevonden (nog niet opgeslagen)', APP)
+
+    def test_gps_only_writes_validated_coordinates_to_the_saved_fields(self):
+        body = self._function_body('function useKnownPlaceGpsOnly()')
+        self.assertIn('Number.isFinite(lat)', body)
+        self.assertIn('Number.isFinite(lon)', body)
+        self.assertIn("$('knownLat').value=lat", body)
+        self.assertIn("$('knownLon').value=lon", body)
+        self.assertIn("address:''", body)
+        self.assertIn('Alleen GPS-positie gekozen', body)
+        self.assertIn('GPS-positie: ${fmt(lat,5)} · ${fmt(lon,5)}', body)
+
+    def test_legacy_address_proposal_is_selectable_and_never_auto_saved(self):
+        body = self._function_body('async function editKnownPlace(id)')
+        self.assertIn("renderKnownPlaceCandidates('knownAddressChoices',[candidate])", body)
+        self.assertNotIn('api/known-places', body)
+        self.assertIn('selectKnownPlaceLocation(candidate)', APP)
 
     def test_dictation_searches_before_trip_address_selection(self):
         self.assertIn("startAddressDictation('tripManualAddress',searchTripManualAddress)", APP)
