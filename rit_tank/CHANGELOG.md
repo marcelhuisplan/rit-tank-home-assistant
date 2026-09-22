@@ -1,5 +1,12 @@
 # Changelog
 
+## 12.00
+- GitHub Actions CI toegevoegd voor pull requests, pushes naar main en handmatige runs.
+- De volledige Python-testsuite draait automatisch, inclusief compile- en importchecks.
+- De productie-Dockerfile wordt daadwerkelijk gebouwd en de gebouwde image wordt gecontroleerd op alle runtime-modules.
+- Runtime imports worden vanuit de gebouwde image getest om herhaling van de packagingfout uit de 10.00-modularisatie te voorkomen.
+- Geen functionele wijzigingen aan Rit & Tank.
+
 ## 11.00
 - Home Assistant Docker-image bevat nu alle in 10.00 geëxtraheerde runtime-modules.
 - Hierdoor kan app.py de nieuwe modules tijdens add-on startup importeren.
