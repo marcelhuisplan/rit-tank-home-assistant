@@ -24,20 +24,20 @@ spec.loader.exec_module(app)
 class Version700Tests(unittest.TestCase):
     """Test release 7.00 version consistency."""
     
-    def test_app_version_is_15_00(self):
-        self.assertEqual(app.APP_VERSION, '15.00')
+    def test_app_version_is_16_00(self):
+        self.assertEqual(app.APP_VERSION, '16.00')
     
-    def test_config_yaml_version_is_15_00(self):
+    def test_config_yaml_version_is_16_00(self):
         config_path = Path(__file__).with_name('config.yaml')
         if config_path.exists():
             content = config_path.read_text()
-            self.assertIn("version: '15.00'", content)
+            self.assertIn("version: '16.00'", content)
     
-    def test_readme_title_has_15_00(self):
+    def test_readme_title_has_16_00(self):
         readme_path = Path(__file__).with_name('README.md')
         if readme_path.exists():
             content = readme_path.read_text()
-            self.assertIn('# Rit & Tank 15.00', content)
+            self.assertIn('# Rit & Tank 16.00', content)
     
     def test_changelog_has_7_00_section(self):
         changelog_path = Path(__file__).with_name('CHANGELOG.md')
