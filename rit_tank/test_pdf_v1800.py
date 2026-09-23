@@ -6,6 +6,8 @@ from unittest.mock import patch
 from test_v44 import app
 from pdf_report import (
     ADDRESS_MAX_WIDTH,
+    ADDRESS_X,
+    ODOMETER_X,
     BADGE_HEIGHT,
     BADGE_LABELS,
     BADGE_RADIUS,
@@ -15,6 +17,7 @@ from pdf_report import (
     BADGE_WIDTH,
     BADGE_X,
     _SimplePdfPage,
+    _table_text_width,
 )
 
 MULTI_STOP = (
@@ -140,11 +143,11 @@ class PdfBadgeGeometryTests(unittest.TestCase):
         self.assertLessEqual(text_end, BADGE_X + BADGE_WIDTH - BADGE_RIGHT_PADDING + 0.05)
 
     def test_badge_does_not_overlap_distance_column(self):
-        widest_km = _SimplePdfPage.text_width('1234,5 km', 9.5, bold=True)
+        widest_km = _table_text_width('1234,5 km', 9.5, bold=True)
         self.assertLess(BADGE_X + BADGE_WIDTH, 557 - widest_km)
 
     def test_address_column_stops_before_badge(self):
-        self.assertLessEqual(ADDRESS_MAX_WIDTH, BADGE_X - 202)
+        self.assertLess(ADDRESS_X + ADDRESS_MAX_WIDTH, ODOMETER_X)
 
     def test_all_badges_share_identical_geometry(self):
         fixtures = [MULTI_STOP, UNCLASSIFIED_MIXED]

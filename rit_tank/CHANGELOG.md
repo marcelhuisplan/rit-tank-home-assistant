@@ -1,5 +1,14 @@
 # Changelog
 
+## 21.00
+- De fiscale rittenregistratie toont per vertrek- en aankomstadres de opgeslagen tellerstand.
+- De nieuwe kolom Tellerstand gebruikt de echte `trip_stops.odometer`-waarden.
+- Een ontbrekende tellerstand wordt als "—" weergegeven.
+- De PDF toont uitsluitend volledige fysieke adressen en geen bekende-pleklabels.
+- Een ontbrekend volledig adres wordt expliciet "Adres ontbreekt".
+- De etappeafstand blijft los van de weergegeven tellerstanden.
+- Lange adressen worden zonder overlap afgebroken over meerdere regels.
+
 ## 20.00
 - Interne verticale positionering (padding/uitlijning) van de bovenste metadata-tabel (Kalenderjaar, Rapportperiode, Bestuurder, Auto, Kenteken, Gegenereerd op) verfijnd; iconen en labels raken niet langer de celrand.
 - Alle 6 metadata-cellen gebruiken nu identieke gedeelde padding-constanten voor icoon-, label-, waarde- en secundaire-regelpositionering.
