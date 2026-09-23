@@ -279,10 +279,10 @@ class OdometerGapTests(unittest.TestCase):
         # Verify both trips exist and have correct odometers
         trips_raw = list(app.business_trips_raw())
         self.assertEqual(len(trips_raw), 2)
-        
+
         trip_a, stops_a = trips_raw[0]
         trip_b, stops_b = trips_raw[1]
-        
+
         self.assertEqual(float(stops_a[-1]['odometer']), 90020)
         self.assertEqual(float(stops_b[0]['odometer']), 90030)
         self.assertEqual(trip_a['trip_type'], 'business')
