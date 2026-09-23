@@ -7,6 +7,7 @@ import re
 import textwrap
 import unicodedata
 from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -201,6 +202,7 @@ ADDRESS_X = 157.0
 ADDRESS_MAX_WIDTH = 181.0
 ODOMETER_X = 347.0
 ODOMETER_RIGHT = 403.0
+REIMBURSEMENT_RIGHT = 495.0
 ROW_HEIGHT = 43.0
 
 # Shared vertical layout for the top metadata table so all 6 cells (icon, label,
@@ -313,6 +315,13 @@ def _format_odometer(value: Any) -> str:
     return f'{math.floor(number + 0.5):,}'.replace(',', '.') + ' km'
 
 
+def _decimal_or_zero(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value or 0))
+    except Exception:
+        return Decimal('0')
+
+
 def _build_pdf(pages: list[_SimplePdfPage], images: dict[str, tuple[int, int, bytes]] | None = None) -> bytes:
     """Minimal dependency-free PDF writer using core Helvetica fonts and JPEGs."""
     objects: dict[int, bytes] = {}
@@ -375,6 +384,11 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     parse_dt = _provider(deps, 'parse_dt')
     period_label = _provider(deps, 'period_label')
     settings = get_settings()
+    try:
+        km_rate = float(settings.get('km_reimbursement_rate') or 0.25)
+    except (TypeError, ValueError):
+        km_rate = 0.25
+    km_rate_decimal = _decimal_or_zero(km_rate)
     ref = now_local()
     try:
         if year is not None:
@@ -392,6 +406,8 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     selection_start, selection_end = period_bounds(safe_period, ref)
     trips = []
     for trip, stops in business_trips_raw():
+        if trip.get('trip_type') != 'business':
+            continue
         if stops and (period == 'all' or selection_start <= parse_dt(stops[0]['created_at']) < selection_end):
             enriched = enrich_business_trip(trip, stops, resolve=False)
             # Select from the stored stop, before UI enrichment can replace its address.
@@ -422,16 +438,17 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             filename_label = safe_period
         period_end = period_end_exclusive - timedelta(days=1)
 
-    if period_start and period_end:
-        year_label = str(period_start.year) if period_start.year == period_end.year else f'{period_start.year}-{period_end.year}'
-        date_range = f'{period_start:%d-%m-%Y} - {period_end:%d-%m-%Y}'
-    else:
-        year_label = '-'
-        date_range = 'Geen geregistreerde datums'
-
-    total_km = round(sum(float(t.get('km') or 0) for t in trips), 1)
-    business_km = round(sum(float(t.get('business_km') or 0) for t in trips), 1)
-    private_km = round(sum(float(t.get('private_km') or 0) for t in trips), 1)
+    total_km = round(sum(float(t.get('km') or 0) for t in trips if t.get('trip_type') == 'business'), 1)
+    business_km = total_km
+    total_reimbursement = sum(
+        (
+            (_decimal_or_zero(t.get('km')) * km_rate_decimal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            for t in trips
+            if t.get('trip_type') == 'business'
+        ),
+        Decimal('0.00'),
+    )
+    trip_count = len(trips)
 
     company_name = str(settings.get('company_name') or 'Huisplan BV').strip() or 'Huisplan BV'
     footer_company = 'Huisplan BV'
@@ -469,6 +486,9 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             return f'{int(round(number))}'
         return f'{number:.1f}'
 
+    def calculate_reimbursement(value: Any) -> Decimal:
+        return (_decimal_or_zero(value) * km_rate_decimal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
     pdf_images: dict[str, tuple[int, int, bytes]] = {}
     logo_path = Path(__file__).with_name('huisplan-logo.jpg')
     try:
@@ -488,8 +508,8 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         logo_y = HEADER_TOP_Y - 40
         header_line_y = HEADER_TOP_Y - 45
         page_y_after = HEADER_TOP_Y - 63
-        page.text('Rittenregistratie', 36, title_y, 26 if not compact else 15, bold=True, rgb=palette['text'])
-        page.text('Fiscale kilometeradministratie', 36, subtitle_y, 9.3 if not compact else 8.4, rgb=palette['muted'])
+        page.text('Zakelijke kilometerdeclaratie', 36, title_y, 26 if not compact else 15, bold=True, rgb=palette['text'])
+        page.text('Overzicht van zakelijke kilometers met privéauto', 36, subtitle_y, 9.3 if not compact else 8.4, rgb=palette['muted'])
         if 'ImLogo' in pdf_images:
             page.image('ImLogo', logo_x, logo_y, logo_w, logo_h)
         page.line(36, header_line_y, 559, header_line_y, 0.8, rgb=tint(palette['line'], 0.35))
@@ -518,6 +538,9 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             page.circle(x + 4.5, y - 4, 4.2, rgb=c)
             page.line(x + 4.5, y - 4, x + 4.5, y - 1.3, 0.8, rgb=(255, 255, 255))
             page.line(x + 4.5, y - 4, x + 6.6, y - 4, 0.8, rgb=(255, 255, 255))
+        elif kind == 'money':
+            page.circle(x + 4.5, y - 4, 4.2, rgb=c)
+            page.text('€', x + 2.1, y - 6.7, 6.2, bold=True, rgb=(255, 255, 255))
 
     def draw_report_table(page: _SimplePdfPage) -> None:
         table_top = page.y
@@ -529,8 +552,8 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             page.line(36, y, 559, y, 0.5, rgb=tint(palette['line'], 0.72))
         page.line(292, table_top, 292, table_top - row_h * 3, 0.5, rgb=tint(palette['line'], 0.72))
         cells = [
-            (('Kalenderjaar', year_label, 'calendar'), ('Rapportperiode', None, 'calendar')),
-            (('Bestuurder', driver_name, 'person'), ('Auto', vehicle_name, 'car')),
+            (('Kilometervergoeding', reimbursement_rate_label, 'money'), ('Rapportperiode', None, 'calendar')),
+            (('Bestuurder', driver_name, 'person'), ('Privéauto', vehicle_name, 'car')),
             (('Kenteken', license_plate, 'plate'), ('Gegenereerd op', generated_label, 'clock')),
         ]
         for row_idx, (left_cell, right_cell) in enumerate(cells):
@@ -554,15 +577,15 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         width = 165
         gap = 14
         cards = [
-            ('TOTAAL', format_dutch_km(total_km), palette['card2'], None),
-            ('ZAKELIJK', format_dutch_km(business_km), tint(palette['teal'], 0.85), palette['teal']),
-            ('PRIVÉ', format_dutch_km(private_km), tint(palette['blue'], 0.88), palette['blue']),
+            ('TOTAAL ZAKELIJK', f'{format_dutch_km(business_km)} km', palette['card2'], None),
+            ('TOTALE VERGOEDING', format_decimal_currency(total_reimbursement), tint(palette['teal'], 0.85), palette['teal']),
+            ('AANTAL RITTEN', str(trip_count), tint(palette['blue'], 0.88), palette['blue']),
         ]
         for idx, (title, value, bg, bullet) in enumerate(cards):
             x = 36 + idx * (width + gap)
             page.rounded_rect(x, card_y, width, 58, radius=6, rgb=bg)
             label_x = x + 14
-            if title == 'TOTAAL':
+            if idx == 0:
                 page.rect(x + 12, card_y + 36, 9, 11, rgb=tint(palette['muted'], 0.2))
                 page.line(x + 16.5, card_y + 38, x + 16.5, card_y + 45, 0.8, rgb=(255, 255, 255))
                 label_x = x + 26
@@ -570,7 +593,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
                 page.circle(x + 16, card_y + 42.9, 3.6, rgb=bullet)
                 label_x = x + 26
             page.text(title, label_x, card_y + 40, 8.2, bold=True, rgb=palette['muted'])
-            page.text(f'{value} km', x + 14, card_y + 18, 18, bold=True, rgb=palette['text'])
+            page.text(value, x + 14, card_y + 18, 18, bold=True, rgb=palette['text'])
         page.y = card_y - 22
 
     def new_page(*, compact: bool = False, section_label: str | None = None) -> _SimplePdfPage:
@@ -600,6 +623,16 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             formatted = f'{number:.1f}'.replace('.', ',')
         return formatted
 
+    def format_decimal_currency(value: Decimal) -> str:
+        quantized = value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        cents = int((quantized * 100).copy_abs())
+        euros, remainder = divmod(cents, 100)
+        euro_text = f'{euros:,}'.replace(',', '.')
+        prefix = '-€ ' if quantized < 0 else '€ '
+        return f'{prefix}{euro_text},{remainder:02d}'
+
+    reimbursement_rate_label = f'{format_decimal_currency(km_rate_decimal)} per km (ingesteld in de app)'
+
     def trip_badge_text(trip: dict[str, Any]) -> tuple[str, tuple[int, int, int]]:
         has_business = float(trip.get('business_km') or 0) > 0
         has_private = float(trip.get('private_km') or 0) > 0
@@ -621,15 +654,14 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     def trip_segment_rows(trip: dict[str, Any], stops: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Every destination stop after the first becomes its own exported leg."""
         if len(stops) < 2:
-            label, color = trip_badge_text(trip)
             return [{'origin': stops[0], 'destination': stops[0], 'km': trip.get('km'),
-                     'label': label, 'color': color}]
+                     'reimbursement': calculate_reimbursement(trip.get('km'))}]
         rows = []
         for idx in range(1, len(stops)):
             destination = stops[idx]
-            label, color = segment_badge(trip, destination)
             rows.append({'origin': stops[idx - 1], 'destination': destination,
-                         'km': destination.get('segment_km'), 'label': label, 'color': color})
+                         'km': destination.get('segment_km'),
+                         'reimbursement': calculate_reimbursement(destination.get('segment_km'))})
         return rows
 
     def draw_table_header(page: _SimplePdfPage, x1: float, y_top: float) -> float:
@@ -644,7 +676,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         page.text('Datum', 56, header_text_y, 9.5, bold=True, rgb=palette['text'])
         page.text('Vertrek → Aankomst (adres)', ADDRESS_X, header_text_y, 9.5, bold=True, rgb=palette['text'])
         page.text('Tellerstand', ODOMETER_X, header_text_y, 9.5, bold=True, rgb=palette['text'])
-        page.text('Soort', BADGE_X, header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('Vergoeding', REIMBURSEMENT_RIGHT - _table_text_width('Vergoeding', bold=True), header_text_y, 9.5, bold=True, rgb=palette['text'])
         page.text('Afstand', 557 - _table_text_width('Afstand', bold=True), header_text_y, 9.5, bold=True, rgb=palette['text'])
         return y_top - header_h - 1
 
@@ -665,8 +697,8 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         start_dt = parse_dt(origin['created_at'])
         end_dt = parse_dt(destination['created_at'])
 
-        trip_label, trip_color = row['label'], row['color']
         km_text = format_dutch_km(row['km']) + ' km' if row['km'] is not None else '\u2014'
+        reimbursement_text = format_decimal_currency(row['reimbursement'])
 
         page.line(x1, y_top, x2, y_top, 0.2, rgb=tint(palette['line'], 0.85))
 
@@ -693,13 +725,13 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             page.text(odometer, ODOMETER_RIGHT - _table_text_width(odometer), baseline, 9.5,
                       rgb=palette['muted'] if odometer == '\u2014' else palette['text'])
 
-        page.rounded_rect(BADGE_X, mid_y - BADGE_HEIGHT / 2, BADGE_WIDTH, BADGE_HEIGHT,
-                          radius=BADGE_RADIUS, rgb=tint(trip_color, 0.87))
-        page.circle(BADGE_X + 9, mid_y, 3.4, rgb=trip_color)
-        page.text(trip_label, BADGE_X + BADGE_TEXT_OFFSET, mid_y - 2.9, BADGE_TEXT_SIZE, rgb=trip_color)
+        reimbursement_w = _table_text_width(reimbursement_text, bold=True)
+        if REIMBURSEMENT_RIGHT - reimbursement_w <= ODOMETER_RIGHT:
+            raise ValueError('Vergoeding past niet in de PDF-kolom.')
+        page.text(reimbursement_text, REIMBURSEMENT_RIGHT - reimbursement_w, mid_y - 2.9, 9.5, bold=True, rgb=palette['text'])
 
         km_w = _table_text_width(km_text, bold=True)
-        if 557 - km_w <= BADGE_X + BADGE_WIDTH:
+        if 557 - km_w <= REIMBURSEMENT_RIGHT + 10:
             raise ValueError('Etappeafstand past niet in de PDF-kolom.')
         page.text(km_text, 557 - km_w, mid_y - 2.9, 9.5, bold=True, rgb=palette['text'])
 
@@ -734,6 +766,26 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
                     raise ValueError('Het volledige ritadres past niet op een PDF-pagina.')
 
                 page.y = draw_table_row(page, page.y, row_num, row, layout)
+
+    explanation_title_height = 18
+    explanation_line_height = 12.4
+    explanation_text = (
+        'Dit rapport bevat uitsluitend de zakelijk gereden ritten met de privéauto. '
+        'Privéritten worden niet in dit rapport geregistreerd. '
+        'De kilometerstanden in dit rapport zijn de gecontroleerde tellerstanden van de zakelijke ritten. '
+        'Tussen twee geregistreerde zakelijke ritten kunnen privékilometers zijn gereden. '
+        f'Dit rapport dient als onderbouwing van de zakelijke kilometerdeclaratie bij {company_name}.'
+    )
+    explanation_lines = _SimplePdfPage.wrap_lines(explanation_text, 523, 9.3)
+    explanation_height = explanation_title_height + len(explanation_lines) * explanation_line_height + 10
+    if page.need(explanation_height):
+        page = new_page(compact=True)
+    page.y -= 18
+    page.text('Toelichting', 36, page.y, 12, bold=True, rgb=palette['text'])
+    page.y -= 18
+    for line in explanation_lines:
+        page.text(line, 36, page.y, 9.3, rgb=palette['text'])
+        page.y -= explanation_line_height
 
     total_pages = len(pages)
     for n, pg in enumerate(pages, start=1):

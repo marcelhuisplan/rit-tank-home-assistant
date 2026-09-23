@@ -7,9 +7,9 @@ from xml.etree import ElementTree as ET
 
 from test_v44 import app
 from pdf_report import (
-    ADDRESS_MAX_WIDTH, ADDRESS_X, BADGE_HEIGHT, BADGE_WIDTH, BADGE_X,
-    ODOMETER_RIGHT, _address_lines, _format_odometer, _full_address,
-    _table_text_width, report_stop_address,
+    ADDRESS_MAX_WIDTH, ADDRESS_X, ODOMETER_RIGHT, REIMBURSEMENT_RIGHT,
+    _address_lines, _format_odometer, _full_address, _table_text_width,
+    report_stop_address,
 )
 
 HOME = 'Verenlandweg 4, 7461 AP Rijssen'
@@ -122,8 +122,13 @@ class PdfOdometerTests(unittest.TestCase):
             self.assertEqual(len(rows), count)
             numbers.extend(t.text for t in rows)
             for label, x in [('#', 38), ('Datum', 56), ('Vertrek -> Aankomst (adres)', 157),
-                             ('Tellerstand', 347), ('Soort', 410)]:
+                             ('Tellerstand', 347)]:
                 self.assertEqual(float(find_text(markup, label)[0].get('x')), x)
+            reimbursement_x = float(find_text(markup, 'Vergoeding')[0].get('x'))
+            self.assertAlmostEqual(
+                reimbursement_x + _table_text_width('Vergoeding', bold=True),
+                REIMBURSEMENT_RIGHT,
+            )
             self.assertEqual(len(find_text(markup, 'Huisplan BV')), 1)
         self.assertEqual(numbers, [str(n) for n in range(1, 11)])
         self.assertAlmostEqual(float(find_text(pages[0], HOME)[0].get('y')), 443.87)
@@ -139,7 +144,7 @@ class PdfOdometerTests(unittest.TestCase):
             self.assertEqual(odo.get('font-size'), '9.5')
             self.assertEqual(odo.get('font-weight'), '400')
             self.assertAlmostEqual(float(odo.get('x')) + _table_text_width(reading), 403)
-        self.assertEqual(len(find_text(markup, '2,0 km')), 3)  # total, business, leg
+        self.assertEqual(len(find_text(markup, '2,0 km')), 2)  # summary + leg
 
     def test_zero_and_missing_readings_reach_export_without_fabrication(self):
         self.fixtures = fixture(1)
@@ -192,25 +197,23 @@ class PdfOdometerTests(unittest.TestCase):
             self.assertTrue(readings)
             for reading in readings:
                 self.assertTrue(any(a.get('y') == reading.get('y') for a in address_texts))
-            badges = [t for t in elements(markup, 'rect') if t.get('x') == str(BADGE_X)]
-            row_count += len(badges)
-            for badge in badges:
-                self.assertEqual(float(badge.get('width')), BADGE_WIDTH)
-                self.assertEqual(float(badge.get('height')), BADGE_HEIGHT)
+            row_count += len([t for t in texts if t.get('x') == '38' and (t.text or '').isdigit()])
             first_lines = [t for t in address_texts if t.text == _address_lines(LONG)[0]]
             last_lines = [t for t in address_texts if t.text == _address_lines(LONG)[-1]]
             self.assertEqual(len(first_lines), len(last_lines))
         self.assertEqual(row_count, 24)
 
-    def test_badge_labels_and_geometry_are_unchanged(self):
+    def test_private_and_mixed_labels_do_not_render_in_business_only_pdf(self):
         self.fixtures = fixture(3)
         self.fixtures[0][1][1]['segment_trip_type'] = 'private'
         self.fixtures[2][0].update(trip_type='mixed', private_detour_km=1)
         self.fixtures[2][1][1].pop('segment_trip_type')
         markup = self.export()['pages'][0]
-        for label in ('Privé', 'Zakelijk', 'Privé/Zakelijk'):
-            self.assertEqual(len(find_text(markup, label)), 1)
-        self.assertEqual(BADGE_WIDTH, 95.9)
+        self.assertEqual(len(find_text(markup, 'Vergoeding')), 1)
+        for label in ('Privé', 'Zakelijk', 'Privé/Zakelijk', 'Soort'):
+            self.assertFalse(find_text(markup, label))
+        rows = [t for t in elements(markup, 'text') if t.get('x') == '38' and (t.text or '').isdigit()]
+        self.assertEqual([t.text for t in rows], ['1', '2'])
 
     def test_pdf_has_no_concept_or_stress_test_content(self):
         exported = self.export()

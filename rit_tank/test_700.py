@@ -885,8 +885,8 @@ class PdfRedesignTests(unittest.TestCase):
         # Create a mock trip with multiple stops
         with app.db() as con:
             con.execute(
-                "INSERT INTO business_trips(started_at,ended_at,status) VALUES(?,?,?)",
-                (app.iso_local(), app.iso_local() + ' 01:00', 'completed')
+                "INSERT INTO business_trips(started_at,ended_at,status,trip_type) VALUES(?,?,?,?)",
+                (app.iso_local(), app.iso_local() + ' 01:00', 'completed', 'business')
             )
             con.commit()
 
