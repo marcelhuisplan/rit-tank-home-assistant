@@ -1,5 +1,12 @@
 # Changelog
 
+## 22.00
+- Te controleren verwerkt ritvoorstellen oldest-first op vertrek- of detectietijd, met id als tie-breaker.
+- Alleen de oudste open arrival kan worden geclassificeerd, gecorrigeerd, opgeslagen of gesloten; latere arrivals blijven zichtbaar maar locked.
+- Een centrale server-side queueguard voorkomt dat pushmeldingen, deeplinks en verouderde pagina's de volgorde omzeilen.
+- Completed of dismissed geeft direct de volgende arrival vrij; het tellerstandsvoorstel wordt daarna uit de actuele geschiedenis berekend.
+- De bestaande overlapcontrole blijft een safety net en historische records worden niet automatisch gewijzigd.
+
 ## 21.00
 - De fiscale rittenregistratie toont per vertrek- en aankomstadres de opgeslagen tellerstand.
 - De nieuwe kolom Tellerstand gebruikt de echte `trip_stops.odometer`-waarden.

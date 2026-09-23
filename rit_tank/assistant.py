@@ -139,10 +139,79 @@ def arrival_proposal(row: dict[str, Any], *, dependencies: Mapping[str, Any]) ->
     usable = bool(base is not None and raw_km > 0 and (int(snapshot.get('route_samples') or 0) >= 3) and (not snapshot.get('route_incomplete')))
     return {'start_odometer': base, 'gps_km': round(raw_km, 2), 'suggested_odometer': round(base + raw_km * calibration['factor']) if usable else None, 'route_complete': usable, 'calibration': calibration, 'distance_source': 'gps'}
 
+
+class AssistantArrivalQueueError(ValueError):
+    """A mutation targeted an arrival that is not next in the review queue."""
+
+    code = 'earlier_arrival_pending'
+
+    def __init__(self, blocking: Mapping[str, Any]):
+        self.blocking_arrival_id = int(blocking['id'])
+        self.blocking_departure_at = blocking.get('departure_at') or blocking.get('detected_at')
+        super().__init__('Er staat nog een eerdere rit open. Handel die rit eerst af voordat je deze rit controleert.')
+
+
+def oldest_open_assistant_arrival(*, dependencies: Mapping[str, Any], con: Any=None) -> dict[str, Any] | None:
+    """Return the oldest pending/confirmed arrival using parsed timestamps."""
+    def select(connection: Any) -> dict[str, Any] | None:
+        rows = [dict(row) for row in connection.execute(
+            "SELECT * FROM assistant_arrivals WHERE status IN ('pending','confirmed')"
+        )]
+        if not rows:
+            return None
+        return min(
+            rows,
+            key=lambda row: (
+                _provider(dependencies, 'parse_dt')(row.get('departure_at') or row['detected_at']),
+                int(row['id']),
+            ),
+        )
+
+    if con is not None:
+        return select(con)
+    with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as connection:
+        return select(connection)
+
+
+def assert_assistant_arrival_is_next(arrival_id: int, *, dependencies: Mapping[str, Any], con: Any=None) -> dict[str, Any]:
+    """Validate queue ownership immediately before an arrival mutation."""
+    def assert_next(connection: Any) -> dict[str, Any]:
+        row = connection.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
+        if not row:
+            raise ValueError('Ritsuggestie niet gevonden.')
+        current = dict(row)
+        if current.get('status') not in ('pending', 'confirmed'):
+            raise ValueError('Deze ritsuggestie kan niet meer worden aangepast.')
+        blocking = oldest_open_assistant_arrival(dependencies=dependencies, con=connection)
+        if blocking and int(blocking['id']) != int(arrival_id):
+            raise AssistantArrivalQueueError(blocking)
+        return current
+
+    if con is not None:
+        return assert_next(con)
+    with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as connection:
+        return assert_next(connection)
+
+
 def assistant_arrivals(limit: int=12, include_done: bool=False, *, dependencies: Mapping[str, Any]) -> list[dict[str, Any]]:
     where = '' if include_done else "WHERE status IN ('pending','confirmed')"
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
-        rows = [dict(r) for r in con.execute(f'SELECT * FROM assistant_arrivals {where} ORDER BY id DESC LIMIT ?', (max(1, min(100, int(limit))),))]
+        rows = [dict(r) for r in con.execute(f'SELECT * FROM assistant_arrivals {where}')]
+    open_rows = [row for row in rows if row.get('status') in ('pending', 'confirmed')]
+    open_rows.sort(key=lambda row: (
+        _provider(dependencies, 'parse_dt')(row.get('departure_at') or row['detected_at']),
+        int(row['id']),
+    ))
+    for position, row in enumerate(open_rows, start=1):
+        row['queue_position'] = position
+        row['is_next_to_review'] = position == 1
+        row['blocked_by_arrival_id'] = None if position == 1 else int(open_rows[position - 2]['id'])
+    done_rows = [row for row in rows if row.get('status') not in ('pending', 'confirmed')]
+    for row in done_rows:
+        row['queue_position'] = None
+        row['is_next_to_review'] = False
+        row['blocked_by_arrival_id'] = None
+    rows = (open_rows + done_rows)[:max(1, min(100, int(limit)))]
     out = []
     for r in rows:
         origin = _provider(dependencies, 'known_place_by_id')(r.get('origin_known_place_id'))
@@ -222,11 +291,7 @@ def confirm_assistant_arrival(arrival_id: int, trip_type: str, source: str='app'
     if not t:
         raise ValueError('Kies Privé of Zakelijk.')
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
-        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
-        if not row:
-            raise ValueError('Ritsuggestie niet gevonden.')
-        if str(row['status']) in {'completed', 'dismissed'}:
-            return dict(row)
+        assert_assistant_arrival_is_next(arrival_id, dependencies=dependencies, con=con)
         con.execute("UPDATE assistant_arrivals SET status='confirmed',confirmed_type=?,classification_source=?,handled_at=? WHERE id=?", (t, source[:40], _provider(dependencies, 'iso_local')(), int(arrival_id)))
         _provider(dependencies, 'audit')('assistant_confirm', 'assistant', int(arrival_id), {'trip_type': t, 'source': source}, con=con)
         con.commit()
@@ -234,6 +299,7 @@ def confirm_assistant_arrival(arrival_id: int, trip_type: str, source: str='app'
 
 def dismiss_assistant_arrival(arrival_id: int, *, dependencies: Mapping[str, Any]) -> None:
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
+        assert_assistant_arrival_is_next(arrival_id, dependencies=dependencies, con=con)
         con.execute("UPDATE assistant_arrivals SET status='dismissed',handled_at=? WHERE id=?", (_provider(dependencies, 'iso_local')(), int(arrival_id)))
         _provider(dependencies, 'audit')('assistant_dismiss', 'assistant', int(arrival_id), {}, con=con)
         con.commit()
@@ -411,6 +477,7 @@ def correct_assistant_arrival_destination(arrival_id: int, payload: dict[str, An
     origin_lat = distance['origin_latitude']
     origin_lon = distance['origin_longitude']
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
+        assert_assistant_arrival_is_next(arrival_id, dependencies=dependencies, con=con)
         con.execute('\n            UPDATE assistant_arrivals\n            SET corrected_destination_latitude=?,\n                corrected_destination_longitude=?,\n                corrected_destination_label=?,\n                corrected_destination_distance_m=?,\n                corrected_destination_place_id=?,\n                destination_distance_source=?,\n                destination_manually_corrected=1\n            WHERE id=?\n        ', (dest_lat, dest_lon, dest_label, round(distance_m) if distance_m is not None else None, dest_place_id, distance_source, int(arrival_id)))
         _provider(dependencies, 'audit')('assistant_correct_destination', 'assistant', int(arrival_id), {'original_destination': {'lat': old_dest_lat, 'lon': old_dest_lon, 'label': old_dest_label, 'distance_m': round(original_gps_distance_m) if original_gps_distance_m is not None else None}, 'corrected_destination': {'lat': dest_lat, 'lon': dest_lon, 'label': dest_label, 'place_id': dest_place_id, 'distance_m': round(distance_m) if distance_m is not None else None}, 'route_origin': {'lat': origin_lat, 'lon': origin_lon} if distance['origin_available'] else None, 'distance_source': distance_source, 'destination_manually_corrected': True}, con=con)
         con.commit()
@@ -475,6 +542,7 @@ def correct_assistant_arrival_route(arrival_id: int, payload: dict[str, Any], *,
     assignments.extend(('corrected_route_distance_m=?', 'destination_distance_source=?'))
     values.extend((preview['distance_m'], preview['distance_source'], int(arrival_id)))
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
+        assert_assistant_arrival_is_next(arrival_id, dependencies=dependencies, con=con)
         con.execute(f"UPDATE assistant_arrivals SET {','.join(assignments)} WHERE id=?", values)
         _provider(dependencies, 'audit')('assistant_correct_route', 'assistant', int(arrival_id), {'original_origin': _provider(dependencies, '_assistant_arrival_effective_origin')(r), 'original_destination': _provider(dependencies, '_assistant_arrival_effective_destination')(r), 'corrected_origin': origin, 'corrected_destination': destination, 'distance_m': preview['distance_m'], 'distance_source': preview['distance_source']}, con=con)
         con.commit()
@@ -486,12 +554,7 @@ def complete_assistant_arrival(arrival_id: int, payload: dict[str, Any], *, depe
 
 def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any], *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
-        row = con.execute('SELECT * FROM assistant_arrivals WHERE id=?', (int(arrival_id),)).fetchone()
-    if not row:
-        raise ValueError('Ritsuggestie niet gevonden.')
-    r = dict(row)
-    if r.get('status') not in ('pending', 'confirmed'):
-        raise ValueError('Deze ritsuggestie is al verwerkt.')
+        r = assert_assistant_arrival_is_next(arrival_id, dependencies=dependencies, con=con)
     trip_type = _provider(dependencies, 'normalize_segment_type')(payload.get('trip_type')) or _provider(dependencies, 'normalize_segment_type')(r.get('confirmed_type')) or _provider(dependencies, 'normalize_segment_type')(r.get('suggested_type'))
     if not trip_type:
         raise ValueError('Kies Privé of Zakelijk.')

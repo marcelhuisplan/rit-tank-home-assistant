@@ -1,4 +1,6 @@
-# Rit & Tank 21.00
+# Rit & Tank 22.00
+
+Release 22.00 verwerkt ritvoorstellen onder **Te controleren** strikt van oud naar nieuw. Alleen de oudste openstaande suggestie kan worden geclassificeerd, gecorrigeerd, opgeslagen of gesloten; latere voorstellen blijven zichtbaar maar zijn vergrendeld. De server bewaakt die volgorde ook voor oude pagina's, pushmeldingen en deeplinks. Na opslaan of sluiten wordt de volgende kaart direct actief en wordt de tellerstandsuggestie opnieuw uit de actuele geschiedenis berekend. De bestaande overlapcontrole blijft als extra veiligheidsnet behouden; historische ritten worden niet aangepast.
 
 Release 21.00 voegt de kolom **Tellerstand** toe aan de fiscale PDF: per vertrek-
 en aankomstadres de opgeslagen `trip_stops.odometer`, met **—** bij een ontbrekende
@@ -27,8 +29,8 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **21.00**.
+- Huidige release: **22.00**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
-- Volgende release: **22.00**.
+- Volgende release: **23.00**.
 - Dit is een **handmatig** releasebeleid: het versienummer (`APP_VERSION` in `app.py`, `version` in `config.yaml`, de titels in `README.md`/`DOCS.md`) wordt alleen door een expliciete, door de eigenaar aangevraagde wijziging opgehoogd. De applicatie verhoogt dit nummer nooit automatisch tijdens runtime.
