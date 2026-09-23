@@ -100,3 +100,160 @@ class Release2300BehaviorTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReimbursementTests(unittest.TestCase):
+    """Test reimbursement rate and calculations for release 23.00."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir=ROOT)
+        app.DATA_DIR = Path(self.tmp.name)
+        app.DB_PATH = app.DATA_DIR / 'test.db'
+        app.OPTIONS_PATH = app.DATA_DIR / 'options.json'
+        self.patches = [
+            patch.object(app, 'publish_sensors_async', lambda: None),
+        ]
+        for item in self.patches:
+            item.start()
+        app.init_db()
+
+    def tearDown(self):
+        for item in reversed(self.patches):
+            item.stop()
+        self.tmp.cleanup()
+
+    def test_km_reimbursement_rate_defaults_to_0_25(self):
+        settings = app.get_settings()
+        rate = float(settings.get('km_reimbursement_rate') or 0.25)
+        self.assertEqual(rate, 0.25)
+
+    def test_km_reimbursement_rate_can_be_set(self):
+        app.set_settings({'km_reimbursement_rate': '0.35'})
+        settings = app.get_settings()
+        rate = float(settings.get('km_reimbursement_rate') or 0.25)
+        self.assertEqual(rate, 0.35)
+
+    def test_reimbursement_10km_at_0_25(self):
+        km, rate = 10.0, 0.25
+        reimbursement = round(km * rate, 2)
+        self.assertEqual(reimbursement, 2.50)
+
+    def test_reimbursement_31km_at_0_25(self):
+        km, rate = 31.0, 0.25
+        reimbursement = round(km * rate, 2)
+        self.assertEqual(reimbursement, 7.75)
+
+    def test_reimbursement_7km_at_0_23(self):
+        km, rate = 7.0, 0.23
+        reimbursement = round(km * rate, 2)
+        self.assertEqual(reimbursement, 1.61)
+
+
+class OdometerGapTests(unittest.TestCase):
+    """Test that odometer gaps between separate business trips are allowed."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir=ROOT)
+        app.DATA_DIR = Path(self.tmp.name)
+        app.DB_PATH = app.DATA_DIR / 'test.db'
+        app.OPTIONS_PATH = app.DATA_DIR / 'options.json'
+        self.patches = [
+            patch.object(app, 'publish_sensors_async', lambda: None),
+        ]
+        for item in self.patches:
+            item.start()
+        app.init_db()
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO events(created_at,type,odometer) VALUES(?, 'odometer', ?)",
+                ('2026-09-23T08:00:00+02:00', 90000),
+            )
+            con.commit()
+
+    def tearDown(self):
+        for item in reversed(self.patches):
+            item.stop()
+        self.tmp.cleanup()
+
+    def test_odometer_gap_scenario_90000_90020_gap_90030_90055_allowed(self):
+        """
+        Critical scenario: allow odometer gap between separate business trips.
+        Business trip A: 90000 -> 90020
+        Private ride (unregistered): 90020 -> 90030
+        Business trip B: 90030 -> 90055
+        """
+        with app.db() as con:
+            # Business trip A
+            cur = con.execute(
+                "INSERT INTO business_trips(started_at,ended_at,status,trip_type) "
+                "VALUES(?, ?, 'completed', 'business')",
+                ('2026-09-23T08:00:00+02:00', '2026-09-23T08:30:00+02:00'),
+            )
+            trip_a_id = cur.lastrowid
+            con.execute(
+                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
+                "VALUES(?, 0, ?, 90000, 52.0, 6.0, 'manual')",
+                (trip_a_id, '2026-09-23T08:00:00+02:00'),
+            )
+            con.execute(
+                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
+                "VALUES(?, 1, ?, 90020, 52.1, 6.1, 'manual')",
+                (trip_a_id, '2026-09-23T08:30:00+02:00'),
+            )
+
+            # Business trip B with gap
+            cur = con.execute(
+                "INSERT INTO business_trips(started_at,ended_at,status,trip_type) "
+                "VALUES(?, ?, 'completed', 'business')",
+                ('2026-09-23T10:00:00+02:00', '2026-09-23T11:00:00+02:00'),
+            )
+            trip_b_id = cur.lastrowid
+            con.execute(
+                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
+                "VALUES(?, 0, ?, 90030, 52.1, 6.1, 'manual')",
+                (trip_b_id, '2026-09-23T10:00:00+02:00'),
+            )
+            con.execute(
+                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
+                "VALUES(?, 1, ?, 90055, 52.2, 6.2, 'manual')",
+                (trip_b_id, '2026-09-23T11:00:00+02:00'),
+            )
+            con.commit()
+
+        # Verify both trips exist and have correct odometers
+        trips_raw = list(app.business_trips_raw())
+        self.assertEqual(len(trips_raw), 2)
+        
+        trip_a, stops_a = trips_raw[0]
+        trip_b, stops_b = trips_raw[1]
+        
+        self.assertEqual(float(stops_a[-1]['odometer']), 90020)
+        self.assertEqual(float(stops_b[0]['odometer']), 90030)
+        # Gap of 10 km (90020 -> 90030) is allowed between separate trips
+
+    def test_within_trip_odometer_still_validated(self):
+        """Test that within-trip validation (start <= end) is still enforced."""
+        with app.db() as con:
+            # Try to create a trip with end < start
+            cur = con.execute(
+                "INSERT INTO business_trips(started_at,ended_at,status,trip_type) "
+                "VALUES(?, ?, 'completed', 'business')",
+                ('2026-09-23T08:00:00+02:00', '2026-09-23T08:30:00+02:00'),
+            )
+            trip_id = cur.lastrowid
+            con.execute(
+                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
+                "VALUES(?, 0, ?, 90050, 52.0, 6.0, 'manual')",
+                (trip_id, '2026-09-23T08:00:00+02:00'),
+            )
+            con.execute(
+                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
+                "VALUES(?, 1, ?, 90030, 52.1, 6.1, 'manual')",
+                (trip_id, '2026-09-23T08:30:00+02:00'),
+            )
+            
+            # Validation should catch end < start (90030 < 90050)
+            valid, msg = app.validate_odometer('2026-09-23T08:30:00+02:00', 90030, ignore_id=trip_id)
+            self.assertFalse(valid)
+            self.assertIn('lager', msg.lower() or msg)
+
