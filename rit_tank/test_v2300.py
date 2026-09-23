@@ -1,9 +1,12 @@
 """Release 23.00 regression tests for business-only assistant classification."""
+import csv
 import importlib.util
+import io
 import sys
 import tempfile
 import types
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -133,20 +136,80 @@ class ReimbursementTests(unittest.TestCase):
         rate = float(settings.get('km_reimbursement_rate') or 0.25)
         self.assertEqual(rate, 0.35)
 
+    def test_km_reimbursement_rate_accepts_comma_input(self):
+        app.set_settings({'km_reimbursement_rate': '0,25'})
+        settings = app.get_settings()
+        rate = float(settings.get('km_reimbursement_rate') or 0.25)
+        self.assertEqual(rate, 0.25)
+
+    def test_km_reimbursement_rate_rejects_negative_values(self):
+        with self.assertRaisesRegex(ValueError, 'niet negatief'):
+            app.set_settings({'km_reimbursement_rate': '-0.01'})
+
+    def test_km_reimbursement_rate_rejects_text_values(self):
+        with self.assertRaisesRegex(ValueError, 'geldige kilometervergoeding'):
+            app.set_settings({'km_reimbursement_rate': 'abc'})
+
     def test_reimbursement_10km_at_0_25(self):
-        km, rate = 10.0, 0.25
-        reimbursement = round(km * rate, 2)
-        self.assertEqual(reimbursement, 2.50)
+        reimbursement = app.pdf_report.calculate_km_reimbursement(10, '0.25')
+        self.assertEqual(reimbursement, Decimal('2.50'))
 
     def test_reimbursement_31km_at_0_25(self):
-        km, rate = 31.0, 0.25
-        reimbursement = round(km * rate, 2)
-        self.assertEqual(reimbursement, 7.75)
+        reimbursement = app.pdf_report.calculate_km_reimbursement(31, '0.25')
+        self.assertEqual(reimbursement, Decimal('7.75'))
 
     def test_reimbursement_7km_at_0_23(self):
-        km, rate = 7.0, 0.23
-        reimbursement = round(km * rate, 2)
-        self.assertEqual(reimbursement, 1.61)
+        reimbursement = app.pdf_report.calculate_km_reimbursement(7, '0.23')
+        self.assertEqual(reimbursement, Decimal('1.61'))
+
+    def test_reimbursement_10_5km_at_0_25(self):
+        reimbursement = app.pdf_report.calculate_km_reimbursement('10.5', '0.25')
+        self.assertEqual(reimbursement, Decimal('2.63'))
+
+    def test_pdf_and_csv_use_same_decimal_reimbursement_helper(self):
+        amount = app.pdf_report.calculate_km_reimbursement('31', '0.25')
+        self.assertEqual(app.pdf_report.format_decimal_plain(amount), '7.75')
+
+        class DummyHandler:
+            def __init__(self):
+                self.wfile = io.BytesIO()
+                self.status = None
+                self.headers = {}
+
+            def send_response(self, status):
+                self.status = status
+
+            def send_header(self, key, value):
+                self.headers[key] = value
+
+            def end_headers(self):
+                pass
+
+        with app.db() as con:
+            cur = con.execute(
+                "INSERT INTO business_trips(started_at,ended_at,status,trip_type) "
+                "VALUES(?, ?, 'completed', 'business')",
+                ('2026-09-23T08:00:00+02:00', '2026-09-23T08:30:00+02:00'),
+            )
+            trip_id = cur.lastrowid
+            con.execute(
+                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
+                "VALUES(?, 0, ?, 90000, 52.0, 6.0, 'manual')",
+                (trip_id, '2026-09-23T08:00:00+02:00'),
+            )
+            con.execute(
+                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
+                "VALUES(?, 1, ?, 90031, 52.1, 6.1, 'manual')",
+                (trip_id, '2026-09-23T08:30:00+02:00'),
+            )
+            con.commit()
+
+        handler = DummyHandler()
+        app.Handler.export_business_csv(handler, 'all')
+        data = handler.wfile.getvalue().decode('utf-8-sig')
+        rows = list(csv.DictReader(io.StringIO(data), delimiter=';'))
+        self.assertTrue(rows)
+        self.assertEqual(rows[0]['reimbursement_eur'], app.pdf_report.format_decimal_plain(amount))
 
 
 class OdometerGapTests(unittest.TestCase):
@@ -182,43 +245,36 @@ class OdometerGapTests(unittest.TestCase):
         Private ride (unregistered): 90020 -> 90030
         Business trip B: 90030 -> 90055
         """
-        with app.db() as con:
-            # Business trip A
-            cur = con.execute(
-                "INSERT INTO business_trips(started_at,ended_at,status,trip_type) "
-                "VALUES(?, ?, 'completed', 'business')",
-                ('2026-09-23T08:00:00+02:00', '2026-09-23T08:30:00+02:00'),
-            )
-            trip_a_id = cur.lastrowid
-            con.execute(
-                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
-                "VALUES(?, 0, ?, 90000, 52.0, 6.0, 'manual')",
-                (trip_a_id, '2026-09-23T08:00:00+02:00'),
-            )
-            con.execute(
-                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
-                "VALUES(?, 1, ?, 90020, 52.1, 6.1, 'manual')",
-                (trip_a_id, '2026-09-23T08:30:00+02:00'),
-            )
+        app.start_business_trip({
+            'created_at': '2026-09-23T08:00:00+02:00',
+            'odometer': 90000,
+            'latitude': 52.0,
+            'longitude': 6.0,
+            'manual_label': 'Start A',
+        })
+        app.add_business_stop({
+            'created_at': '2026-09-23T08:30:00+02:00',
+            'odometer': 90020,
+            'latitude': 52.1,
+            'longitude': 6.1,
+            'manual_label': 'Einde A',
+            'segment_trip_type': 'private',
+        }, finish=True)
 
-            # Business trip B with gap
-            cur = con.execute(
-                "INSERT INTO business_trips(started_at,ended_at,status,trip_type) "
-                "VALUES(?, ?, 'completed', 'business')",
-                ('2026-09-23T10:00:00+02:00', '2026-09-23T11:00:00+02:00'),
-            )
-            trip_b_id = cur.lastrowid
-            con.execute(
-                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
-                "VALUES(?, 0, ?, 90030, 52.1, 6.1, 'manual')",
-                (trip_b_id, '2026-09-23T10:00:00+02:00'),
-            )
-            con.execute(
-                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
-                "VALUES(?, 1, ?, 90055, 52.2, 6.2, 'manual')",
-                (trip_b_id, '2026-09-23T11:00:00+02:00'),
-            )
-            con.commit()
+        app.start_business_trip({
+            'created_at': '2026-09-23T10:00:00+02:00',
+            'odometer': 90030,
+            'latitude': 52.1,
+            'longitude': 6.1,
+            'manual_label': 'Start B',
+        })
+        app.add_business_stop({
+            'created_at': '2026-09-23T11:00:00+02:00',
+            'odometer': 90055,
+            'latitude': 52.2,
+            'longitude': 6.2,
+            'manual_label': 'Einde B',
+        }, finish=True)
 
         # Verify both trips exist and have correct odometers
         trips_raw = list(app.business_trips_raw())
@@ -229,31 +285,25 @@ class OdometerGapTests(unittest.TestCase):
         
         self.assertEqual(float(stops_a[-1]['odometer']), 90020)
         self.assertEqual(float(stops_b[0]['odometer']), 90030)
+        self.assertEqual(trip_a['trip_type'], 'business')
+        self.assertEqual(trip_b['trip_type'], 'business')
+        self.assertTrue(all((stop.get('segment_trip_type') in (None, 'business')) for stop in stops_a + stops_b))
         # Gap of 10 km (90020 -> 90030) is allowed between separate trips
 
     def test_within_trip_odometer_still_validated(self):
         """Test that within-trip validation (start <= end) is still enforced."""
-        with app.db() as con:
-            # Try to create a trip with end < start
-            cur = con.execute(
-                "INSERT INTO business_trips(started_at,ended_at,status,trip_type) "
-                "VALUES(?, ?, 'completed', 'business')",
-                ('2026-09-23T08:00:00+02:00', '2026-09-23T08:30:00+02:00'),
-            )
-            trip_id = cur.lastrowid
-            con.execute(
-                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
-                "VALUES(?, 0, ?, 90050, 52.0, 6.0, 'manual')",
-                (trip_id, '2026-09-23T08:00:00+02:00'),
-            )
-            con.execute(
-                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude,location_source) "
-                "VALUES(?, 1, ?, 90030, 52.1, 6.1, 'manual')",
-                (trip_id, '2026-09-23T08:30:00+02:00'),
-            )
-            
-            # Validation should catch end < start (90030 < 90050)
-            valid, msg = app.validate_odometer('2026-09-23T08:30:00+02:00', 90030, ignore_id=trip_id)
-            self.assertFalse(valid)
-            self.assertIn('lager', msg.lower() or msg)
-
+        app.start_business_trip({
+            'created_at': '2026-09-23T08:00:00+02:00',
+            'odometer': 90030,
+            'latitude': 52.0,
+            'longitude': 6.0,
+            'manual_label': 'Start',
+        })
+        with self.assertRaisesRegex(ValueError, 'lager'):
+            app.add_business_stop({
+                'created_at': '2026-09-23T08:30:00+02:00',
+                'odometer': 90020,
+                'latitude': 52.1,
+                'longitude': 6.1,
+                'manual_label': 'Einde',
+            }, finish=True)

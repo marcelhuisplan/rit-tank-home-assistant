@@ -1,4 +1,8 @@
-# Rit & Tank 22.00
+# Rit & Tank 23.00
+
+Vanaf release 23.00 wordt Rit & Tank ingericht voor zakelijke kilometerregistratie met privéauto. De privé/zakelijk-classificatiekeuze is volledig verwijderd; alle nieuwe ritten worden automatisch als zakelijk geclassificeerd. De PDF transformeert naar een zakelijke kilometerdeclaratie met vergoeding per rit. Tellerstandgaten tussen afzonderlijke zakelijke ritten zijn bewust toegestaan—de partner mag privé rijden zonder registratie. De chronologische review-queue van versie 22.00 blijft behouden. Historische data wordt niet verwijderd.
+
+## Vorige release: 22.00
 
 De fiscale PDF toont nu de opgeslagen vertrek- en aankomsttellerstand per etappe
 en uitsluitend volledige fysieke adressen. Zie **Fiscale rittenregistratie-PDF**

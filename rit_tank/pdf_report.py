@@ -322,6 +322,18 @@ def _decimal_or_zero(value: Any) -> Decimal:
         return Decimal('0')
 
 
+def decimal_or_zero(value: Any) -> Decimal:
+    return _decimal_or_zero(value)
+
+
+def calculate_km_reimbursement(km: Any, rate: Any) -> Decimal:
+    return (_decimal_or_zero(km) * _decimal_or_zero(rate)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+def format_decimal_plain(value: Any) -> str:
+    return f'{_decimal_or_zero(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP):.2f}'
+
+
 def _build_pdf(pages: list[_SimplePdfPage], images: dict[str, tuple[int, int, bytes]] | None = None) -> bytes:
     """Minimal dependency-free PDF writer using core Helvetica fonts and JPEGs."""
     objects: dict[int, bytes] = {}
@@ -384,11 +396,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     parse_dt = _provider(deps, 'parse_dt')
     period_label = _provider(deps, 'period_label')
     settings = get_settings()
-    try:
-        km_rate = float(settings.get('km_reimbursement_rate') or 0.25)
-    except (TypeError, ValueError):
-        km_rate = 0.25
-    km_rate_decimal = _decimal_or_zero(km_rate)
+    km_rate_decimal = _decimal_or_zero(settings.get('km_reimbursement_rate') or 0.25)
     ref = now_local()
     try:
         if year is not None:
@@ -442,7 +450,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     business_km = total_km
     total_reimbursement = sum(
         (
-            (_decimal_or_zero(t.get('km')) * km_rate_decimal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            calculate_km_reimbursement(t.get('km'), km_rate_decimal)
             for t in trips
             if t.get('trip_type') == 'business'
         ),
@@ -487,7 +495,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         return f'{number:.1f}'
 
     def calculate_reimbursement(value: Any) -> Decimal:
-        return (_decimal_or_zero(value) * km_rate_decimal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return calculate_km_reimbursement(value, km_rate_decimal)
 
     pdf_images: dict[str, tuple[int, int, bytes]] = {}
     logo_path = Path(__file__).with_name('huisplan-logo.jpg')

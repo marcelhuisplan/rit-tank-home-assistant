@@ -1,5 +1,5 @@
 name: Rit & Tank
-version: '22.00'
+version: '23.00'
 slug: rit_tank
 description: Zelfstandige beveiligde Rit & Tank-PWA met eigen database, HTTPS-login,
   GPS-afstandsschatting, Home Assistant-koppeling, fiscale PDF en tankbon-foto.
@@ -28,6 +28,7 @@ options:
   timezone: Europe/Amsterdam
   entity_prefix: auto
   initial_odometer: 0
+  km_reimbursement_rate: 0.25
   google_places_api_key: ''
   places_radius_m: 1800
   places_max_results: 8
@@ -48,6 +49,7 @@ schema:
   timezone: str
   entity_prefix: str
   initial_odometer: float
+  km_reimbursement_rate: float
   google_places_api_key: password
   places_radius_m: int(100,5000)
   places_max_results: int(1,20)

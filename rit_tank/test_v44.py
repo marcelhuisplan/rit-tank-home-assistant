@@ -133,8 +133,8 @@ class AutonomyTests(unittest.TestCase):
         self.assertIn('Huidige release: **23.00**.', readme)
         self.assertIn('Volgende release: **24.00**.', readme)
         ci = (root.parent / '.github' / 'workflows' / 'ci.yml').read_text(encoding='utf-8')
-        self.assertEqual(ci.count("app.APP_VERSION == '22.00'"), 2)
-        self.assertIn('BUILD_VERSION=22.00', ci)
+        self.assertEqual(ci.count("app.APP_VERSION == '23.00'"), 2)
+        self.assertIn('BUILD_VERSION=23.00', ci)
         self.assertIn(f'rit-tank-shell-{version}'.encode('utf-8'), app.SERVICE_WORKER)
         self.assertEqual(app.summary()['app']['version'], version)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import csv
 from contextlib import contextmanager
+from decimal import Decimal, InvalidOperation
 import hashlib
 import html
 import hmac
@@ -442,6 +443,7 @@ def get_settings() -> dict[str, Any]:
         'currency': str(opts.get('currency') or '€'),
         'timezone': str(opts.get('timezone') or 'Europe/Amsterdam'),
         'entity_prefix': sanitize_prefix(str(opts.get('entity_prefix') or 'auto')),
+        'km_reimbursement_rate': str(opts.get('km_reimbursement_rate') or 0.25),
         'driver_name': '',
         'company_name': '',
         'vehicle_make': '',
@@ -475,13 +477,22 @@ def set_settings(payload: dict[str, Any]) -> dict[str, Any]:
         'vehicle_period_to', 'assistant_enabled', 'assistant_location_entity', 'location_fallback_entity',
         'assistant_mode', 'assistant_auto_confidence', 'distance_learning_enabled',
         'assistant_notify_service', 'assistant_sync_zones', 'assistant_unknown_stops',
-        'assistant_check_seconds', 'assistant_unknown_stop_minutes', 'assistant_fast_stop_seconds', 'assistant_min_trip_m'
+        'assistant_check_seconds', 'assistant_unknown_stop_minutes', 'assistant_fast_stop_seconds',
+        'assistant_min_trip_m', 'km_reimbursement_rate'
     )
     allow_empty = {'assistant_location_entity', 'assistant_notify_service', 'location_fallback_entity'}
     with DB_LOCK, db() as con:
         for key in allowed:
             if key in payload:
                 value = str(payload[key]).strip()[:160]
+                if key == 'km_reimbursement_rate':
+                    try:
+                        rate = Decimal(value.replace(',', '.'))
+                    except (InvalidOperation, ValueError):
+                        raise ValueError('Vul een geldige kilometervergoeding in.') from None
+                    if rate < 0:
+                        raise ValueError('Kilometervergoeding mag niet negatief zijn.')
+                    value = format(rate.normalize(), 'f')
                 if value or key in allow_empty:
                     con.execute('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, value))
         count = con.execute('SELECT COUNT(*) FROM events').fetchone()[0]
@@ -3143,14 +3154,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
     def export_business_csv(self, period: str = 'all') -> None:
-        km_rate = float(get_settings().get('km_reimbursement_rate') or 0.25)
+        km_rate = pdf_report.decimal_or_zero(get_settings().get('km_reimbursement_rate') or 0.25)
+        rate_text = pdf_report.format_decimal_plain(km_rate)
         output=io.StringIO(); writer=csv.writer(output,delimiter=';')
         writer.writerow(['rit_id','ritsoort_samenvatting','status','doel','klant','start_datum_tijd','eind_datum_tijd','totaal_km','zakelijk_km','prive_km','prive_omrijkm','afwijkende_route','stop_nr','stop_datum_tijd','kilometerstand','segment_km','segment_ritsoort','classificatie_bron','suggestie','suggestie_reden','latitude','longitude','google_place_id','bekende_plek','locatie_label_live','notitie','km_reimbursement_rate','reimbursement_eur'])
         for enriched in business_trips_for_period(period):
             if enriched.get('trip_type') == 'business':
-                reimbursement = round(float(enriched.get('km') or 0) * km_rate, 2)
+                reimbursement = pdf_report.calculate_km_reimbursement(enriched.get('km'), km_rate)
                 for stop in enriched.get('stops',[]):
-                    writer.writerow([enriched['id'],enriched.get('trip_type_label') or '',enriched['status'],enriched.get('purpose') or '',enriched.get('client') or '',enriched.get('started_at') or '',enriched.get('ended_at') or '',enriched.get('km') or 0,enriched.get('business_km') or 0,enriched.get('private_km') or 0,enriched.get('private_detour_km') or 0,enriched.get('deviating_route') or '',stop.get('sequence_no'),stop.get('created_at'),stop.get('odometer'),stop.get('segment_km') or 0,stop.get('segment_trip_type_label') or '',stop.get('segment_classification_source') or '',stop.get('segment_suggested_type') or '',stop.get('segment_suggestion_reason') or '',stop.get('latitude') if stop.get('latitude') is not None else '',stop.get('longitude') if stop.get('longitude') is not None else '',stop.get('place_id') or '',stop.get('known_place_name') or '',stop.get('location_label') or '',stop.get('note') or '',f'{km_rate:.2f}',f'{reimbursement:.2f}'])
+                    writer.writerow([enriched['id'],enriched.get('trip_type_label') or '',enriched['status'],enriched.get('purpose') or '',enriched.get('client') or '',enriched.get('started_at') or '',enriched.get('ended_at') or '',enriched.get('km') or 0,enriched.get('business_km') or 0,enriched.get('private_km') or 0,enriched.get('private_detour_km') or 0,enriched.get('deviating_route') or '',stop.get('sequence_no'),stop.get('created_at'),stop.get('odometer'),stop.get('segment_km') or 0,stop.get('segment_trip_type_label') or '',stop.get('segment_classification_source') or '',stop.get('segment_suggested_type') or '',stop.get('segment_suggestion_reason') or '',stop.get('latitude') if stop.get('latitude') is not None else '',stop.get('longitude') if stop.get('longitude') is not None else '',stop.get('place_id') or '',stop.get('known_place_name') or '',stop.get('location_label') or '',stop.get('note') or '',rate_text,pdf_report.format_decimal_plain(reimbursement)])
         data=output.getvalue().encode('utf-8-sig'); self.send_response(200); self.send_header('Content-Type','text/csv; charset=utf-8'); self.send_header('Content-Disposition','attachment; filename="zakelijke_kilometerregistratie_export.csv"'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
 
     def export_business_pdf(self, period: str = 'month', year: str | None = None, month: str | None = None) -> None:
