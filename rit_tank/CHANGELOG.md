@@ -1,5 +1,23 @@
 # Changelog
 
+## 23.00
+- Rit & Tank registreert vanaf 23.00 uitsluitend zakelijke declarabele ritten met privéauto.
+- De privé/zakelijk-classificatiekeuze is volledig uit de invoerstroom verwijderd.
+- Alle nieuwe ritten worden automatisch als zakelijk geclassificeerd (trip_type='business').
+- Privéritten hoeven niet langer in Rit & Tank te worden geregistreerd.
+- Tellerstandgaten tussen afzonderlijke zakelijke ritten zijn bewust toegestaan; validatie tussen aparte ritten is verwijderd.
+- Een nieuwe kilometervergoeding-instelling (standaard €0,25/km) is instelbaar onder Instellingen.
+- De zakelijke kilometerdeclaratie-PDF berekent een vergoeding per rit en totaalbedrag op basis van de ingestelde vergoeding.
+- De PDF toont uitsluitend zakelijke ritten; geen privé-kilometer-gegevens meer.
+- De 'Soort'-kolom verdwijnt uit de PDF; elke rij is per definitie zakelijk.
+- Een nieuwe 'Vergoeding'-kolom toont de berekende vergoeding per rit.
+- Dashboard-statistieken tonen alleen zakelijke kilometer- en ritgegevens, geen privé-teller.
+- CSV-export (business.csv) bevat ook de vergoeding per rit en totaalvergoeding.
+- Doel/Opmerking-veld kan per rit worden ingevuld (via bestaande purpose/note-velden).
+- Historische gegevens en oude privé-ritten blijven intact; geen destructieve migratie.
+- De chronologische review-queue van release 22.00 blijft volledig actief.
+- Server-side guards blijven gelden voor oldest-first verwerking van openstaande voorstellen.
+
 ## 22.00
 - Te controleren verwerkt ritvoorstellen oldest-first op vertrek- of detectietijd, met id als tie-breaker.
 - Alleen de oudste open arrival kan worden geclassificeerd, gecorrigeerd, opgeslagen of gesloten; latere arrivals blijven zichtbaar maar locked.

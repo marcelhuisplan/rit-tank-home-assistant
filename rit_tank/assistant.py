@@ -237,16 +237,16 @@ def assistant_runtime_public(*, dependencies: Mapping[str, Any]) -> dict[str, An
 def _assistant_suggestion(origin_place_id: int | None, dest_place_id: int | None, lat: float, lon: float, *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
     origin = _provider(dependencies, 'known_place_by_id')(origin_place_id)
     dest = _provider(dependencies, 'known_place_by_id')(dest_place_id)
-    if dest and str(dest.get('arrival_trip_type') or 'ask') in {'business', 'private'}:
-        t = str(dest['arrival_trip_type'])
+    if dest and str(dest.get('arrival_trip_type') or 'ask') == 'business':
+        t = 'business'
         return {'suggested_type': t, 'reason': f"Bestemming {dest['name']} staat als {_provider(dependencies, 'trip_type_label')(t).lower()} ingesteld", 'confidence': 0.98}
-    if origin and (not dest) and (str(origin.get('unknown_departure_trip_type') or 'ask') in {'business', 'private'}):
-        t = str(origin['unknown_departure_trip_type'])
+    if origin and (not dest) and (str(origin.get('unknown_departure_trip_type') or 'ask') == 'business'):
+        t = 'business'
         return {'suggested_type': t, 'reason': f"Vanaf {origin['name']} naar onbekende bestemming: {_provider(dependencies, 'trip_type_label')(t)}", 'confidence': 0.9}
     memory = _provider(dependencies, '_route_memory_suggestion')(origin_place_id, lat, lon)
     if memory:
         return memory
-    return {'suggested_type': '', 'reason': 'Geen vaste regel gevonden — kies zelf', 'confidence': 0.0}
+    return {'suggested_type': '', 'reason': 'Geen vaste zakelijke regel gevonden — controleer de rit.', 'confidence': 0.0}
 
 def create_assistant_arrival(origin_place_id: int | None, destination_place_id: int | None, lat: float, lon: float, accuracy: float | None, departure_at: str | None, destination_label: str='', route_snapshot: dict[str, Any] | None=None, *, dependencies: Mapping[str, Any]) -> dict[str, Any] | None:
     now = _provider(dependencies, 'iso_local')()
@@ -287,9 +287,7 @@ def create_assistant_arrival(origin_place_id: int | None, destination_place_id: 
     return item
 
 def confirm_assistant_arrival(arrival_id: int, trip_type: str, source: str='app', *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
-    t = _provider(dependencies, 'normalize_segment_type')(trip_type)
-    if not t:
-        raise ValueError('Kies Privé of Zakelijk.')
+    t = 'business'
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
         assert_assistant_arrival_is_next(arrival_id, dependencies=dependencies, con=con)
         con.execute("UPDATE assistant_arrivals SET status='confirmed',confirmed_type=?,classification_source=?,handled_at=? WHERE id=?", (t, source[:40], _provider(dependencies, 'iso_local')(), int(arrival_id)))
@@ -555,9 +553,7 @@ def complete_assistant_arrival(arrival_id: int, payload: dict[str, Any], *, depe
 def _complete_assistant_arrival(arrival_id: int, payload: dict[str, Any], *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
         r = assert_assistant_arrival_is_next(arrival_id, dependencies=dependencies, con=con)
-    trip_type = _provider(dependencies, 'normalize_segment_type')(payload.get('trip_type')) or _provider(dependencies, 'normalize_segment_type')(r.get('confirmed_type')) or _provider(dependencies, 'normalize_segment_type')(r.get('suggested_type'))
-    if not trip_type:
-        raise ValueError('Kies Privé of Zakelijk.')
+    trip_type = 'business'
     end_odo = _provider(dependencies, 'to_float')(payload.get('odometer'))
     if end_odo is None or not math.isfinite(end_odo) or end_odo < 0:
         raise ValueError('Vul de kilometerstand bij aankomst in.')
@@ -797,10 +793,12 @@ def send_assistant_notification(item: dict[str, Any], *, dependencies: Mapping[s
         return False
     svc = service.split('.', 1)[1]
     suggested = _provider(dependencies, 'normalize_segment_type')(item.get('suggested_type'))
+    if suggested != 'business':
+        suggested = ''
     suggestion_text = f" · voorstel: {_provider(dependencies, 'trip_type_label')(suggested)}" if suggested else ''
-    message = f"{item.get('origin_name', 'Vertrek')} → {item.get('destination_name', 'Bestemming')}{suggestion_text}. Bevestig ritsoort; kilometerstand vul je later in Rit & Tank in."
+    message = f"{item.get('origin_name', 'Vertrek')} → {item.get('destination_name', 'Bestemming')}{suggestion_text}. Bevestig de zakelijke rit; kilometerstand vul je later in Rit & Tank in."
     aid = int(item['id'])
-    payload = {'title': f"🚗 Rit & Tank · {item.get('destination_name', 'Aankomst')} · {province}", 'message': message, 'data': {'tag': f'rit_tank_arrival_{aid}', 'url': 'https://rit.huisplanadvies.nl', 'actions': [{'action': f'RITTANK_PRIVATE_{aid}', 'title': 'Privé'}, {'action': f'RITTANK_BUSINESS_{aid}', 'title': 'Zakelijk'}, {'action': 'OPEN', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'}]}}
+    payload = {'title': f"🚗 Rit & Tank · {item.get('destination_name', 'Aankomst')} · {province}", 'message': message, 'data': {'tag': f'rit_tank_arrival_{aid}', 'url': 'https://rit.huisplanadvies.nl', 'actions': [{'action': f'RITTANK_BUSINESS_{aid}', 'title': 'Zakelijk'}, {'action': 'OPEN', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'}]}}
     try:
         _provider(dependencies, 'ha_post')(f'services/notify/{svc}', payload)
         with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
@@ -841,11 +839,10 @@ def _assistant_action_listener(*, dependencies: Mapping[str, Any]) -> None:
                 event = msg.get('event') or {}
                 data = event.get('data') or {}
                 action = str(data.get('action') or '')
-                m = re.fullmatch('RITTANK_(PRIVATE|BUSINESS)_(\\d+)', action)
+                m = re.fullmatch('RITTANK_BUSINESS_(\\d+)', action)
                 if m:
-                    trip_type = 'private' if m.group(1) == 'PRIVATE' else 'business'
                     try:
-                        _provider(dependencies, 'confirm_assistant_arrival')(int(m.group(2)), trip_type, 'notification')
+                        _provider(dependencies, 'confirm_assistant_arrival')(int(m.group(1)), 'business', 'notification')
                     except Exception as exc:
                         _provider(dependencies, 'assistant_state_set')('last_error', f'Notificatieactie: {exc}')
         except Exception as exc:

@@ -25,7 +25,7 @@ def _fixture(count=12):
                  known_place_id=2, latitude=52.0, longitude=6.0,
                  segment_trip_type='business'),
         ]
-        trips.append((dict(purpose='Familiebezoek', status='completed'), stops))
+        trips.append((dict(purpose='Familiebezoek', status='completed', trip_type='business'), stops))
     return trips
 
 
@@ -95,9 +95,9 @@ class PdfHeaderConsistencyTests(unittest.TestCase):
         self.assertGreaterEqual(len(pages), 2)
         headers = []
         for markup in pages[:2]:
-            title = re.search(r'<text [^>]*>Rittenregistratie</text>', markup).group(0)
+            title = re.search(r'<text [^>]*>Zakelijke kilometerdeclaratie</text>', markup).group(0)
             subtitle = re.search(
-                r'<text [^>]*>Fiscale kilometeradministratie</text>', markup).group(0)
+                r'<text [^>]*>Overzicht van zakelijke kilometers met privéauto</text>', markup).group(0)
             logo = re.search(r'<image [^>]*/>', markup).group(0)
             line = next(
                 tag for tag in re.findall(r'<line [^>]*/>', markup)

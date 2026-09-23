@@ -50,13 +50,12 @@ def _route_memory_suggestion(
     total = business + private
     if total < 2:
         return None
-    winner = 'business' if business >= private else 'private'
-    count = max(business, private)
-    ratio = count / total
+    count = business
+    ratio = count / total if total else 0
     if ratio < 0.70:
         return None
     return {
-        'suggested_type': winner,
+        'suggested_type': 'business',
         'reason': f'Eerder {count}x zo geregistreerd vanaf deze plek',
         'confidence': round(min(.94, .68 + .06 * count), 2),
         'source': 'learned',
@@ -79,8 +78,8 @@ def suggest_segment(
         origin = known_place_by_id(origin_stop.get('known_place_id')) or match_known_place(
             to_float(origin_stop.get('latitude')), to_float(origin_stop.get('longitude'))
         )
-    if destination and str(destination.get('arrival_trip_type') or 'ask') in {'business', 'private'}:
-        trip_type = str(destination['arrival_trip_type'])
+    if destination and str(destination.get('arrival_trip_type') or 'ask') == 'business':
+        trip_type = 'business'
         return {
             'suggested_type': trip_type,
             'reason': f'Bestemming {destination["name"]} staat als {trip_type_label(trip_type).lower()} ingesteld',
@@ -89,8 +88,8 @@ def suggest_segment(
             'origin_place': origin,
             'destination_place': destination,
         }
-    if origin and not destination and str(origin.get('unknown_departure_trip_type') or 'ask') in {'business', 'private'}:
-        trip_type = str(origin['unknown_departure_trip_type'])
+    if origin and not destination and str(origin.get('unknown_departure_trip_type') or 'ask') == 'business':
+        trip_type = 'business'
         return {
             'suggested_type': trip_type,
             'reason': f'Vanaf {origin["name"]} naar onbekende bestemming: {trip_type_label(trip_type)}',
@@ -303,6 +302,17 @@ def _insert_trip_stop(
     return stop_id
 
 
+def validate_trip_odometer_range(start_odometer: Any, end_odometer: Any) -> tuple[bool, str]:
+    try:
+        start = float(start_odometer)
+        end = float(end_odometer)
+    except (TypeError, ValueError):
+        return False, 'Vul een geldige kilometerstand in.'
+    if end < start:
+        return False, f'Kilometerstand is lager dan de vorige stop ({start:.0f} km).'
+    return True, ''
+
+
 def start_business_trip(payload: dict[str, Any], *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
     if active_business_trip(dependencies=dependencies) is not None:
         raise ValueError('Er staat al een ritregistratie open. Voeg een volgende locatie toe of sluit de dagrit af.')
@@ -313,7 +323,7 @@ def start_business_trip(payload: dict[str, Any], *, dependencies: Mapping[str, A
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
         cur = con.execute(
             '''INSERT INTO business_trips(started_at,status,purpose,client,note,trip_type,private_detour_km,modified_at)
-            VALUES(?,'active',?,?,?,'mixed',0,?)''',
+            VALUES(?,'active',?,?,?,'business',0,?)''',
             (
                 point['created_at'],
                 purpose or None,
@@ -366,11 +376,10 @@ def add_business_stop(
         suggestion = suggest_segment(
             last_stop, float(point['latitude']), float(point['longitude']), dependencies=dependencies
         )
-        segment_type = normalize_segment_type(payload.get('segment_trip_type'))
-        if not segment_type:
-            segment_type = normalize_segment_type(suggestion.get('suggested_type'))
-        if not segment_type:
-            raise ValueError('Kies of dit traject zakelijk of prive was.')
+        valid_range, range_message = validate_trip_odometer_range(last['odometer'], point['odometer'])
+        if not valid_range:
+            raise ValueError(range_message)
+        segment_type = 'business'
         sequence_no = int(last['sequence_no']) + 1
         label = 'einde' if finish else 'stop'
         stop_id = _insert_trip_stop(
@@ -404,15 +413,7 @@ def add_business_stop(
                 con=con,
             )
         remember_segment(last_stop, point, segment_type, con=con, dependencies=dependencies)
-        types = [
-            str(row['segment_trip_type'] or '')
-            for row in con.execute(
-                'SELECT segment_trip_type FROM trip_stops WHERE trip_id=? AND sequence_no>0',
-                (trip['id'],),
-            )
-        ]
-        types = [value for value in types if value in {'business', 'private'}]
-        overall = types[0] if types and all(value == types[0] for value in types) else 'mixed'
+        overall = 'business'
         if finish:
             route = str(payload.get('deviating_route') or '').strip()[:300]
             detour = max(0.0, _provider(dependencies, 'to_float')(payload.get('private_detour_km')) or 0.0)

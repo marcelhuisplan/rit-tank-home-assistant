@@ -23,7 +23,7 @@ def _fixture(count=2):
                  known_place_id=2, latitude=52.0, longitude=6.0,
                  segment_trip_type='business'),
         ]
-        trips.append((dict(purpose='Familiebezoek', status='completed'), stops))
+        trips.append((dict(purpose='Familiebezoek', status='completed', trip_type='business'), stops))
     return trips
 
 
@@ -79,7 +79,7 @@ class PdfMetadataTablePaddingTests(unittest.TestCase):
         markup = app.business_pdf('month', '2026', '3', preview=True)['pages'][0]
         dividers = self._table_dividers(markup)
         row_top = dividers[0]['y1']
-        label = _attrs(re.search(r'<text [^>]*>KALENDERJAAR</text>', markup).group(0))
+        label = _attrs(re.search(r'<text [^>]*>KILOMETERVERGOEDING</text>', markup).group(0))
         self.assertGreaterEqual(label['y'] - row_top, 8.0)
 
     def test_report_period_third_line_stays_above_row_divider(self):
@@ -106,7 +106,7 @@ class PdfMetadataTablePaddingTests(unittest.TestCase):
         markup = app.business_pdf('month', '2026', '3', preview=True)['pages'][0]
         dividers = self._table_dividers(markup)
         row_tops = [dividers[0]['y1'], dividers[1]['y1'], dividers[2]['y1']]
-        labels = ['KALENDERJAAR', 'RAPPORTPERIODE', 'BESTUURDER', 'AUTO', 'KENTEKEN', 'GEGENEREERD OP']
+        labels = ['KILOMETERVERGOEDING', 'RAPPORTPERIODE', 'BESTUURDER', 'PRIVÉAUTO', 'KENTEKEN', 'GEGENEREERD OP']
         offsets = []
         for idx, label_text in enumerate(labels):
             row_top = row_tops[idx // 2]
@@ -118,9 +118,9 @@ class PdfMetadataTablePaddingTests(unittest.TestCase):
     def test_header_and_logo_position_are_unchanged(self):
         """Regression guard: the metadata-table padding fix must not move the header."""
         markup = app.business_pdf('month', '2026', '3', preview=True)['pages'][0]
-        title = _attrs(re.search(r'<text [^>]*>Rittenregistratie</text>', markup).group(0))
+        title = _attrs(re.search(r'<text [^>]*>Zakelijke kilometerdeclaratie</text>', markup).group(0))
         subtitle = _attrs(re.search(
-            r'<text [^>]*>Fiscale kilometeradministratie</text>', markup).group(0))
+            r'<text [^>]*>Overzicht van zakelijke kilometers met privéauto</text>', markup).group(0))
         logo = _attrs(re.search(r'<image [^>]*/>', markup).group(0))
         # These are release 19.00's approved header coordinates (unchanged in this release).
         self.assertAlmostEqual(title['y'], 70.8661417322835, places=3)

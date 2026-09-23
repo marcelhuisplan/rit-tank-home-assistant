@@ -16,8 +16,8 @@ class Release1500SourceTests(unittest.TestCase):
         self.assertNotIn("'action': 'URI', 'title': 'Open Rit & Tank'", ASSISTANT)
         self.assertEqual(ASSISTANT.count("'action': 'OPEN', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'"), 2)
         self.assertEqual(ASSISTANT.count("'url': 'https://rit.huisplanadvies.nl'"), 3)
-        self.assertIn("'RITTANK_PRIVATE_", ASSISTANT)
         self.assertIn("'RITTANK_BUSINESS_", ASSISTANT)
+        self.assertNotIn("'RITTANK_PRIVATE_", ASSISTANT)
 
     def test_assistant_actions_are_width_constrained(self):
         self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", APP)
