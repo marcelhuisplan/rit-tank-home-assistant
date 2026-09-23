@@ -50,13 +50,12 @@ def _route_memory_suggestion(
     total = business + private
     if total < 2:
         return None
-    winner = 'business' if business >= private else 'private'
-    count = max(business, private)
-    ratio = count / total
+    count = business
+    ratio = count / total if total else 0
     if ratio < 0.70:
         return None
     return {
-        'suggested_type': winner,
+        'suggested_type': 'business',
         'reason': f'Eerder {count}x zo geregistreerd vanaf deze plek',
         'confidence': round(min(.94, .68 + .06 * count), 2),
         'source': 'learned',
@@ -79,8 +78,8 @@ def suggest_segment(
         origin = known_place_by_id(origin_stop.get('known_place_id')) or match_known_place(
             to_float(origin_stop.get('latitude')), to_float(origin_stop.get('longitude'))
         )
-    if destination and str(destination.get('arrival_trip_type') or 'ask') in {'business', 'private'}:
-        trip_type = str(destination['arrival_trip_type'])
+    if destination and str(destination.get('arrival_trip_type') or 'ask') == 'business':
+        trip_type = 'business'
         return {
             'suggested_type': trip_type,
             'reason': f'Bestemming {destination["name"]} staat als {trip_type_label(trip_type).lower()} ingesteld',
@@ -89,8 +88,8 @@ def suggest_segment(
             'origin_place': origin,
             'destination_place': destination,
         }
-    if origin and not destination and str(origin.get('unknown_departure_trip_type') or 'ask') in {'business', 'private'}:
-        trip_type = str(origin['unknown_departure_trip_type'])
+    if origin and not destination and str(origin.get('unknown_departure_trip_type') or 'ask') == 'business':
+        trip_type = 'business'
         return {
             'suggested_type': trip_type,
             'reason': f'Vanaf {origin["name"]} naar onbekende bestemming: {trip_type_label(trip_type)}',
