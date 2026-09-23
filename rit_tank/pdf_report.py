@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import html
+import math
+import re
 import textwrap
+import unicodedata
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -188,14 +191,16 @@ BADGE_TEXT_OFFSET = 26.0
 BADGE_RIGHT_PADDING = 8.0
 BADGE_HEIGHT = 16.0
 BADGE_RADIUS = 8.0
-BADGE_X = 402.0
+BADGE_X = 410.0
 BADGE_WIDTH = round(
     max(_SimplePdfPage.text_width(label, BADGE_TEXT_SIZE) for label in BADGE_LABELS)
     + BADGE_TEXT_OFFSET + BADGE_RIGHT_PADDING,
     1,
 )
-ADDRESS_X = 202.0
-ADDRESS_MAX_WIDTH = BADGE_X - 8 - ADDRESS_X
+ADDRESS_X = 157.0
+ADDRESS_MAX_WIDTH = 181.0
+ODOMETER_X = 347.0
+ODOMETER_RIGHT = 403.0
 ROW_HEIGHT = 43.0
 
 # Shared vertical layout for the top metadata table so all 6 cells (icon, label,
@@ -214,6 +219,98 @@ def _fit_text(value: Any, width: float, size: float = 9.5) -> str:
     if _SimplePdfPage.text_width(text, size) <= width:
         return text
     return text[:max(1, int(width / (size * 0.52)))]
+
+
+# Standard Helvetica advance widths (1/1000 em), ASCII 32 through 126.
+# Keep the existing approximate metrics above for the approved cards/badges.
+_TABLE_WIDTHS = (
+    (278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278,
+     556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556,
+     1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722,
+     778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278,
+     469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222,
+     833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334,
+     260, 334, 584),
+    (278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278,
+     556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611,
+     975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722,
+     778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333,
+     584, 556, 333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278,
+     889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389,
+     280, 389, 584),
+)
+
+
+def _table_text_width(value: str, size: float = 9.5, bold: bool = False) -> float:
+    widths = _TABLE_WIDTHS[int(bold)]
+    total = 0
+    for char in _pdf_text(value).encode('cp1252', 'replace').decode('cp1252'):
+        base = unicodedata.normalize('NFD', char)[0]
+        if 32 <= ord(base) <= 126:
+            total += widths[ord(base) - 32]
+        else:
+            # Conservative for other WinAnsi glyphs; an em dash is exactly 1 em.
+            total += 1000
+    return total * size / 1000
+
+
+def _address_lines(value: str) -> list[str]:
+    lines = ['']
+    for word in value.split():
+        candidate = (lines[-1] + ' ' + word).strip()
+        if _table_text_width(candidate) <= ADDRESS_MAX_WIDTH:
+            lines[-1] = candidate
+            continue
+        if lines[-1]:
+            lines.append('')
+        for char in word:
+            if _table_text_width(lines[-1] + char) > ADDRESS_MAX_WIDTH:
+                lines.append('')
+            lines[-1] += char
+    return lines
+
+
+def _full_address(value: Any) -> str:
+    address = ' '.join(str(value or '').split())
+    # Stored UI strings may prefix the physical address with a nickname.
+    address = re.split(r' [\-\u2013\u2014] ', address)[-1]
+    if re.fullmatch(
+        r'(?=[^,]*[^\W\d_])[^,]+\s+\d+[A-Za-z]?(?:[\s/-][\w-]+)?,\s*'
+        r'(?:[1-9]\d{3}\s?[A-Za-z]{2}|\d{4,6})\s+[^\d,]+(?:,\s*[^\d,]+)?',
+        address,
+    ):
+        return address
+    return ''
+
+
+def report_stop_address(stop: dict[str, Any], *, dependencies: Mapping[str, Callable[..., Any]]) -> str:
+    address = _full_address(stop.get('location_address'))
+    if address:
+        return address
+    if stop.get('known_place_id'):
+        place = _provider(dependencies, 'known_place_by_id')(stop['known_place_id'])
+        address = _full_address((place or {}).get('address'))
+        if address:
+            return address
+    address = _full_address(stop.get('manual_label'))
+    if address:
+        return address
+    if stop.get('latitude') is not None and stop.get('longitude') is not None:
+        address = _full_address(_provider(dependencies, 'cached_report_address')(
+            float(stop['latitude']), float(stop['longitude']),
+        ))
+        if address:
+            return address
+    return 'Adres ontbreekt'
+
+
+def _format_odometer(value: Any) -> str:
+    if value is None or value == '':
+        return '\u2014'
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise ValueError('Ongeldige tellerstand in de rittenregistratie.')
+    return f'{math.floor(number + 0.5):,}'.replace(',', '.') + ' km'
 
 
 def _build_pdf(pages: list[_SimplePdfPage], images: dict[str, tuple[int, int, bytes]] | None = None) -> bytes:
@@ -296,7 +393,11 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     trips = []
     for trip, stops in business_trips_raw():
         if stops and (period == 'all' or selection_start <= parse_dt(stops[0]['created_at']) < selection_end):
-            trips.append(enrich_business_trip(trip, stops, resolve=False))
+            enriched = enrich_business_trip(trip, stops, resolve=False)
+            # Select from the stored stop, before UI enrichment can replace its address.
+            for raw, stop in zip(stops, enriched['stops']):
+                stop['report_address'] = report_stop_address(raw, dependencies=deps)
+            trips.append(enriched)
     trips.sort(key=lambda trip: parse_dt(trip['stops'][0]['created_at']))
 
     if period == 'all':
@@ -533,59 +634,73 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
 
     def draw_table_header(page: _SimplePdfPage, x1: float, y_top: float) -> float:
         """Draw table header and return the y position after header."""
+        y_top = round(y_top, 2)
         header_h = 22
         header_bg = (241, 244, 248)
         page.rect(x1, y_top - header_h, 523, header_h, rgb=header_bg)
         page.line(x1, y_top - header_h, x1 + 523, y_top - header_h, 0.4, rgb=tint(palette['line'], 0.5))
         header_text_y = y_top - 15
-        page.text('#', 60, header_text_y, 9.5, bold=True, rgb=palette['text'])
-        page.text('Datum', 90, header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('#', 38, header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('Datum', 56, header_text_y, 9.5, bold=True, rgb=palette['text'])
         page.text('Vertrek → Aankomst (adres)', ADDRESS_X, header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('Tellerstand', ODOMETER_X, header_text_y, 9.5, bold=True, rgb=palette['text'])
         page.text('Soort', BADGE_X, header_text_y, 9.5, bold=True, rgb=palette['text'])
-        page.text('Afstand', 557 - _SimplePdfPage.text_width('Afstand', 9.5, bold=True), header_text_y, 9.5, bold=True, rgb=palette['text'])
+        page.text('Afstand', 557 - _table_text_width('Afstand', bold=True), header_text_y, 9.5, bold=True, rgb=palette['text'])
         return y_top - header_h - 1
 
-    def draw_table_row(page: _SimplePdfPage, y_top: float, row_num: int, row: dict[str, Any]) -> float:
+    def row_layout(row: dict[str, Any]) -> tuple[list[str], list[str], float, float]:
+        start = _address_lines(row['origin']['report_address'])
+        end = _address_lines(row['destination']['report_address'])
+        end_offset = 13 + max(16, len(start) * 12 + 4)
+        height = max(ROW_HEIGHT, end_offset + (len(end) - 1) * 12 + 14)
+        return start, end, end_offset, height
+
+    def draw_table_row(page: _SimplePdfPage, y_top: float, row_num: int, row: dict[str, Any],
+                       layout: tuple[list[str], list[str], float, float]) -> float:
         """Draw a single leg row. Returns the next available y position."""
-        row_h = ROW_HEIGHT
+        start_lines, end_lines, end_offset, row_h = layout
         x1, x2 = 36, 559
         origin, destination = row['origin'], row['destination']
 
         start_dt = parse_dt(origin['created_at'])
         end_dt = parse_dt(destination['created_at'])
 
-        start_addr = (origin.get('location_address') or origin.get('location_label') or
-                      origin.get('manual_label') or 'Locatie onbekend')
-        end_addr = (destination.get('location_address') or destination.get('location_label') or
-                    destination.get('manual_label') or 'Locatie onbekend')
-
         trip_label, trip_color = row['label'], row['color']
-        trip_km = format_dutch_km(row['km'])
+        km_text = format_dutch_km(row['km']) + ' km' if row['km'] is not None else '\u2014'
 
         page.line(x1, y_top, x2, y_top, 0.2, rgb=tint(palette['line'], 0.85))
 
         mid_y = y_top - row_h / 2
 
-        page.text(str(row_num), 60, mid_y + 2.5, 9, rgb=palette['text'])
+        page.text(str(row_num), 38, mid_y + 2.5, 9, rgb=palette['text'])
 
         date_text = format_dutch_date(start_dt)
         time_text = f'{format_dutch_time(start_dt)} \u2013 {format_dutch_time(end_dt)}'
-        page.text(date_text, 90, y_top - 16, 9.5, bold=True, rgb=palette['text'])
-        page.text(time_text, 90, y_top - 30, 8, rgb=palette['muted'])
+        page.text(date_text, 56, y_top - 16, 9.5, bold=True, rgb=palette['text'])
+        page.text(time_text, 56, y_top - 30, 8, rgb=palette['muted'])
 
-        page.circle(182, y_top - 10, 4.3, rgb=(76, 175, 80))
-        page.text(_fit_text(start_addr, ADDRESS_MAX_WIDTH), ADDRESS_X, y_top - 13, 9.5, rgb=palette['text'])
-
-        page.circle(182, y_top - 26, 4.3, rgb=(244, 67, 54))
-        page.text(_fit_text(end_addr, ADDRESS_MAX_WIDTH), ADDRESS_X, y_top - 29, 9.5, rgb=palette['text'])
+        for stop, lines, offset, color in (
+            (origin, start_lines, 13, (76, 175, 80)),
+            (destination, end_lines, end_offset, (244, 67, 54)),
+        ):
+            baseline = y_top - offset
+            page.circle(147, baseline + 3, 4.3, rgb=color)
+            for idx, line in enumerate(lines):
+                page.text(line, ADDRESS_X, baseline - idx * 12, 9.5, rgb=palette['text'])
+            odometer = _format_odometer(stop.get('odometer'))
+            if _table_text_width(odometer) > ODOMETER_RIGHT - ODOMETER_X:
+                raise ValueError('Tellerstand past niet in de PDF-kolom.')
+            page.text(odometer, ODOMETER_RIGHT - _table_text_width(odometer), baseline, 9.5,
+                      rgb=palette['muted'] if odometer == '\u2014' else palette['text'])
 
         page.rounded_rect(BADGE_X, mid_y - BADGE_HEIGHT / 2, BADGE_WIDTH, BADGE_HEIGHT,
                           radius=BADGE_RADIUS, rgb=tint(trip_color, 0.87))
         page.circle(BADGE_X + 9, mid_y, 3.4, rgb=trip_color)
         page.text(trip_label, BADGE_X + BADGE_TEXT_OFFSET, mid_y - 2.9, BADGE_TEXT_SIZE, rgb=trip_color)
 
-        km_text = trip_km + ' km'
-        km_w = _SimplePdfPage.text_width(km_text, 9.5, bold=True)
+        km_w = _table_text_width(km_text, bold=True)
+        if 557 - km_w <= BADGE_X + BADGE_WIDTH:
+            raise ValueError('Etappeafstand past niet in de PDF-kolom.')
         page.text(km_text, 557 - km_w, mid_y - 2.9, 9.5, bold=True, rgb=palette['text'])
 
         return y_top - row_h
@@ -610,12 +725,15 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
 
             for row in trip_segment_rows(trip, stops):
                 row_num += 1
+                layout = row_layout(row)
 
-                if page.need(ROW_HEIGHT + 3):
+                if page.need(layout[3] + 3):
                     page = new_page(compact=True)
                     page.y = draw_table_header(page, 36, page.y)
+                if page.need(layout[3] + 3):
+                    raise ValueError('Het volledige ritadres past niet op een PDF-pagina.')
 
-                page.y = draw_table_row(page, page.y, row_num, row)
+                page.y = draw_table_row(page, page.y, row_num, row, layout)
 
     total_pages = len(pages)
     for n, pg in enumerate(pages, start=1):

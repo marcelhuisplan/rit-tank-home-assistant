@@ -37,7 +37,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '20.00'
+APP_VERSION = '21.00'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
 BACKUP_LOCK = threading.Lock()
@@ -1737,6 +1737,8 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             'enrich_business_trip': enrich_business_trip,
             'parse_dt': parse_dt,
             'period_label': period_label,
+            'known_place_by_id': known_place_by_id,
+            'cached_report_address': cached_report_address,
         },
     )
 

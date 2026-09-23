@@ -506,21 +506,19 @@ def enrich_business_trip(
         date = parse_dt(item['created_at'])
         item['date_label'] = dutch_date(date)
         item['time_label'] = date.strftime('%H:%M')
-        km = (
-            max(0.0, float(item['odometer']) - previous_odometer)
-            if previous_odometer is not None else 0.0
-        )
-        item['segment_km'] = round(km, 1)
-        total += km
+        odometer = float(item['odometer']) if item.get('odometer') is not None else None
+        km = max(0.0, odometer - previous_odometer) if odometer is not None and previous_odometer is not None else None
+        item['segment_km'] = round(km, 1) if km is not None else (0.0 if not enriched else None)
+        total += km or 0.0
         segment_type = normalize_segment_type(item.get('segment_trip_type'))
         item['segment_trip_type'] = segment_type
         item['segment_trip_type_label'] = trip_type_label(segment_type) if segment_type else ''
         if segment_type:
             segment_types.append(segment_type)
             if segment_type == 'private':
-                private_km += km
+                private_km += km or 0.0
             else:
-                business_km += km
+                business_km += km or 0.0
         known_place = _provider(dependencies, 'known_place_by_id')(item.get('known_place_id'))
         item['known_place_name'] = known_place.get('name') if known_place else ''
         location = _provider(dependencies, 'trip_location_details')(item, resolve=resolve)
@@ -528,7 +526,7 @@ def enrich_business_trip(
         item['location_address'] = location['address']
         item['google_maps_uri'] = location['google_maps_uri']
         enriched.append(item)
-        previous_odometer = float(item['odometer'])
+        previous_odometer = odometer
     out['stops'] = enriched
     out['km'] = round(total, 1)
     if segment_types:
@@ -550,8 +548,8 @@ def enrich_business_trip(
         else:
             out['business_km'], out['private_km'] = round(total, 1), 0.0
     out['trip_type_label'] = trip_type_label(out['trip_type'])
-    out['start_odometer'] = float(stops[0]['odometer']) if stops else None
-    out['last_odometer'] = float(stops[-1]['odometer']) if stops else None
+    out['start_odometer'] = float(stops[0]['odometer']) if stops and stops[0].get('odometer') is not None else None
+    out['last_odometer'] = float(stops[-1]['odometer']) if stops and stops[-1].get('odometer') is not None else None
     out['stop_count'] = len(stops)
     if stops:
         out['start_location'] = enriched[0]['location_label']

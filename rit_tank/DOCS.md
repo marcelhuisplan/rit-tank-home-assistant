@@ -1,4 +1,11 @@
-# Rit & Tank 5.0 — stopmelding in Overijssel
+# Rit & Tank 21.00
+
+De fiscale PDF toont nu de opgeslagen vertrek- en aankomsttellerstand per etappe
+en uitsluitend volledige fysieke adressen. Zie **Fiscale rittenregistratie-PDF**
+voor adresprioriteit en ontbrekende gegevens. Deze release verandert geen
+databaseschema, API of ritassistent-wachtrij.
+
+## Historische installatie-informatie: 5.0 — stopmelding in Overijssel
 
 Versie 5.0.0 bevat dezelfde functies als 4.4.1, onder het aangevraagde nieuwe versienummer. Pak de map `rit_tank` uit naar `/addons/rit_tank` en vervang de bestaande bronbestanden. Het configuratiebestand moet direct op `/addons/rit_tank/config.yaml` staan. Vernieuw daarna de lokale app-store met Controleren op updates. Alleen de ZIP downloaden of de add-on herstarten installeert de update niet.
 
@@ -86,6 +93,25 @@ Open **Rit & Tank → Meer → Instellingen**:
 4. Begin met een Autopilotgrens van **95%**.
 
 Autopilot vult alleen de classificatie in. De rit blijft in **Te controleren** staan totdat de kilometerstanden compleet zijn. Alle automatische beslissingen komen in het wijzigingslogboek.
+
+## Fiscale rittenregistratie-PDF
+
+Elke etappe toont vertrek- en aankomstadres met daarnaast de bijbehorende
+opgeslagen stop-tellerstanden in de kolom **Tellerstand**. De standen staan
+rechts uitgelijnd, op dezelfde regel als het adres, met Nederlandse
+duizendtallen en hele kilometers (zoals in de app). Een ontbrekende stand
+wordt weergegeven als **—**, niet als nul. **Afstand** blijft de afzonderlijke
+etappeafstand; de PDF berekent die niet opnieuw uit de getoonde tellerstanden.
+
+Voor PDF-adressen geldt: volledig opgeslagen stopadres, daarna het volledige
+adres van de gekoppelde bekende plek, daarna een volledig handmatig opgeslagen
+adres en tenslotte het reeds opgeslagen adres uit de coördinatencache.
+De export doet hiervoor geen netwerkverzoeken en wijzigt geen gegevens.
+Bekende-pleklabels zoals Thuis of Kantoor zijn geen adres. Alleen een fysiek
+adres met straat, huisnummer, postcode en plaats wordt afgedrukt; ontbrekende
+of niet als volledig herkenbare adressen worden **Adres ontbreekt**.
+Lange adressen lopen door op een volgende tekstregel; de rij groeit mee en
+blijft bij een paginaovergang als één etappe bijeen.
 
 ## Slimme tankbon
 
