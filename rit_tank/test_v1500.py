@@ -37,14 +37,11 @@ class Release1500SourceTests(unittest.TestCase):
         self.assertIn('/correct-destination', APP)
         self.assertIn('/correct-route', APP)
 
-    def test_dictation_uses_browser_speech_and_preserves_typed_fallback(self):
-        self.assertIn('window.SpeechRecognition||window.webkitSpeechRecognition', APP)
-        self.assertIn("recognition.lang='nl-NL'", APP)
-        self.assertIn('recognition.interimResults=false', APP)
-        self.assertIn('recognition.maxAlternatives=1', APP)
-        self.assertIn("startAddressDictation('addrQuery',searchAssistantAddress)", APP)
-        self.assertIn("startAddressDictation('knownAddressQuery',searchKnownPlaceAddress)", APP)
-        self.assertIn('Typ het adres of gebruik de microfoon van het toetsenbord.', APP)
+    def test_typed_address_search_remains_without_dictation(self):
+        self.assertNotIn('SpeechRecognition', APP)
+        self.assertNotIn('startAddressDictation', APP)
+        self.assertIn('searchAssistantAddress()', APP)
+        self.assertIn('searchKnownPlaceAddress()', APP)
 
 
 if __name__ == '__main__':

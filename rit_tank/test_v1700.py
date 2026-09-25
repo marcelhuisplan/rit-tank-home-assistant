@@ -18,16 +18,13 @@ class Release1700AssistantReviewTests(unittest.TestCase):
         self.assertIn('Aankomstadres aanpassen', modal)
         self.assertNotIn('assistantAddressModal', APP)
 
-    def test_existing_route_and_dictation_helpers_are_reused(self):
+    def test_existing_route_and_search_helpers_are_reused(self):
         for value in (
             "chooseAssistantRouteSide('origin')",
             "chooseAssistantRouteSide('destination')",
             'searchAssistantAddress()',
             'selectAssistantAddressResult',
             'useAssistantAddressResult',
-            "startAddressDictation('addrQuery',searchAssistantAddress)",
-            'window.SpeechRecognition||window.webkitSpeechRecognition',
-            "recognition.lang='nl-NL'",
         ):
             self.assertIn(value, APP)
         self.assertIn('/api/places/search-address', APP)

@@ -1,5 +1,9 @@
 # Changelog
 
+## 25.00
+
+Release 25.00 voegt **🏠 Thuis** toe aan Nieuwe rit: altijd Verenlandweg 4, 7461 AP Rijssen. Typ een adres en tik direct op een zoekresultaat; de knoppen Dicteer adres en Dit adres gebruiken zijn verwijderd. GPS-adreskandidaten blijven direct selecteerbaar. Een locatie kiezen slaat niets op en start geen rit; bij een eindlocatie worden route, afstand en tellerstandsvoorstel ververst. Onder **Instellingen → Zakelijke kilometervergoeding** stel je het bedrag per km in (standaard € 0,25). Komma en punt worden geaccepteerd; de waarde wordt persistent opgeslagen via `km_reimbursement_rate`. Elke nieuwe PDF en CSV gebruikt het actuele tarief en herberekent de vergoeding per rit en het totaal met Decimal ROUND_HALF_UP. Het tarief is een huidige rapportinstelling, geen historisch tarief per rit.
+
 ## 24.00
 - Stopmeldingen voor actieve handmatige ritten zijn reminders. Ze slaan ritten niet op, sluiten ze niet af en maken geen assistant-reviewitem.
 - Een actieve rit blijft open totdat de gebruiker zelf een volgende locatie vastlegt of de rit afsluit.

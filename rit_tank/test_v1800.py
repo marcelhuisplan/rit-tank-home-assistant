@@ -113,8 +113,8 @@ class Release1800SourceTests(unittest.TestCase):
         self.assertNotIn('api/known-places', body)
         self.assertIn('selectKnownPlaceLocation(candidate)', APP)
 
-    def test_dictation_searches_before_trip_address_selection(self):
-        self.assertIn("startAddressDictation('tripManualAddress',searchTripManualAddress)", APP)
+    def test_typing_searches_before_trip_address_selection(self):
+        self.assertIn("setTimeout(searchTripManualAddress,350)", APP)
         self.assertIn("api('api/places/search-address'", APP)
 
     def test_live_refresh_is_light_and_separate(self):

@@ -396,7 +396,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     parse_dt = _provider(deps, 'parse_dt')
     period_label = _provider(deps, 'period_label')
     settings = get_settings()
-    km_rate_decimal = _decimal_or_zero(settings.get('km_reimbursement_rate') or 0.25)
+    km_rate_decimal = _decimal_or_zero(settings.get('km_reimbursement_rate', 0.25))
     ref = now_local()
     try:
         if year is not None:
