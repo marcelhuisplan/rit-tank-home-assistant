@@ -1,6 +1,6 @@
-# Rit & Tank 23.00
+# Rit & Tank 24.00
 
-Vanaf release 23.00 wordt Rit & Tank ingericht voor zakelijke kilometerregistratie met privéauto. De privé/zakelijk-classificatiekeuze is volledig verwijderd; alle nieuwe ritten worden automatisch als zakelijk geclassificeerd. De PDF transformeert naar een zakelijke kilometerdeclaratie met vergoeding per rit. Tellerstandgaten tussen afzonderlijke zakelijke ritten zijn bewust toegestaan—de partner mag privé rijden zonder registratie. De chronologische review-queue van versie 22.00 blijft behouden. Historische data wordt niet verwijderd.
+Vanaf release 24.00 zijn nieuwe ritten zakelijke kilometerdeclaraties met een privéauto. Een actieve handmatige rit blijft open tot je zelf een volgende locatie vastlegt of de rit afsluit. Stopmeldingen herinneren je aan een open rit en slaan niets op. De actuele invoer bevat geen ritsoortkeuze, reviewkaarten of privé-omrijkilometers. **🏠 Thuis** selecteert Verenlandweg 4, 7461 AP Rijssen en ververst de route- en tellerstandsuggestie. Historische privéritten en assistant-data blijven ongewijzigd; er is geen databaseschemamigratie.
 
 ## Vorige release: 22.00
 
@@ -15,21 +15,21 @@ Versie 5.0.0 bevat dezelfde functies als 4.4.1, onder het aangevraagde nieuwe ve
 
 ## Overijssel
 
-Bij een actieve rit verschijnt na 10 seconden **gedetecteerde** stilstand de vraag **Actieve rit opslaan?**. De geopende app controleert nieuwe stopvoorstellen iedere 2 seconden en onderbreekt geen open invoerscherm. Bevestigen opent de teller- en locatiecontrole; je slaat daarna zelf de rit op. Nee sluit alleen de vraag.
+Bij bevestigde stilstand tijdens een actieve handmatige rit stuurt Rit & Tank alleen een reminder. De melding vraagt niet om de rit op te slaan en sluit de rit niet af. Als het adres bekend is, wordt het informatief genoemd; tikken op de melding opent `https://rit.huisplanadvies.nl`.
 
-Als de PWA gesloten is, gebruikt de backend de ingestelde Home Assistant-meldingsservice. Er wordt geen gesloten Safari-app geforceerd geopend. De bestaande koppeling opent via `/local_rit_tank`; open zo nodig zelf je PWA. De pop-up wordt maximaal twee minuten na detectie aangeboden. GPS-updates en de backendcontrole (circa 10 seconden) kunnen extra vertraging veroorzaken.
+Als de PWA gesloten is, gebruikt de backend de ingestelde Home Assistant-meldingsservice. Safari wordt niet geforceerd geopend. De bestaande debounce en cooldown blijven gelden. GPS-updates en de backendcontrole kunnen de melding vertragen.
 
-De ritassistent moet aan staan in Assistent/Autopilot met je tracker geselecteerd. De ingestelde minimale ritafstand blijft gelden. Google Geocoding moet de provincie herkennen. Groningen en Drenthe behouden hun ingestelde stopvertraging. Test Overijssel op een veilige parkeerplek; 10 seconden kan ook bij verkeerslichten voorkomen.
+De ritassistent, Home Assistant-tracker en minimale ritafstand moeten zijn ingesteld. Google Geocoding moet de provincie herkennen. De bestaande provincieafhankelijke stopvertraging blijft gelden; 10 seconden stilstand kan ook bij verkeerslichten voorkomen.
 
 Versie 4.4 voegt het aankomstscherm, GPS-routeconcepten en persoonlijke kilometercorrectie toe. De bestaande SQLite-database, Ingress-weergave, tankbonherkenning, Drive-back-up en Home Assistant-koppeling blijven behouden.
 
 ## Nieuwe functies testen
 
-1. Zet de ritassistent aan, kies **Assistent** en je bestaande Home Assistant-locatietracker. Voeg minstens Thuis en een bestemming toe bij Bekende plekken.
-2. Rijd zonder handmatig een registratie te starten van een bekende plek naar de bestemming. De backend houdt vertrek en route als concept bij. Je kunt **Concept onderweg** zien in het rittenoverzicht.
-3. Na bevestigde aankomst verschijnt een voorstel in **Te controleren**. Kies **Controleren →**. Bij voldoende GPS-metingen toont het aankomstscherm een grote voorgestelde tellerstand.
-4. Kies de ritsoort als deze onbekend is. **Alles akkoord** slaat het voorstel op; **Aanpassen** opent vertrekstand en kilometerwiel. Bij een bestaande actieve rit kun je expliciet **Ook mijn actieve ritregistratie afsluiten** aanvinken.
-5. Vink alleen na vergelijking met de echte teller **vertrek- én aankomststand gecontroleerd** aan. Dit kan ook bij de handmatige Volgend adres-stap. Enkel een GPS-voorstel accepteren levert geen leervoorbeeld op.
+1. Start zelf een zakelijke ritregistratie en leg de startlocatie en tellerstand vast.
+2. Kies bij **Volgende adres** of **Rit afsluiten** tussen **🏠 Thuis** en **📍 Gebruik huidige locatie**. Handmatig een adres kiezen blijft ook mogelijk.
+3. Controleer het volledige adres, de routeafstand en de tellerstandsuggestie. De Thuis-knop gebruikt Verenlandweg 4, 7461 AP Rijssen; bevestig daarna zelf de locatie en sla de stop op of sluit de rit af.
+4. Een aankomst/stilstand tijdens een actieve rit laat de rit open. De reminder slaat niets op en maakt geen reviewitem.
+5. Test ook een notitie en een afwijkende route. Privé-omrijkilometers worden niet meer ingevoerd.
 
 Persoonlijke correctie begint pas na vijf stabiele gecontroleerde trajecten van minstens 5 km met minstens vijf GPS-metingen. Uitschieters buiten ±15% worden niet geleerd. De mediaan van de laatste 30 geldige voorbeelden wordt gebruikt, met maximaal ±10% correctie. De instelling is uitschakelbaar. Opgeslagen kilometerstanden worden nooit achteraf aangepast. De leerhistorie hoort bij het kenteken, of bij de voertuignaam als het kenteken leeg is. Vul daarom eerst het juiste kenteken in.
 
@@ -87,16 +87,15 @@ De Nabu Casa-URL met `/local_rit_tank` is een Home Assistant-dashboardroute en d
 
 De PWA opent fullscreen met een eigen icoon en blijft op haar eigen URL. De app-interface wordt lokaal gecachet; actuele gegevens, opslaan, exports, synchronisatie en GPS-fallback vereisen verbinding met de backend.
 
-## Autopilot instellen
+## Achtergrondlocatie en stopherinneringen
 
 Open **Rit & Tank → Meer → Instellingen**:
 
 1. Zet **Ritassistent actief** aan.
 2. Kies de iPhone `person` of `device_tracker` en de mobiele meldingsservice.
-3. Kies **Assistent** om alle routes te controleren, of **Autopilot** om zekere routes automatisch als Privé/Zakelijk te classificeren.
-4. Begin met een Autopilotgrens van **95%**.
+3. Stel de minimale ritafstand en stilstandsduur in.
 
-Autopilot vult alleen de classificatie in. De rit blijft in **Te controleren** staan totdat de kilometerstanden compleet zijn. Alle automatische beslissingen komen in het wijzigingslogboek.
+Tijdens een actieve handmatige rit houdt de assistent GPS-afstand en locatie bij. Bij een herkende stop stuurt hij alleen een reminder. Je sluit de rit zelf af.
 
 ## Fiscale rittenregistratie-PDF
 
