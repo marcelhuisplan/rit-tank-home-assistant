@@ -93,7 +93,7 @@ class PdfLegExportTests(unittest.TestCase):
         summary = texts[texts.index('TOTAAL ZAKELIJK'):]
         self.assertEqual(summary[1], '4,0 km')
         self.assertEqual(summary[summary.index('TOTALE VERGOEDING') + 1], '€ 1,00')
-        self.assertEqual(summary[summary.index('AANTAL RITTEN') + 1], '1')
+        self.assertEqual(summary[summary.index('AANTAL RITTEN') + 1], '2')
 
     def test_unclassified_leg_still_exports_without_type_column(self):
         texts = _texts(self._pages([UNCLASSIFIED_MIXED])[0])

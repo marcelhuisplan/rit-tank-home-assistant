@@ -7,7 +7,7 @@ import re
 import textwrap
 import unicodedata
 from datetime import datetime, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -326,6 +326,20 @@ def decimal_or_zero(value: Any) -> Decimal:
     return _decimal_or_zero(value)
 
 
+def report_km_rate(settings: Mapping[str, Any]) -> Decimal:
+    """Resolve one current report rate; only an unset value uses the default."""
+    raw_rate = settings.get('km_reimbursement_rate')
+    if raw_rate is None or raw_rate == '':
+        return Decimal('0.25')
+    try:
+        rate = Decimal(str(raw_rate).strip().replace(',', '.'))
+    except (InvalidOperation, ValueError):
+        raise ValueError('Vul een geldige kilometervergoeding in.') from None
+    if not rate.is_finite() or rate < 0:
+        raise ValueError('Vul een geldige kilometervergoeding in.')
+    return rate
+
+
 def calculate_km_reimbursement(km: Any, rate: Any) -> Decimal:
     return (_decimal_or_zero(km) * _decimal_or_zero(rate)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
@@ -396,7 +410,7 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
     parse_dt = _provider(deps, 'parse_dt')
     period_label = _provider(deps, 'period_label')
     settings = get_settings()
-    km_rate_decimal = _decimal_or_zero(settings.get('km_reimbursement_rate', 0.25))
+    km_rate_decimal = report_km_rate(settings)
     ref = now_local()
     try:
         if year is not None:
@@ -445,18 +459,6 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         else:
             filename_label = safe_period
         period_end = period_end_exclusive - timedelta(days=1)
-
-    total_km = round(sum(float(t.get('km') or 0) for t in trips if t.get('trip_type') == 'business'), 1)
-    business_km = total_km
-    total_reimbursement = sum(
-        (
-            calculate_km_reimbursement(t.get('km'), km_rate_decimal)
-            for t in trips
-            if t.get('trip_type') == 'business'
-        ),
-        Decimal('0.00'),
-    )
-    trip_count = len(trips)
 
     company_name = str(settings.get('company_name') or 'Huisplan BV').strip() or 'Huisplan BV'
     footer_company = 'Huisplan BV'
@@ -745,35 +747,40 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
 
         return y_top - row_h
 
+    # Build exactly the visible legs once, including zero-km and single-stop rows.
+    # Summary, reimbursement and numbering all consume this same ordered list.
+    report_rows = [
+        row
+        for trip in trips
+        if trip.get('stops')
+        for row in trip_segment_rows(trip, trip['stops'])
+    ]
+    business_km = sum((_decimal_or_zero(row['km']) for row in report_rows), Decimal('0'))
+    total_reimbursement = sum((row['reimbursement'] for row in report_rows), Decimal('0.00'))
+    trip_count = len(report_rows)
+
     page = new_page(compact=False)
     draw_report_table(page)
     draw_summary_cards(page)
     page.text('Rittenoverzicht', 36, page.y, 14, bold=True, rgb=palette['text'])
     page.y -= 20
 
-    if not trips:
+    if not report_rows:
         page.text('Geen ritten in deze periode.', 36, page.y, 10.5, rgb=palette['text'])
     else:
         table_y = page.y
         page.y = draw_table_header(page, 36, table_y)
 
-        row_num = 0
-        for trip in trips:
-            stops = trip.get('stops') or []
-            if not stops:
-                continue
+        for row_num, row in enumerate(report_rows, start=1):
+            layout = row_layout(row)
 
-            for row in trip_segment_rows(trip, stops):
-                row_num += 1
-                layout = row_layout(row)
+            if page.need(layout[3] + 3):
+                page = new_page(compact=True)
+                page.y = draw_table_header(page, 36, page.y)
+            if page.need(layout[3] + 3):
+                raise ValueError('Het volledige ritadres past niet op een PDF-pagina.')
 
-                if page.need(layout[3] + 3):
-                    page = new_page(compact=True)
-                    page.y = draw_table_header(page, 36, page.y)
-                if page.need(layout[3] + 3):
-                    raise ValueError('Het volledige ritadres past niet op een PDF-pagina.')
-
-                page.y = draw_table_row(page, page.y, row_num, row, layout)
+            page.y = draw_table_row(page, page.y, row_num, row, layout)
 
     explanation_title_height = 18
     explanation_line_height = 12.4
