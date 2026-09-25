@@ -252,6 +252,8 @@ def create_assistant_arrival(origin_place_id: int | None, destination_place_id: 
     now = _provider(dependencies, 'iso_local')()
     cutoff = _provider(dependencies, 'iso_local')(_provider(dependencies, 'now_local')() - timedelta(minutes=20))
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
+        if con.execute("SELECT 1 FROM business_trips WHERE status='active' LIMIT 1").fetchone():
+            return None
         recent = [dict(r) for r in con.execute("SELECT * FROM assistant_arrivals WHERE detected_at>=? AND status IN ('pending','confirmed') ORDER BY id DESC", (cutoff,))]
     for r in recent:
         if _provider(dependencies, 'haversine_m')(lat, lon, float(r['destination_latitude']), float(r['destination_longitude'])) < 180:
@@ -275,6 +277,8 @@ def create_assistant_arrival(origin_place_id: int | None, destination_place_id: 
     classification_source = 'autopilot' if auto_confirm else None
     handled_at = now if auto_confirm else None
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
+        if con.execute("SELECT 1 FROM business_trips WHERE status='active' LIMIT 1").fetchone():
+            return None
         cur = con.execute('\n            INSERT INTO assistant_arrivals(\n                detected_at,departure_at,origin_known_place_id,destination_known_place_id,\n                destination_latitude,destination_longitude,destination_accuracy,destination_label,\n                suggested_type,suggestion_reason,suggestion_confidence,status,confirmed_type,\n                classification_source,handled_at\n            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)\n        ', (now, departure_at, origin_place_id, destination_place_id, lat, lon, accuracy, destination_label[:180], suggested_type or None, str(suggestion.get('reason') or '')[:240], float(suggestion.get('confidence') or 0), status, suggested_type if auto_confirm else None, classification_source, handled_at))
         arrival_id = int(cur.lastrowid)
         _provider(dependencies, 'audit')('assistant_arrival', 'assistant', arrival_id, {'origin_place_id': origin_place_id, 'destination_place_id': destination_place_id, 'destination': destination_label, 'suggestion': suggestion, 'autopilot': auto_confirm}, con=con)
@@ -769,9 +773,9 @@ def send_active_trip_stop_notification(trip: dict[str, Any], tracked_m: float, p
     if not service.startswith('notify.') or not trip.get('stops'):
         return False
     svc = service.split('.', 1)[1]
-    km = tracked_m / 1000.0
-    address = str(geo.get('address') or province or 'huidige locatie')
-    payload = {'title': f'🏁 Rit & Tank · gestopt in {province}', 'message': f'Wil je je actieve rit opslaan? Je lijkt gestopt bij {address}. Achtergrondroute: ca. {km:.1f} km. Open Rit & Tank om de tellerstand te controleren en de rit af te sluiten.', 'data': {'tag': f"rit_tank_stop_{int(trip['id'])}", 'url': 'https://rit.huisplanadvies.nl', 'actions': [{'action': 'OPEN', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'}]}}
+    address = str(geo.get('address') or '').strip()
+    location = f'Je bent mogelijk gestopt bij {address}.\n' if address else ''
+    payload = {'title': '🚗 Rit & Tank · actieve rit', 'message': f'{location}Er staat nog een actieve zakelijke rit open.\nOpen Rit & Tank wanneer je deze wilt vervolgen of afsluiten.', 'data': {'tag': f"rit_tank_stop_{int(trip['id'])}", 'url': 'https://rit.huisplanadvies.nl', 'actions': [{'action': 'OPEN', 'title': 'Open Rit & Tank', 'uri': 'https://rit.huisplanadvies.nl'}]}}
     try:
         _provider(dependencies, 'ha_post')(f'services/notify/{svc}', payload)
         return True

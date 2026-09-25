@@ -416,7 +416,7 @@ def add_business_stop(
         overall = 'business'
         if finish:
             route = str(payload.get('deviating_route') or '').strip()[:300]
-            detour = max(0.0, _provider(dependencies, 'to_float')(payload.get('private_detour_km')) or 0.0)
+            detour = 0.0
             con.execute(
                 "UPDATE business_trips SET status='completed', ended_at=?, trip_type=?, "
                 'deviating_route=?, private_detour_km=?, modified_at=? WHERE id=?',

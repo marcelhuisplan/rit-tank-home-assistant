@@ -24,20 +24,20 @@ spec.loader.exec_module(app)
 class Version700Tests(unittest.TestCase):
     """Test current version consistency and the historical 7.00 changelog."""
     
-    def test_app_version_is_23_00(self):
-        self.assertEqual(app.APP_VERSION, '23.00')
+    def test_app_version_is_24_00(self):
+        self.assertEqual(app.APP_VERSION, '24.00')
     
-    def test_config_yaml_version_is_23_00(self):
+    def test_config_yaml_version_is_24_00(self):
         config_path = Path(__file__).with_name('config.yaml')
         if config_path.exists():
             content = config_path.read_text()
-            self.assertIn("version: '23.00'", content)
+            self.assertIn("version: '24.00'", content)
     
-    def test_readme_title_has_23_00(self):
+    def test_readme_title_has_24_00(self):
         readme_path = Path(__file__).with_name('README.md')
         if readme_path.exists():
             content = readme_path.read_text()
-            self.assertIn('# Rit & Tank 23.00', content)
+            self.assertIn('# Rit & Tank 24.00', content)
     
     def test_changelog_has_7_00_section(self):
         changelog_path = Path(__file__).with_name('CHANGELOG.md')
@@ -275,45 +275,31 @@ class AddressCorrectionTests(unittest.TestCase):
                 if p.attribute == 'get_route_distance':
                     p.start()
 
-    def test_correction_uses_active_trip_last_stop_as_origin_when_present(self):
-        """Als er een actieve zakelijke rit loopt, is de laatste stop daarvan de betrouwbare origin."""
-        for p in self.patches:
-            if p.attribute == 'get_route_distance':
-                p.stop()
-        try:
-            with app.db() as con:
-                cur = con.execute(
-                    "INSERT INTO business_trips(started_at,status) VALUES(?,?)",
-                    (app.iso_local(), 'active')
-                )
-                trip_id = int(cur.lastrowid)
-                con.execute(
-                    "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude) VALUES(?,?,?,?,?,?)",
-                    (trip_id, 0, app.iso_local(), 100, 50.0, 3.0)
-                )
-                con.commit()
-
-            arrival = app.create_assistant_arrival(
-                origin_place_id=None,
-                destination_place_id=None,
-                lat=52.9, lon=6.9,
-                accuracy=20,
-                departure_at=app.iso_local(),
-                destination_label='Foutieve bestemming B',
+    def test_arrival_is_suppressed_while_manual_trip_is_active(self):
+        """An active manual trip prevents an assistant review arrival from being created."""
+        with app.db() as con:
+            cur = con.execute(
+                "INSERT INTO business_trips(started_at,status) VALUES(?,?)",
+                (app.iso_local(), 'active')
             )
-            arrival_id = int(arrival['id'])
+            trip_id = int(cur.lastrowid)
+            con.execute(
+                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,latitude,longitude) VALUES(?,?,?,?,?,?)",
+                (trip_id, 0, app.iso_local(), 100, 50.0, 3.0)
+            )
 
-            mock_route = MagicMock(return_value={'type': 'route', 'distance_m': 500})
-            with patch.object(app, 'get_route_distance', mock_route):
-                app.correct_assistant_arrival_destination(arrival_id, {
-                    'latitude': 53.5, 'longitude': 7.5, 'address': 'Nieuwe bestemming C',
-                })
-
-            mock_route.assert_called_once_with(50.0, 3.0, 53.5, 7.5)
-        finally:
-            for p in self.patches:
-                if p.attribute == 'get_route_distance':
-                    p.start()
+        arrival = app.create_assistant_arrival(
+            origin_place_id=None,
+            destination_place_id=None,
+            lat=52.9, lon=6.9,
+            accuracy=20,
+            departure_at=app.iso_local(),
+            destination_label='Foutieve bestemming B',
+        )
+        self.assertIsNone(arrival)
+        with app.db() as con:
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM assistant_arrivals').fetchone()[0], 0)
+            self.assertEqual(con.execute("SELECT status FROM business_trips WHERE id=?", (trip_id,)).fetchone()[0], 'active')
 
     def test_correction_rejected_after_arrival_is_completed(self):
         """
@@ -430,39 +416,25 @@ class AddressCorrectionTests(unittest.TestCase):
         # De oorspronkelijke GPS-afstand (naar B) blijft ook auditmatig beschikbaar.
         self.assertEqual(round(float(dest_stop['original_destination_distance_m'])), 800)
 
-    def test_completed_trip_with_active_trip_uses_corrected_destination(self):
-        """Zelfde scenario, maar met een reeds bestaande actieve zakelijke rit."""
+    def test_assistant_arrival_does_not_change_an_active_manual_trip(self):
+        """The manual trip stays active; destination capture remains user-controlled."""
         started = app.iso_local(app.now_local() - timedelta(hours=2))
-        app.start_business_trip({'odometer': 40, 'created_at': started, 'latitude': 50.0, 'longitude': 3.0})
+        active = app.start_business_trip({'odometer': 40, 'created_at': started, 'latitude': 50.0, 'longitude': 3.0})['trip']
 
         arrival = app.create_assistant_arrival(
             origin_place_id=None,
             destination_place_id=None,
-            lat=52.9, lon=6.9,  # B
+            lat=52.9, lon=6.9,
             accuracy=20,
             departure_at=app.iso_local(app.now_local() - timedelta(hours=1)),
             destination_label='Bouwstraat, Rijssen',
             route_snapshot={'route_m': 800, 'route_samples': 5, 'route_incomplete': False},
         )
-        arrival_id = int(arrival['id'])
-
-        mock_route = MagicMock(return_value={'type': 'route', 'distance_m': 2400})
-        with patch.object(app, 'get_route_distance', mock_route):
-            app.correct_assistant_arrival_destination(arrival_id, {
-                'latitude': 53.5, 'longitude': 7.5, 'address': 'Eikenlaan 8, Rijssen',  # C
-            })
-
-        result = app.complete_assistant_arrival(arrival_id, {'trip_type': 'business', 'odometer': 45})
-        trip = app.business_trip_by_id(int(result['trip_id']))
-        dest_stop = trip['stops'][-1]
-
-        self.assertEqual(float(dest_stop['latitude']), 53.5)
-        self.assertEqual(float(dest_stop['longitude']), 7.5)
-        self.assertEqual(int(dest_stop['destination_manually_corrected']), 1)
-        self.assertEqual(float(dest_stop['original_destination_latitude']), 52.9)
-        self.assertEqual(float(dest_stop['original_destination_longitude']), 6.9)
-        self.assertEqual(dest_stop['original_destination_address'], 'Bouwstraat, Rijssen')
-        self.assertEqual(round(float(dest_stop['original_destination_distance_m'])), 800)
+        self.assertIsNone(arrival)
+        self.assertEqual(app.active_business_trip()['id'], active['id'])
+        with app.db() as con:
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM assistant_arrivals').fetchone()[0], 0)
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM trip_stops WHERE trip_id=?', (active['id'],)).fetchone()[0], 1)
 
     def test_preview_destination_does_not_mutate_database(self):
         """De preview-route mag GEEN databaseveld wijzigen."""
@@ -720,26 +692,12 @@ class AddressCorrectionTests(unittest.TestCase):
         self.assertIn("addrUseBtn').disabled=true", catch_body)
         self.assertNotIn("addrUseBtn').disabled=false", catch_body)
 
-    def test_ui_shows_unknown_distance_instead_of_zero_km_when_missing(self):
-        """
-        Statische regressietest op de front-end JS: als
-        corrected_destination_distance_m ontbreekt/null is, moet de UI
-        'afstand onbekend' tonen in plaats van '0,0 km (GPS-schatting)'.
-        0,0 km mag alleen worden getoond als de afstand daadwerkelijk
-        numeriek 0 is.
-        """
-        src = Path(app.__file__).read_text(encoding='utf-8')
-        match = re.search(r"function renderAssistant\(\)\{.*?\n\}", src, re.S)
-        self.assertIsNotNone(match, "renderAssistant niet gevonden")
-        fn_src = match.group(0)
-        corrected_match = re.search(r"let corrected=x\.destination_manually_corrected\?.*?:''(?=;)", fn_src)
-        self.assertIsNotNone(corrected_match, "corrected-weergave niet gevonden in renderAssistant")
-        corrected_src = corrected_match.group(0)
-        # Mag NIET langer '||0' gebruiken (dat maakt null/undefined stil tot 0).
-        self.assertNotIn("corrected_destination_distance_m||0", corrected_src)
-        # Moet expliciet op null/undefined controleren en een tekstuele fallback tonen.
-        self.assertIn("corrected_destination_distance_m!=null", corrected_src)
-        self.assertIn('afstand onbekend', corrected_src)
+    def test_manual_trip_preview_shows_unknown_distance_and_has_no_review_panel(self):
+        """The current location flow shows a fallback when route distance is missing."""
+        html = app.APP_HTML if isinstance(app.APP_HTML, str) else app.APP_HTML.decode('utf-8')
+        self.assertIn("distance==null?'Afstand nog niet beschikbaar'", html)
+        self.assertNotIn('assistantPanel', html)
+        self.assertNotIn('assistantList', html)
 
     def test_arrival_proposal_missing_distance_is_none_not_zero(self):
         """
@@ -776,18 +734,22 @@ class Release1400UiTests(unittest.TestCase):
         cls.src = Path(app.__file__).read_text(encoding='utf-8')
 
     def test_active_trip_renders_single_live_gps_view(self):
-        render_business = re.search(r"function renderBusiness\(\)\{.*?\}renderAssistant", self.src, re.S)
+        render_business = re.search(r"function renderBusiness\(\)\{.*?(?=function renderBusinessHistory)", self.src, re.S)
         self.assertIsNotNone(render_business, "renderBusiness niet gevonden")
         source = render_business.group(0)
         self.assertIn('Live GPS-afstand', source)
         self.assertIn('Laatste tellerstand', source)
         self.assertIn('Voorgestelde eindstand', source)
         self.assertIn('os.distance_warning', source)
+        self.assertIn('Volgende adres', source)
+        self.assertIn('Rit afsluiten', source)
 
-    def test_assistant_draft_distance_is_hidden_for_active_trip(self):
-        render_assistant = re.search(r"function renderAssistant\(\)\{.*?\n", self.src, re.S)
-        self.assertIsNotNone(render_assistant, "renderAssistant niet gevonden")
-        self.assertIn("rt.draft_active&&!DATA?.business?.active_trip", render_assistant.group(0))
+    def test_assistant_review_panel_is_removed_from_current_page(self):
+        html = app.APP_HTML if isinstance(app.APP_HTML, str) else app.APP_HTML.decode('utf-8')
+        self.assertNotIn('assistantPanel', html)
+        self.assertNotIn('assistantList', html)
+        self.assertNotIn('function renderAssistant()', html)
+        self.assertNotIn('renderAssistant()', html)
 
     def test_trip_modal_refreshes_before_it_opens_and_keeps_warning(self):
         open_trip = re.search(r"async function openTripPoint\(mode\)\{.*?\n", self.src, re.S)

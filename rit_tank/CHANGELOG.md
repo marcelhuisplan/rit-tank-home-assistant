@@ -1,5 +1,15 @@
 # Changelog
 
+## 24.00
+- Stopmeldingen voor actieve handmatige ritten zijn reminders. Ze slaan ritten niet op, sluiten ze niet af en maken geen assistant-reviewitem.
+- Een actieve rit blijft open totdat de gebruiker zelf een volgende locatie vastlegt of de rit afsluit.
+- De locatiekeuze heeft de snelkeuze **🏠 Thuis** voor `Verenlandweg 4, 7461 AP Rijssen`; een geldige bestaande bekende plek wordt hergebruikt, anders zoekt de bestaande Google Places-functionaliteit coördinaten op.
+- De Thuis-keuze vult het volledige adres en coördinaten in en ververst routeafstand en tellerstandsuggestie zonder de rit op te slaan.
+- Het **Te controleren**-paneel, de zakelijke/privé-keuze en invoer voor privé-omrijkilometers zijn uit de actuele interface verwijderd.
+- Nieuwe ritten en etappes blijven zakelijk; nieuwe `private_detour_km`-waarden blijven `0`.
+- Historische privéritten, assistant-arrivals, auditlogs en backward-compatible API's blijven behouden. Er is geen databaseschemamigratie.
+- De zakelijke PDF/CSV en kilometervergoeding uit 23.00 blijven behouden.
+
 ## 23.00
 - Rit & Tank registreert vanaf 23.00 uitsluitend zakelijke declarabele ritten met privéauto.
 - De privé/zakelijk-classificatiekeuze is volledig uit de invoerstroom verwijderd.
