@@ -122,7 +122,7 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(len(snapshot['stops']), len(event_ids))
 
     def test_current_version_is_consistent_across_runtime_and_docs(self):
-        version = '24.00'
+        version = '25.00'
         root = Path(__file__).parent
         self.assertEqual(app.APP_VERSION, version)
         self.assertRegex((root / 'config.yaml').read_text(encoding='utf-8'), rf"(?m)^version: ['\"]{re.escape(version)}['\"]$")
@@ -130,11 +130,11 @@ class AutonomyTests(unittest.TestCase):
         self.assertTrue((root / 'CHANGELOG.md').read_text(encoding='utf-8').startswith(f'# Changelog\n\n## {version}'))
         self.assertTrue((root / 'DOCS.md').read_text(encoding='utf-8').startswith(f'# Rit & Tank {version}'))
         readme = (root / 'README.md').read_text(encoding='utf-8')
-        self.assertIn('Huidige release: **24.00**.', readme)
-        self.assertIn('Volgende release: **25.00**.', readme)
+        self.assertIn('Huidige release: **25.00**.', readme)
+        self.assertIn('Volgende release: **26.00**.', readme)
         ci = (root.parent / '.github' / 'workflows' / 'ci.yml').read_text(encoding='utf-8')
-        self.assertEqual(ci.count("app.APP_VERSION == '24.00'"), 2)
-        self.assertIn('BUILD_VERSION=24.00', ci)
+        self.assertEqual(ci.count("app.APP_VERSION == '25.00'"), 2)
+        self.assertIn('BUILD_VERSION=25.00', ci)
         self.assertIn(f'rit-tank-shell-{version}'.encode('utf-8'), app.SERVICE_WORKER)
         self.assertEqual(app.summary()['app']['version'], version)
 
