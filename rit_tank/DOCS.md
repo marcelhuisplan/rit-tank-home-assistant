@@ -1,4 +1,6 @@
-# Rit & Tank 25.00
+# Rit & Tank 26.00
+
+Release 26.00 gebruikt bij iedere PDF-export de actuele opgeslagen kilometervergoeding. Een wijziging werkt direct bij de volgende export, zonder herstart. Vergoeding per etappe en totaal gebruiken hetzelfde Decimal-tarief met ROUND_HALF_UP. Aantal ritten, zakelijke kilometers, totaalvergoeding en tabelnummering komen uit dezelfde definitieve geëxporteerde rit-/etapperegels, inclusief zichtbare 0-km-regels. PDF-layout en historische ritdata blijven ongewijzigd.
 
 Release 25.00 voegt **🏠 Thuis** toe aan Nieuwe rit: altijd Verenlandweg 4, 7461 AP Rijssen. Typ een adres en tik direct op een zoekresultaat; de knoppen Dicteer adres en Dit adres gebruiken zijn verwijderd. GPS-adreskandidaten blijven direct selecteerbaar. Een locatie kiezen slaat niets op en start geen rit; bij een eindlocatie worden route, afstand en tellerstandsvoorstel ververst. Onder **Instellingen → Zakelijke kilometervergoeding** stel je het bedrag per km in (standaard € 0,25). Komma en punt worden geaccepteerd; de waarde wordt persistent opgeslagen via `km_reimbursement_rate`. Elke nieuwe PDF en CSV gebruikt het actuele tarief en herberekent de vergoeding per rit en het totaal met Decimal ROUND_HALF_UP. Het tarief is een huidige rapportinstelling, geen historisch tarief per rit.
 

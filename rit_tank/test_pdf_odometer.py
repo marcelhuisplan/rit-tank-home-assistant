@@ -166,7 +166,8 @@ class PdfOdometerTests(unittest.TestCase):
             markup = self.export()['pages'][0]
         self.assertTrue(find_text(markup, '63.845 km'))
         self.assertTrue(find_text(markup, '63.847 km'))
-        self.assertEqual(len(find_text(markup, '10,0 km')), 1)
+        # Both the visible leg and its summary use the exported segment distance.
+        self.assertEqual(len(find_text(markup, '10,0 km')), 2)
 
     def test_stop_address_survives_ui_enrichment_and_labels_become_missing(self):
         self.fixtures = fixture(1)
