@@ -204,6 +204,10 @@ class ReimbursementTests(unittest.TestCase):
             )
             con.commit()
 
+        # A definitive export now requires complete physical addresses.
+        with app.db() as con:
+            con.execute("UPDATE trip_stops SET manual_label=?", (app.HOME_ADDRESS,))
+
         handler = DummyHandler()
         app.Handler.export_business_csv(handler, 'all')
         data = handler.wfile.getvalue().decode('utf-8-sig')

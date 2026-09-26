@@ -1,5 +1,11 @@
 # Changelog
 
+## 27.00
+
+Release 27.00 voegt een maand-/jaarcontrole toe vóór PDF- en CSV-export. De controle gebruikt exact de zichtbare PDF-rit-/etapperegels en de actuele kilometervergoeding. Ontbrekende volledige adressen, ontbrekende/ongeldige tellerstanden, een dalende tellerstand binnen één etappe en een eindtijd vóór de starttijd zijn fouten die export blokkeren. Zichtbare 0-km-ritten blijven behouden als waarschuwing (met onderscheid tussen gelijke en verschillende adressen). Opvallende afstand/tellerafwijkingen, onwaarschijnlijke tijdsduur/snelheid en exact overeenkomende mogelijke dubbele ritten geven een waarschuwing. Waarschuwingen vereisen expliciete bevestiging, ook via de backend voor PDF, preview en CSV. Vanuit een aandachtspunt opent de bestaande ritmodal voor adres-, tellerstand- en tijdcorrecties; na opslaan worden controle en totalen opnieuw berekend.
+
+Tellerstandgaten tussen aparte zakelijke ritten zijn bewust toegestaan: privégebruik kan daartussen plaatsvinden. Doel en opmerking zijn niet verplicht. Dit is een datakwaliteitscontrole, geen fiscale goedkeuring. Er zijn geen externe calls, nieuwe databasekolommen, maandvergrendeling of opgeslagen reviewstatus. De PDF-layout, adressen-/tellerstandweergave, aantallen en vergoedingsberekening uit 26.00 blijven behouden. CSV behoudt zijn bestaande kolommen en stopregels, met dezelfde periodeselectie en validatie als PDF.
+
 ## 26.00
 
 Release 26.00 gebruikt bij iedere PDF-export de actuele opgeslagen kilometervergoeding. Een wijziging werkt direct bij de volgende export, zonder herstart. Vergoeding per etappe en totaal gebruiken hetzelfde Decimal-tarief met ROUND_HALF_UP. Aantal ritten, zakelijke kilometers, totaalvergoeding en tabelnummering komen uit dezelfde definitieve geëxporteerde rit-/etapperegels, inclusief zichtbare 0-km-regels. PDF-layout en historische ritdata blijven ongewijzigd.

@@ -1,4 +1,8 @@
-# Rit & Tank 26.00
+# Rit & Tank 27.00
+
+Release 27.00 voegt een maand-/jaarcontrole toe vóór PDF- en CSV-export. De controle gebruikt exact de zichtbare PDF-rit-/etapperegels en de actuele kilometervergoeding. Ontbrekende volledige adressen, ontbrekende/ongeldige tellerstanden, een dalende tellerstand binnen één etappe en een eindtijd vóór de starttijd zijn fouten die export blokkeren. Zichtbare 0-km-ritten blijven behouden als waarschuwing (met onderscheid tussen gelijke en verschillende adressen). Opvallende afstand/tellerafwijkingen, onwaarschijnlijke tijdsduur/snelheid en exact overeenkomende mogelijke dubbele ritten geven een waarschuwing. Waarschuwingen vereisen expliciete bevestiging, ook via de backend voor PDF, preview en CSV. Vanuit een aandachtspunt opent de bestaande ritmodal voor adres-, tellerstand- en tijdcorrecties; na opslaan worden controle en totalen opnieuw berekend.
+
+Tellerstandgaten tussen aparte zakelijke ritten zijn bewust toegestaan: privégebruik kan daartussen plaatsvinden. Doel en opmerking zijn niet verplicht. Dit is een datakwaliteitscontrole, geen fiscale goedkeuring. Er zijn geen externe calls, nieuwe databasekolommen, maandvergrendeling of opgeslagen reviewstatus. De PDF-layout, adressen-/tellerstandweergave, aantallen en vergoedingsberekening uit 26.00 blijven behouden. CSV behoudt zijn bestaande kolommen en stopregels, met dezelfde periodeselectie en validatie als PDF.
 
 Release 26.00 gebruikt bij iedere PDF-export de actuele opgeslagen kilometervergoeding. Een wijziging werkt direct bij de volgende export, zonder herstart. Vergoeding per etappe en totaal gebruiken hetzelfde Decimal-tarief met ROUND_HALF_UP. Aantal ritten, zakelijke kilometers, totaalvergoeding en tabelnummering komen uit dezelfde definitieve geëxporteerde rit-/etapperegels, inclusief zichtbare 0-km-regels. PDF-layout en historische ritdata blijven ongewijzigd.
 
@@ -305,3 +309,11 @@ De melding bevat een suggestie, geen definitieve fiscale beslissing. Jij kunt di
 **Onbekende bestemming wordt niet gedetecteerd**
 - dit hangt af van achtergrondlocatie-updates van iOS;
 - voeg veelgebruikte bestemmingen bij voorkeur als bekende plek toe voor betrouwbaardere herkenning.
+
+### Controle vóór export (27.00)
+
+Kies PDF of Ritten CSV, maand/jaar en periode. De controle start automatisch. Corrigeer rode aandachtspunten via Corrigeren. Oranje aandachtspunten kunnen na controle expliciet worden geaccepteerd voor deze export. Iedere export wordt opnieuw live gecontroleerd.
+
+`GET /api/business/validate?period=month&year=2026&month=9` levert status, samenvatting en issues. Dezelfde parameters gelden voor PDF en CSV. Bij fouten antwoorden exportendpoints met 422; bij waarschuwingen zonder `allow_warnings=true` met 409. Ook `/api/business/pdf-preview` en de PDF-alias zijn beschermd.
+
+Afstandswaarschuwing: absoluut verschil minimaal 3 km én minimaal 25% van de grootste van ritafstand/tellerverschil. In de huidige opgeslagen ritdata is de etappeafstand afgeleid van de tellerstanden; de helper vergelijkt de aangeleverde rapportafstand zonder extra routeberekening. Ontbrekende onafhankelijke GPS-/routeafstanden worden overgeslagen. Tijden worden alleen vergeleken als beide geldig en onderling vergelijkbaar zijn; >180 km/u is een waarschuwing. Duplicaten vereisen exact dezelfde starttijd, adressen, begin-/eindstand en afstand; er wordt niets verwijderd.
