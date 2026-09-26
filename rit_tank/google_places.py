@@ -136,16 +136,17 @@ def google_place_details(place_id: str, *, dependencies: Mapping[str, Any]) -> d
         return cached[1]
     try:
         data = _provider(dependencies, 'http_json')(
-            f'https://places.googleapis.com/v1/places/{quote(place_id, safe="")}',
+            f'https://places.googleapis.com/v1/places/{quote(place_id, safe="")}?languageCode=nl&regionCode=NL',
             headers={
                 'X-Goog-Api-Key': key,
-                'X-Goog-FieldMask': 'id,displayName,formattedAddress,location',
+                'X-Goog-FieldMask': 'id,displayName,formattedAddress,location,addressComponents',
             }, timeout=8,
         )
         loc = data.get('location') or {}
         result = {
             'place_id': str(data.get('id') or place_id),
             'name': str((data.get('displayName') or {}).get('text') or 'Tankstation'),
+            'address_components': data.get('addressComponents') or [],
             'address': str(data.get('formattedAddress') or ''),
             'latitude': _provider(dependencies, 'to_float')(loc.get('latitude')),
             'longitude': _provider(dependencies, 'to_float')(loc.get('longitude')),

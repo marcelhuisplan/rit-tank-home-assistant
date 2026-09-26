@@ -1,5 +1,12 @@
 # Changelog
 
+## 28.00
+
+- Google-adreszoeker in Rit corrigeren, met expliciete selectie en servervalidatie via bestaande Places Details.
+- Historische adressen blijven behouden; audit bewaart oud/nieuw adres en Google-place-id.
+- iPhone: eigen aanraakbare suggesties, toetsenbordviewport en onderdrukking van contact-autofill.
+- Geen nieuwe API-key/provider of databasemigratie; rapporten gebruiken de geselecteerde correctie.
+
 ## 27.00
 
 Release 27.00 voegt een maand-/jaarcontrole toe vóór PDF- en CSV-export. De controle gebruikt exact de zichtbare PDF-rit-/etapperegels en de actuele kilometervergoeding. Ontbrekende volledige adressen, ontbrekende/ongeldige tellerstanden, een dalende tellerstand binnen één etappe en een eindtijd vóór de starttijd zijn fouten die export blokkeren. Zichtbare 0-km-ritten blijven behouden als waarschuwing (met onderscheid tussen gelijke en verschillende adressen). Opvallende afstand/tellerafwijkingen, onwaarschijnlijke tijdsduur/snelheid en exact overeenkomende mogelijke dubbele ritten geven een waarschuwing. Waarschuwingen vereisen expliciete bevestiging, ook via de backend voor PDF, preview en CSV. Vanuit een aandachtspunt opent de bestaande ritmodal voor adres-, tellerstand- en tijdcorrecties; na opslaan worden controle en totalen opnieuw berekend.

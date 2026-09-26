@@ -1,4 +1,6 @@
-# Rit & Tank 27.00
+# Rit & Tank 28.00
+
+Release 28.00 voegt Google-adressuggesties toe aan **Rit corrigeren**, voor vertrek, tussenstops en aankomst. Typ minimaal drie tekens en kies zelf een resultaat. Alleen een geselecteerd, door Google Places Details bevestigd volledig adres kan worden opgeslagen. De bestaande Google-configuratie, Text Search met Nederlandse voorkeur, adresnotatie en correctiehistorie worden hergebruikt. Ongewijzigde adressen blijven exact behouden; ook historische onvolledige tekst blijft zichtbaar. Zoekfouten wijzigen niets. Er is geen nieuwe provider, sleutel of databaseschemamigratie. Kilometerstanden, afstanden en vergoeding veranderen niet door alleen een adrescorrectie.
 
 Release 27.00 voegt een maand-/jaarcontrole toe vóór PDF- en CSV-export. De controle gebruikt exact de zichtbare PDF-rit-/etapperegels en de actuele kilometervergoeding. Ontbrekende volledige adressen, ontbrekende/ongeldige tellerstanden, een dalende tellerstand binnen één etappe en een eindtijd vóór de starttijd zijn fouten die export blokkeren. Zichtbare 0-km-ritten blijven behouden als waarschuwing (met onderscheid tussen gelijke en verschillende adressen). Opvallende afstand/tellerafwijkingen, onwaarschijnlijke tijdsduur/snelheid en exact overeenkomende mogelijke dubbele ritten geven een waarschuwing. Waarschuwingen vereisen expliciete bevestiging, ook via de backend voor PDF, preview en CSV. Vanuit een aandachtspunt opent de bestaande ritmodal voor adres-, tellerstand- en tijdcorrecties; na opslaan worden controle en totalen opnieuw berekend.
 
@@ -39,8 +41,8 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **27.00**.
+- Huidige release: **28.00**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
-- Volgende release: **28.00**.
+- Volgende release: **29.00**.
 - Dit is een **handmatig** releasebeleid: het versienummer (`APP_VERSION` in `app.py`, `version` in `config.yaml`, de titels in `README.md`/`DOCS.md`) wordt alleen door een expliciete, door de eigenaar aangevraagde wijziging opgehoogd. De applicatie verhoogt dit nummer nooit automatisch tijdens runtime.

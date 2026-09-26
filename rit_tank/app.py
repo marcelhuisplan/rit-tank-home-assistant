@@ -38,7 +38,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '27.00'
+APP_VERSION = '28.00'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
@@ -621,6 +621,27 @@ def google_places_text_search(query: str) -> list[dict[str, Any]]:
 
 def google_place_details(place_id: str) -> dict[str, Any] | None:
     return google_places.google_place_details(place_id, dependencies=_places_dependencies())
+
+
+def confirmed_correction_address(change: dict[str, Any]) -> dict[str, Any]:
+    """Verify the user's chosen Places result, never geocode arbitrary typed text."""
+    place_id = str(change.get('place_id') or '').strip()
+    if not place_id:
+        raise ValueError('Selecteer een volledig adres uit de Google-resultaten voordat je opslaat.')
+    try:
+        selected = google_place_details(place_id)
+    except Exception:
+        selected = None
+    if not selected:
+        raise ValueError('Google kon het gekozen adres niet bevestigen. De rit is niet gewijzigd. Probeer later opnieuw.')
+    components = {kind for c in selected.get('address_components', [])
+                  if c.get('longText') or c.get('shortText') for kind in c.get('types', [])}
+    if not {'route', 'street_number', 'postal_code'} <= components or not components.intersection({'locality', 'postal_town'}):
+        raise ValueError('Kies een volledig Google-adres met straat, huisnummer, postcode en plaats.')
+    address = selected.get('address') or ''
+    if selected.get('place_id') != place_id or not address or len(address) > 500 or address != change.get('address'):
+        raise ValueError('Het adres komt niet overeen met het gekozen Google-resultaat. Zoek en selecteer het adres opnieuw.')
+    return selected
 
 
 def google_reverse_geocode(lat: float, lon: float) -> dict[str, Any]:
@@ -1748,6 +1769,7 @@ def _trips_dependencies() -> dict[str, Any]:
         'assistant_state_set': assistant_state_set,
         'learn_distance': learn_distance,
         'trip_location_details': trip_location_details,
+        'confirmed_correction_address': confirmed_correction_address,
         'dutch_date': dutch_date,
         'period_bounds': period_bounds,
     }
@@ -2370,7 +2392,7 @@ APP_HTML = r'''<!doctype html>
 @media print{@page{size:A4;margin:0}html,body{margin:0!important;padding:0!important;background:white!important;height:auto!important;overflow:visible!important}body.printing-pdf>*:not(#pdfModal){display:none!important}body.printing-pdf #pdfModal{display:block!important;position:static!important;padding:0!important;background:white!important}body.printing-pdf #pdfModal .sheet{display:block!important;overflow:visible!important;height:auto!important;max-height:none!important;padding:0!important;background:white!important}body.printing-pdf .pdf-toolbar{display:none!important}body.printing-pdf #pdfPages{overflow:visible!important;padding:0!important;display:block!important;background:white!important}body.printing-pdf .pdf-page{width:210mm;height:297mm;margin:0!important;max-width:none;box-shadow:none;break-after:page;page-break-after:always}body.printing-pdf .pdf-page:last-child{break-after:auto;page-break-after:auto}body.printing-pdf .pdf-page svg{width:210mm;height:297mm}}
 
 #pdfPeriodModal label{display:block;margin-top:16px;color:var(--muted)}#pdfPeriodModal input,#pdfPeriodModal select{display:block;width:100%;margin-top:6px;padding:14px;border:1px solid #34404a;border-radius:14px;background:#0e1216;color:white;font-size:17px}#pdfPeriodModal p{line-height:1.5}
-#pdfPeriodModal .sheet,#tripEditModal .sheet{box-sizing:border-box;overflow-x:hidden;min-width:0}#pdfPeriodModal h2{font-size:20px;overflow-wrap:anywhere}.report-issue{border:1px solid #34404a;border-left:3px solid var(--accent,#58dfb1);border-radius:12px;padding:12px;margin:12px 0;overflow-wrap:anywhere;min-width:0}.report-warning{border-left-color:#d9a441}.report-error{border-left-color:#cf7777}.report-ok{border-left-color:#58dfb1}.report-issue p{margin:8px 0}.report-issue button,#reportWarningModal button{min-height:44px;white-space:normal}.report-issue input{width:100%;max-width:100%;min-width:0;box-sizing:border-box}#reportExportButton{white-space:normal}#reportExportButton:disabled{opacity:.5}
+#pdfPeriodModal .sheet,#tripEditModal .sheet{box-sizing:border-box;overflow-x:hidden;min-width:0}#pdfPeriodModal h2{font-size:20px;overflow-wrap:anywhere}.report-issue{border:1px solid #34404a;border-left:3px solid var(--accent,#58dfb1);border-radius:12px;padding:12px;margin:12px 0;overflow-wrap:anywhere;min-width:0}.report-warning{border-left-color:#d9a441}.report-error{border-left-color:#cf7777}.report-ok{border-left-color:#58dfb1}.report-issue p{margin:8px 0}.report-issue button,#reportWarningModal button{min-height:44px;white-space:normal}.report-issue input{width:100%;max-width:100%;min-width:0;box-sizing:border-box}#reportExportButton{white-space:normal}#reportExportButton:disabled,#editTripSave:disabled{opacity:.5}#tripEditModal .sheet{max-height:100%;overflow-y:auto}#tripEditModal input[type="search"]{font-size:16px}#tripEditModal .edit-address-choices{max-height:34vh;max-height:34dvh;overflow-y:auto;overscroll-behavior:contain}#tripEditModal .edit-address-choices button{min-height:48px;text-align:left;white-space:normal;overflow-wrap:anywhere;touch-action:manipulation}
 :root{--bg:#0c0f12;--card:#171c21;--card2:#10161b;--line:#2b3540;--text:#f4f7fa;--muted:#97a7b4;--blue:#52baff;--teal:#58dfb1;--orange:#ffb75d;--red:#ff6d7d;--gold:#ffc35f;--shadow:0 12px 34px rgba(0,0,0,.3)}
 *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}body{min-height:100vh;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}body.modal-open{position:fixed;width:100%;overflow:hidden}button,input,textarea,select{font:inherit}.app{max-width:900px;margin:auto;padding:13px 13px 42px}.topbar{display:flex;align-items:center;justify-content:space-between;padding:7px 3px 13px}.brand{display:flex;gap:10px;align-items:center}.brand-icon{font-size:29px}.brand h1{font-size:21px;margin:0}.brand small{color:var(--muted)}.iconbtn{width:46px;height:46px;border-radius:15px;background:var(--card);border:1px solid var(--line);color:var(--text);font-size:20px}.hero{background:linear-gradient(145deg,#0d3a30,#102921 58%,#141b1a);border:1px solid #277762;border-radius:25px;padding:19px;box-shadow:var(--shadow);display:grid;grid-template-columns:1fr auto;gap:12px}.hero .eyebrow{color:var(--teal);font-weight:900;text-transform:uppercase;font-size:11px;letter-spacing:.08em}.hero h2{font-size:29px;line-height:1.05;margin:4px 0}.odo{font-size:17px;color:#d9e3ea}.hero-stat{text-align:right;align-self:center}.hero-stat strong{font-size:31px;display:block}.hero-stat span{color:var(--muted);font-size:11px}.since-full{margin-top:5px;color:#bad9cc;font-size:11px}.quick{display:grid;grid-template-columns:1.3fr 1fr;gap:9px;margin:11px 0}.quick button{border:0;border-radius:18px;padding:17px 12px;color:white;font-weight:900;font-size:16px}.primary{background:linear-gradient(135deg,#0d78ba,#0ca58d)}.secondary{background:#1b2229;border:1px solid var(--line)!important}.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:5px;background:#12171b;border:1px solid var(--line);border-radius:17px;margin:13px 0}.tab{border:0;background:transparent;color:var(--muted);padding:11px 3px;border-radius:12px;font-weight:900}.tab.active{background:#25323c;color:white;box-shadow:inset 0 0 0 1px #344552}.period-title{display:flex;align-items:end;justify-content:space-between;margin:17px 2px 8px}.period-title h3{margin:0;font-size:21px}.period-title span{font-size:12px;color:var(--muted)}.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.kpi{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:13px;min-width:0}.kpi .ico{font-size:19px}.kpi b{display:block;font-size:21px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.kpi span{display:block;font-size:11px;color:var(--muted);margin-top:4px}.kpi.em{border-color:#2d6a5b;background:#12251f}.fullavg{margin-top:10px;background:linear-gradient(135deg,#241d10,#1c1812);border:1px solid #725122;border-radius:18px;padding:14px;display:flex;justify-content:space-between;gap:12px}.fullavg b{font-size:25px;color:var(--gold)}.fullavg div:last-child{text-align:right;color:var(--muted);font-size:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:20px;margin-top:12px;padding:15px}.cardhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.cardhead h3{margin:0;font-size:18px}.seg{display:flex;background:#10161a;border-radius:10px;padding:3px;overflow:auto}.seg button{border:0;background:transparent;color:var(--muted);padding:6px 8px;border-radius:8px;font-size:11px;white-space:nowrap}.seg button.active{background:#29343e;color:white}.chart-scroll{overflow-x:auto;padding-bottom:5px}.chart{height:190px;display:flex;align-items:flex-end;gap:7px;min-width:100%;padding:15px 4px 0;border-bottom:1px solid #2c343c}.bar-wrap{flex:1;min-width:27px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center}.bar{width:min(28px,80%);min-height:2px;background:linear-gradient(180deg,#63c9ff,#1977bb);border-radius:8px 8px 2px 2px}.bar.orange{background:linear-gradient(180deg,#ffd27e,#d88920)}.bar-val{font-size:9px;color:#aab8c3;margin-bottom:4px;white-space:nowrap}.bar-label{font-size:10px;color:#8e9ba6;margin-top:7px}.station-list,.history{display:flex;flex-direction:column;gap:8px}.station-row{display:grid;grid-template-columns:43px 1fr auto;gap:10px;align-items:center;background:#10161b;border:1px solid #26313a;border-radius:15px;padding:11px}.station-icon{width:42px;height:42px;border-radius:13px;background:#142a26;display:flex;align-items:center;justify-content:center;font-size:21px}.station-row strong{display:block}.station-row small{display:block;color:var(--muted);margin-top:3px;line-height:1.25}.maplink{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;color:#8dd2ff;background:#142635;border:1px solid #25455d;border-radius:11px;padding:8px 9px}.event{display:grid;grid-template-columns:45px 1fr auto;gap:10px;align-items:center;padding:11px;border-radius:14px;background:#10161b;border:1px solid #252e36}.event-icon{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;background:#1b2b34;font-size:20px}.event strong{display:block;font-size:14px}.event small{display:block;color:var(--muted);margin-top:3px;line-height:1.3}.event .right{text-align:right}.event .right b{display:block}.event-actions{display:flex;justify-content:flex-end;gap:4px;margin-top:3px}.trash{background:none;border:0;color:#84919d;font-size:17px;padding:4px}.empty{text-align:center;color:var(--muted);padding:25px 8px}.toast{position:fixed;left:50%;bottom:calc(25px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(120px);opacity:0;background:#e8f7f1;color:#0b3126;padding:11px 16px;border-radius:14px;font-weight:800;transition:.25s;z-index:80;box-shadow:var(--shadow);max-width:90vw;text-align:center}.toast.show{transform:translateX(-50%) translateY(0);opacity:1}.toast.error{background:#ffe2e5;color:#59131a}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:30;display:none;align-items:flex-end;justify-content:center;overflow:hidden;overscroll-behavior:contain}.modal.show{display:flex}.sheet{width:min(100%,640px);max-height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 12px);overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;background:#14191e;border:1px solid #303943;border-radius:27px 27px 0 0;padding:12px 16px calc(21px + env(safe-area-inset-bottom));box-shadow:0 -20px 55px rgba(0,0,0,.45)}.grab{width:44px;height:5px;border-radius:5px;background:#4a5259;margin:0 auto 13px}.sheethead{display:flex;align-items:center;justify-content:space-between}.sheethead h2{margin:0;font-size:22px}.close{background:#222a31;border:0;color:white;width:38px;height:38px;border-radius:12px}.field{margin-top:13px}.field label{display:block;color:#afbac3;font-size:12px;font-weight:800;margin:0 0 6px 3px}.field input,.field textarea,.field select{width:100%;border:1px solid #34404a;background:#0e1216;color:white;border-radius:14px;padding:13px;font-size:17px;outline:none}.field input:focus,.field textarea:focus,.field select:focus{border-color:#4faee8}.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.wheel-title{text-align:center;color:#aeb9c2;font-size:12px;font-weight:900;margin-top:14px}.wheelbox{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:4px;margin-top:5px}.wheelbox.liters{grid-template-columns:minmax(0,1.2fr) auto minmax(0,1fr) minmax(0,1fr)}.wheelbox.liters .wheel{min-width:0}#receiptScanStatus:empty{display:none}.wheelbox.price{grid-template-columns:.8fr auto .7fr .7fr .7fr}.wheel-sep{font-size:30px;color:#71808d}.wheel{height:150px;overflow-y:auto;scroll-snap-type:y mandatory;border-radius:16px;background:#0d1115;border:1px solid #303a43;position:relative;scrollbar-width:none;padding:50px 0}.wheel::-webkit-scrollbar{display:none}.wheel:after{content:"";position:absolute;left:5px;right:5px;top:50px;height:50px;border-top:1px solid #4b5965;border-bottom:1px solid #4b5965;pointer-events:none}.wheel-item{height:50px;scroll-snap-align:center;display:flex;align-items:center;justify-content:center;font-size:22px;color:#7f8d99;transition:.15s}.wheel-item.sel{font-size:29px;font-weight:900;color:white}.live-total{text-align:center;font-size:15px;color:#b7c4cd;margin-top:9px}.live-total b{color:var(--teal);font-size:21px}.station-input{display:grid;grid-template-columns:1fr 54px;gap:8px}.locate{border:1px solid #2f6685;background:#132938;color:#80cfff;border-radius:14px;font-size:23px}.location-status{font-size:11px;color:var(--muted);margin:7px 3px 0}.location-status.ok{color:#75d7b5}.location-status.err{color:#ff9aa4}.station-results{display:flex;flex-direction:column;gap:7px;margin-top:8px}.station-choice{width:100%;text-align:left;background:#10171c;border:1px solid #2d3943;border-radius:14px;padding:11px;color:white}.station-choice b{display:block;font-size:14px}.station-choice small{display:block;color:#9caab5;margin-top:3px;line-height:1.25}.google-attrib{text-align:right;color:#83929e;font-size:10px;margin:7px 4px 0}.google-attrib b{color:#dfe5ea;letter-spacing:.02em}.toggle{display:flex;align-items:center;justify-content:space-between;background:#0f1418;border:1px solid #303943;padding:12px 13px;border-radius:14px;margin-top:13px}.switch{position:relative;width:50px;height:29px}.switch input{display:none}.slider{position:absolute;inset:0;background:#343c44;border-radius:20px}.slider:before{content:"";position:absolute;width:23px;height:23px;left:3px;top:3px;background:white;border-radius:50%;transition:.2s}.switch input:checked + .slider{background:#19a883}.switch input:checked + .slider:before{transform:translateX(21px)}.save{width:100%;margin-top:15px;border:0;border-radius:16px;background:linear-gradient(135deg,#0e78b8,#0aa684);color:white;padding:15px;font-size:17px;font-weight:900}.settings-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:14px}.linkbtn{display:block;text-align:center;text-decoration:none;color:white;background:#20272e;border:1px solid #34404a;padding:12px;border-radius:14px;font-weight:800}.tech{background:#10161a;border:1px solid #2a343d;border-radius:14px;padding:11px;margin-top:14px;color:#a7b5bf;font-size:12px;line-height:1.45}.badge-ok{color:#67d7ae}.badge-off{color:#ffbe72}
@@ -2494,7 +2516,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 </div></div>
 
 <div class="modal" id="tripEditModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>✏️ Rit corrigeren</h2><button class="close" onclick="closeModal('tripEditModal')">✕</button></div>
-  <input id="editTripId" type="hidden"><div id="editTripStops"></div><div class="field"><label>Doel / afspraak</label><input id="editTripPurpose" maxlength="120"></div><div class="field"><label>Klant / project</label><input id="editTripClient" maxlength="120"></div><div class="field"><label>Afwijkende route</label><input id="editTripRoute" maxlength="300" placeholder="Alleen invullen indien van toepassing"></div><div class="field"><label>Toelichting</label><input id="editTripNote" maxlength="250"></div><div class="tax-note">Een correctie wordt vastgelegd in het wijzigingslogboek.</div><button class="save" onclick="saveTripEdit()">Correctie opslaan</button>
+  <input id="editTripId" type="hidden"><div id="editTripStops"></div><div class="field"><label>Doel / afspraak</label><input id="editTripPurpose" maxlength="120"></div><div class="field"><label>Klant / project</label><input id="editTripClient" maxlength="120"></div><div class="field"><label>Afwijkende route</label><input id="editTripRoute" maxlength="300" placeholder="Alleen invullen indien van toepassing"></div><div class="field"><label>Toelichting</label><input id="editTripNote" maxlength="250"></div><div class="tax-note">Een correctie wordt vastgelegd in het wijzigingslogboek.</div><button id="editTripSave" class="save" onclick="saveTripEdit()">Correctie opslaan</button>
 </div></div>
 
 <div class="modal" id="knownPlacesModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>📌 Bekende plekken</h2><button class="close" onclick="closeModal('knownPlacesModal')">✕</button></div>
@@ -2672,22 +2694,77 @@ async function saveAssistantArrival(){
 function renderBusinessHistory(arr){let box=$('businessHistory');box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">Nog geen ritten in deze periode.</div>';return}arr.forEach(t=>{let d=document.createElement('div');d.className='trip-card';let stops=(t.stops||[]).map((x,i)=>{let icon=i===0?'●':(i===t.stops.length-1&&t.status==='completed'?'🏁':'•');let map=x.google_maps_uri?`<a target="_blank" rel="noopener" href="${escAttr(x.google_maps_uri)}">📍</a>`:'';return `<div class="trip-stop"><div class="dot">${icon}</div><div><b>${esc(x.location_address||x.location_label||'Adres nog niet beschikbaar')}</b><small>${x.date_label} ${x.time_label} · ${fmt(x.odometer,0)} km${i?` · +${fmt(x.segment_km,1)} km`:''}${i&&x.segment_trip_type_label?` <span class="leg-pill ${x.segment_trip_type}">${esc(x.segment_trip_type_label)}</span>`:''}${x.note?'<br>'+esc(x.note):''}</small></div>${map}</div>`}).join(''),type=t.trip_type||'business';d.innerHTML=`<div class="trip-top"><div><strong>${esc(t.purpose||t.trip_type_label||'Rit')}${t.client?' · '+esc(t.client):''}</strong><small>${t.started_label||''}${t.status==='active'?' · ACTIEF':''}</small><span class="trip-type-pill ${type}">${esc(t.trip_type_label||'Zakelijk')}</span></div><div class="trip-km">${fmt(t.km||0,1)} km</div></div>${t.deviating_route?`<div class="tax-note">Afwijkende route: ${esc(t.deviating_route)}</div>`:''}<div class="trip-route">${stops}</div><div class="trip-actions"><button class="editbtn" onclick="openTripEdit(${t.id})">✏️</button><button class="trash" onclick="removeBusinessTrip(${t.id})">🗑️</button></div>`;box.appendChild(d)})}
 function renderAudit(arr){let box=$('auditHistory');if(!box)return;box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">Nog geen wijzigingen.</div>';return}arr.forEach(a=>{let d=document.createElement('div');d.className='audit-row';d.innerHTML=`<b>${esc(a.label||a.action)} · ${esc(a.entity_type||'')}</b><small>${esc(a.date_label||'')} ${a.entity_id?`· #${a.entity_id}`:''}</small>`;box.appendChild(d)})}
 async function removeBusinessTrip(id){if(!confirm('Deze rit en de gekoppelde kilometerpunten verwijderen? De verwijdering wordt in het logboek vastgelegd.'))return;try{await api(`api/business/${id}`,{method:'DELETE'});toast('Rit verwijderd');reloadData()}catch(e){toast(e.message,true)}}
-let EDIT_STOPS=[],EDIT_REQUEST=0;
+let EDIT_STOPS=[],EDIT_REQUEST=0,EDIT_ADDRESS_STATE=new Map();
+function originalEditAddress(stop){return stop.edit_address??(stop.report_address==='Adres ontbreekt'?'':stop.report_address||'')}
+function updateEditSaveState(){
+  $('editTripSave').disabled=EDIT_STOPS.some(stop=>{
+    let value=$('editAddress'+stop.id).value,state=EDIT_ADDRESS_STATE.get(stop.id);
+    return value!==originalEditAddress(stop)&&(!state?.selected||state.selected.address!==value);
+  });
+}
+function editAddressInput(id){
+  let state=EDIT_ADDRESS_STATE.get(id);if(!state)return;
+  clearTimeout(state.timer);++state.request;state.selected=null;
+  $('editChoices'+id).innerHTML='';
+  let query=$('editAddress'+id).value.trim();
+  $('editStatus'+id).textContent='Selecteer een volledig adres uit de Google-resultaten.';
+  updateEditSaveState();
+  if(query.length>=3)state.timer=setTimeout(()=>searchEditAddress(id),350);
+}
+async function searchEditAddress(id){
+  let state=EDIT_ADDRESS_STATE.get(id);if(!state)return;
+  clearTimeout(state.timer);let request=++state.request,session=EDIT_REQUEST,query=$('editAddress'+id).value.trim();
+  if(query.length<3)return;
+  let current=()=>session===EDIT_REQUEST&&EDIT_ADDRESS_STATE.get(id)===state&&state.request===request;
+  $('editStatus'+id).textContent='Google-adressen zoeken…';
+  try{
+    let result=await api('api/places/search-address',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
+    if(!current())return;
+    let box=$('editChoices'+id);box.innerHTML='';
+    let places=(result.places||[]).filter(p=>p.place_id&&p.address);
+    $('editStatus'+id).textContent=places.length?'Kies je volledige adres · Google Maps':'Geen Google-adressen gevonden. Vul straat, huisnummer en plaats in en probeer opnieuw.';
+    places.forEach(p=>{
+      let button=document.createElement('button');button.type='button';button.className='guide-next';button.textContent=p.address;
+      // Keep touch/click selection intact when the iOS keyboard loses focus.
+      button.onpointerdown=e=>e.preventDefault();
+      button.onclick=()=>{
+        if(!current())return;
+        clearTimeout(state.timer);++state.request;state.selected=p;
+        $('editAddress'+id).value=p.address;box.innerHTML='';
+        $('editStatus'+id).textContent='Geselecteerd via Google Maps: '+p.address;
+        $('editAddress'+id).blur();updateEditSaveState();
+      };box.appendChild(button);
+    });
+    box.scrollIntoView({block:'nearest'});
+  }catch(e){if(current()){$('editChoices'+id).innerHTML='';$('editStatus'+id).textContent='Google-adressen zoeken is niet gelukt. Het oorspronkelijke adres blijft bewaard. Probeer opnieuw.'}}
+}
+function fitTripEditViewport(){
+  let viewport=window.visualViewport,modal=$('tripEditModal');
+  if(!viewport)return;
+  modal.style.top=viewport.offsetTop+'px';modal.style.height=viewport.height+'px';modal.style.bottom='auto';
+}
+if(typeof window!=='undefined'&&window.visualViewport){window.visualViewport.addEventListener('resize',fitTripEditViewport);window.visualViewport.addEventListener('scroll',fitTripEditViewport)}
 async function openTripEdit(id,stopId){
   let request=++EDIT_REQUEST;
+  EDIT_ADDRESS_STATE.forEach(s=>clearTimeout(s.timer));EDIT_ADDRESS_STATE.clear();
   try{
     let data=await api(`api/business/${Number(id)}/edit`);if(request!==EDIT_REQUEST)return;
     let t=data.trip;EDIT_STOPS=data.stops||[];
+    EDIT_STOPS.forEach(stop=>EDIT_ADDRESS_STATE.set(stop.id,{request:0,selected:null,timer:null}));
     $('editTripId').value=id;$('editTripPurpose').value=t.purpose||'';$('editTripClient').value=t.client||'';$('editTripRoute').value=t.deviating_route||'';$('editTripNote').value=t.note||'';
-    $('editTripStops').innerHTML=EDIT_STOPS.map((stop,i)=>`<div class="report-issue" id="editStop${stop.id}"><b>Stop ${i+1}</b><div class="field"><label for="editAddress${stop.id}">Volledig adres</label><input id="editAddress${stop.id}" maxlength="500" value="${escAttr(stop.report_address==='Adres ontbreekt'?'':stop.report_address||'')}"></div><div class="field"><label for="editOdo${stop.id}">Tellerstand</label><input id="editOdo${stop.id}" type="number" min="0" step="0.1" inputmode="decimal" value="${escAttr(stop.odometer??'')}"></div><div class="field"><label for="editTime${stop.id}">Datum en tijd</label><input id="editTime${stop.id}" type="datetime-local" value="${escAttr((stop.created_at||'').slice(0,16))}"></div></div>`).join('');
-    openModal('tripEditModal');if(stopId)setTimeout(()=>$('editStop'+stopId)?.scrollIntoView({block:'center'}),50);
+    $('editTripStops').innerHTML=EDIT_STOPS.map((stop,i)=>`<div class="report-issue" id="editStop${stop.id}"><b>Stop ${i+1}</b><div class="field"><label for="editAddress${stop.id}">Volledig adres</label><input id="editAddress${stop.id}" type="search" maxlength="500" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" aria-describedby="editStatus${stop.id}" oninput="editAddressInput(${stop.id})" onfocus="searchEditAddress(${stop.id})" value="${escAttr(originalEditAddress(stop))}"><div id="editChoices${stop.id}" class="address-choices edit-address-choices"></div><div id="editStatus${stop.id}" class="tax-note" role="status" aria-live="polite">Bestaand adres blijft behouden totdat je een ander adres selecteert.</div><button type="button" class="linkbtn" onclick="searchEditAddress(${stop.id})">Opnieuw zoeken</button></div><div class="field"><label for="editOdo${stop.id}">Tellerstand</label><input id="editOdo${stop.id}" type="number" min="0" step="0.1" inputmode="decimal" value="${escAttr(stop.odometer??'')}"></div><div class="field"><label for="editTime${stop.id}">Datum en tijd</label><input id="editTime${stop.id}" type="datetime-local" value="${escAttr((stop.created_at||'').slice(0,16))}"></div></div>`).join('');
+    $('editTripSave').disabled=false;openModal('tripEditModal');if(typeof window!=='undefined')fitTripEditViewport();if(stopId)setTimeout(()=>$('editStop'+stopId)?.scrollIntoView({block:'center'}),50);
   }catch(e){toast(e.message,true)}
 }
 async function saveTripEdit(){
   let id=$('editTripId').value,payload={purpose:$('editTripPurpose').value,client:$('editTripClient').value,deviating_route:$('editTripRoute').value,note:$('editTripNote').value,stops:[]};
   for(let stop of EDIT_STOPS){
     let change={id:stop.id},address=$('editAddress'+stop.id).value,odo=$('editOdo'+stop.id).value,date=$('editTime'+stop.id).value;
-    if(address!==(stop.report_address==='Adres ontbreekt'?'':stop.report_address||''))change.address=address;
+    if(address!==originalEditAddress(stop)){
+      let selected=EDIT_ADDRESS_STATE.get(stop.id)?.selected;
+      if(!selected||selected.address!==address){toast('Selecteer voor ieder gewijzigd adres een Google-resultaat.',true);return}
+      change.address=selected.address;change.place_id=selected.place_id;
+    }
     if(odo!==String(stop.odometer??''))change.odometer=odo;
     if(date!==(stop.created_at||'').slice(0,16))change.created_at=date;
     if(Object.keys(change).length>1)payload.stops.push(change);
@@ -3202,6 +3279,9 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {'error': 'Rit niet gevonden.'}, 404)
             for stop in snapshot['stops']:
                 stop['report_address'] = pdf_report.report_stop_address(stop, dependencies=_report_dependencies())
+                stop['edit_address'] = (stop.get('manual_label') or
+                                        (stop['report_address'] if stop['report_address'] != 'Adres ontbreekt'
+                                         else trip_location_details(stop, resolve=False)['address'] or ''))
             return json_response(self, snapshot)
         if path in {'/api/business.csv', '/api/business.pdf', '/api/business/pdf-preview', '/api/export/pdf'}:
             period = (q.get('period') or ['all' if path.endswith('.csv') else 'month'])[0]

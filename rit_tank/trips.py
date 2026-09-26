@@ -711,13 +711,12 @@ def edit_business_trip(
             original = originals[stop_id]
             updates, values = [], []
             if 'address' in change:
-                address = str(change['address'] or '').strip()
-                if not address or len(address) > 500:
-                    raise ValueError('Vul een adres in van maximaal 500 tekens.')
-                # An explicit correction wins over the old known-place/cache address.
-                updates += ['manual_label=?', 'known_place_id=NULL', 'place_id=NULL',
-                            'latitude=NULL', 'longitude=NULL', "location_source='manual'"]
-                values.append(address)
+                selected = _provider(dependencies, 'confirmed_correction_address')(change)
+                # Store the exact selected Google address and its provenance in existing columns.
+                updates += ['manual_label=?', 'known_place_id=NULL', 'place_id=?',
+                            'latitude=?', 'longitude=?', "location_source='google_selected'"]
+                values += [selected['address'], selected['place_id'],
+                           selected.get('latitude'), selected.get('longitude')]
             if 'odometer' in change:
                 try:
                     odometer = float(change['odometer'])
@@ -739,10 +738,10 @@ def edit_business_trip(
                 con.execute('UPDATE trip_stops SET ' + ','.join(updates) + ' WHERE id=? AND trip_id=?',
                             (*values, stop_id, trip_id))
                 saved = con.execute('SELECT * FROM trip_stops WHERE id=?', (stop_id,)).fetchone()
-                if original.get('event_id'):
+                if original.get('event_id') and ('odometer' in change or 'created_at' in change):
                     con.execute('UPDATE events SET odometer=?,created_at=? WHERE id=?',
                                 (saved['odometer'], saved['created_at'], original['event_id']))
-        if changes:
+        if any('created_at' in change for change in changes):
             saved_stops = snapshot_trip(con, trip_id)['stops']
             con.execute('UPDATE business_trips SET started_at=?,ended_at=? WHERE id=?',
                         (saved_stops[0]['created_at'],
