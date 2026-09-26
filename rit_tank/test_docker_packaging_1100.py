@@ -8,6 +8,7 @@ from pathlib import Path
 REQUIRED_RUNTIME_MODULES = [
     'app.py',
     'pdf_report.py',
+    'report_validation.py',
     'google_places.py',
     'routing.py',
     'home_assistant.py',

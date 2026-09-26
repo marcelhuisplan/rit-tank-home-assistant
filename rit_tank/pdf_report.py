@@ -400,7 +400,24 @@ def _build_pdf(pages: list[_SimplePdfPage], images: dict[str, tuple[int, int, by
     return bytes(out)
 
 
-def business_pdf(period: str = 'month', year: str | None = None, month: str | None = None, preview: bool = False, *, dependencies: Mapping[str, Callable[..., Any]] | None = None) -> Any:
+def build_business_report_rows(trips: list[dict[str, Any]], rate: Decimal) -> list[dict[str, Any]]:
+    """The ordered visible PDF legs, including single-stop and zero-km rows."""
+    rows = []
+    for trip in trips:
+        stops = trip.get('stops') or []
+        for idx in range(1, max(2, len(stops))) if stops else []:
+            origin = stops[idx - 1] if len(stops) > 1 else stops[0]
+            destination = stops[idx] if len(stops) > 1 else stops[0]
+            km = destination.get('segment_km') if len(stops) > 1 else trip.get('km')
+            rows.append({'origin': origin, 'destination': destination, 'km': km,
+                         'trip_id': trip.get('id'), 'segment_number': idx,
+                         'reimbursement': calculate_km_reimbursement(km, rate)})
+    return rows
+
+
+def build_business_report(period: str = 'month', year: str | None = None, month: str | None = None,
+                          *, dependencies: Mapping[str, Callable[..., Any]] | None = None) -> dict[str, Any]:
+    """Resolve stored addresses and period once, without external calls."""
     deps = dependencies or {}
     get_settings = _provider(deps, 'get_settings')
     now_local = _provider(deps, 'now_local')
@@ -459,6 +476,22 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         else:
             filename_label = safe_period
         period_end = period_end_exclusive - timedelta(days=1)
+
+    return {'settings': settings, 'rate': km_rate_decimal, 'trips': trips,
+            'rows': build_business_report_rows(trips, km_rate_decimal),
+            'label': label, 'filename_label': filename_label,
+            'period_start': period_start, 'period_end': period_end}
+
+
+def business_pdf(period: str = 'month', year: str | None = None, month: str | None = None, preview: bool = False, *, dependencies: Mapping[str, Callable[..., Any]] | None = None, report: dict[str, Any] | None = None) -> Any:
+    deps = dependencies or {}
+    now_local = _provider(deps, 'now_local')
+    parse_dt = _provider(deps, 'parse_dt')
+    report = report if report is not None else build_business_report(period, year, month, dependencies=deps)
+    settings, km_rate_decimal = report['settings'], report['rate']
+    label, filename_label = report['label'], report['filename_label']
+    period_start, period_end = report['period_start'], report['period_end']
+    report_rows = report['rows']
 
     company_name = str(settings.get('company_name') or 'Huisplan BV').strip() or 'Huisplan BV'
     footer_company = 'Huisplan BV'
@@ -661,19 +694,6 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             return 'Privé', palette['blue']
         return trip_badge_text(trip)
 
-    def trip_segment_rows(trip: dict[str, Any], stops: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Every destination stop after the first becomes its own exported leg."""
-        if len(stops) < 2:
-            return [{'origin': stops[0], 'destination': stops[0], 'km': trip.get('km'),
-                     'reimbursement': calculate_reimbursement(trip.get('km'))}]
-        rows = []
-        for idx in range(1, len(stops)):
-            destination = stops[idx]
-            rows.append({'origin': stops[idx - 1], 'destination': destination,
-                         'km': destination.get('segment_km'),
-                         'reimbursement': calculate_reimbursement(destination.get('segment_km'))})
-        return rows
-
     def draw_table_header(page: _SimplePdfPage, x1: float, y_top: float) -> float:
         """Draw table header and return the y position after header."""
         y_top = round(y_top, 2)
@@ -747,14 +767,6 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
 
         return y_top - row_h
 
-    # Build exactly the visible legs once, including zero-km and single-stop rows.
-    # Summary, reimbursement and numbering all consume this same ordered list.
-    report_rows = [
-        row
-        for trip in trips
-        if trip.get('stops')
-        for row in trip_segment_rows(trip, trip['stops'])
-    ]
     business_km = sum((_decimal_or_zero(row['km']) for row in report_rows), Decimal('0'))
     total_reimbursement = sum((row['reimbursement'] for row in report_rows), Decimal('0.00'))
     trip_count = len(report_rows)

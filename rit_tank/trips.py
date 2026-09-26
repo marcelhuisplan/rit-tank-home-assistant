@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import math
+from datetime import datetime
 from typing import Any, Callable, Mapping
 
 
@@ -576,16 +578,10 @@ def business_trips_raw(*, dependencies: Mapping[str, Any]) -> list[tuple[dict[st
                 'SELECT * FROM business_trips ORDER BY started_at ASC, id ASC'
             )
         ]
-        result = []
-        for trip in trip_rows:
-            stops = [
-                dict(row)
-                for row in con.execute(
-                    'SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no ASC, id ASC',
-                    (trip['id'],),
-                )
-            ]
-            result.append((trip, stops))
+        stops_by_trip = {}
+        for row in con.execute('SELECT * FROM trip_stops ORDER BY trip_id, sequence_no, id'):
+            stops_by_trip.setdefault(row['trip_id'], []).append(dict(row))
+        result = [(trip, stops_by_trip.get(trip['id'], [])) for trip in trip_rows]
     return result
 
 
@@ -702,12 +698,63 @@ def edit_business_trip(
                 trip_id,
             ),
         )
+        changes = payload.get('stops', [])
+        if not isinstance(changes, list):
+            raise ValueError('Ongeldige stopcorrecties.')
+        originals = {stop['id']: stop for stop in before['stops']}
+        changed_ids = set()
+        for change in changes:
+            if not isinstance(change, dict) or change.get('id') not in originals or change['id'] in changed_ids:
+                raise ValueError('Stop hoort niet bij deze rit of is dubbel opgegeven.')
+            stop_id = change['id']
+            changed_ids.add(stop_id)
+            original = originals[stop_id]
+            updates, values = [], []
+            if 'address' in change:
+                address = str(change['address'] or '').strip()
+                if not address or len(address) > 500:
+                    raise ValueError('Vul een adres in van maximaal 500 tekens.')
+                # An explicit correction wins over the old known-place/cache address.
+                updates += ['manual_label=?', 'known_place_id=NULL', 'place_id=NULL',
+                            'latitude=NULL', 'longitude=NULL', "location_source='manual'"]
+                values.append(address)
+            if 'odometer' in change:
+                try:
+                    odometer = float(change['odometer'])
+                except (ValueError, TypeError):
+                    raise ValueError('Vul een geldige tellerstand in.') from None
+                if not math.isfinite(odometer) or odometer < 0:
+                    raise ValueError('Vul een geldige tellerstand in.')
+                updates.append('odometer=?')
+                values.append(odometer)
+            if 'created_at' in change:
+                try:
+                    datetime.fromisoformat(str(change['created_at']))
+                except (ValueError, TypeError):
+                    raise ValueError('Vul een geldige datum en tijd in.') from None
+                date = _provider(dependencies, 'parse_dt')(change['created_at']).isoformat()
+                updates.append('created_at=?')
+                values.append(date)
+            if updates:
+                con.execute('UPDATE trip_stops SET ' + ','.join(updates) + ' WHERE id=? AND trip_id=?',
+                            (*values, stop_id, trip_id))
+                saved = con.execute('SELECT * FROM trip_stops WHERE id=?', (stop_id,)).fetchone()
+                if original.get('event_id'):
+                    con.execute('UPDATE events SET odometer=?,created_at=? WHERE id=?',
+                                (saved['odometer'], saved['created_at'], original['event_id']))
+        if changes:
+            saved_stops = snapshot_trip(con, trip_id)['stops']
+            con.execute('UPDATE business_trips SET started_at=?,ended_at=? WHERE id=?',
+                        (saved_stops[0]['created_at'],
+                         saved_stops[-1]['created_at'] if current['status'] == 'completed' else current.get('ended_at'),
+                         trip_id))
         after = snapshot_trip(con, trip_id)
         _provider(dependencies, 'audit')(
             'update',
             'trip',
             trip_id,
-            {'before': before.get('trip', {}), 'after': after.get('trip', {})},
+            {'before': before.get('trip', {}), 'after': after.get('trip', {}),
+             'stops_before': before['stops'], 'stops_after': after['stops']},
             con=con,
         )
         con.commit()

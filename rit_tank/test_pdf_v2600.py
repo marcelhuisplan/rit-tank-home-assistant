@@ -115,7 +115,7 @@ assert b'0,35 per km' in pdf and b'129,85' in pdf and b'(15) Tj' in pdf
         for rate in ['0.25', '0.35', '0']:
             self.report(rate)
             handler = CaptureHandler()
-            app.Handler.export_business_csv(handler, 'all')
+            app.Handler.export_business_csv(handler, 'all', allow_warnings=True)
             rows = list(csv.DictReader(io.StringIO(handler.wfile.getvalue().decode('utf-8-sig')), delimiter=';'))
             for row in rows:
                 self.assertEqual(Decimal(row['km_reimbursement_rate']), Decimal(rate))
