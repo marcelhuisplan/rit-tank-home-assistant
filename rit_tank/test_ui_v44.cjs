@@ -13,7 +13,7 @@ const context = vm.createContext({
   $:id=>{assert(nodes.has(id), 'Missing ID '+id);return nodes.get(id)},
   DATA:{business:{active_trip:null},current_odometer:63700}, ASSISTANT_ITEM:null,ASSISTANT_TYPE:'',
   api:async(path,opts)=>{if(opts){sent.push(JSON.parse(opts.body));return {ok:true}}return {arrivals:[arrival]}},
-  toast:m=>{message=m},reloadData:async()=>{},setAssistantType:t=>{},
+  toast:m=>{message=m},reloadData:async()=>{},updateAssistantRouteUI(){},setAssistantType:t=>{},
   initOdometerWheel:(prefix,n)=>{nodes.get(prefix+'Odo').value=n},
   openModal(){},closeModal(){},fmt:(v,d)=>Number(v).toFixed(d),setTimeout:f=>f(),guideTo(){},
 });
@@ -24,7 +24,7 @@ vm.runInContext(script.slice(start,end),context);
 start=script.indexOf('function showTripOdoProposal(');end=script.indexOf('\nfunction acceptTripOdoSuggestion',start);
 vm.runInContext(script.slice(start,end),context);
 (async()=>{
-  arrival={id:1,origin_name:'Thuis',destination_name:'Klant',date_label:'18-09 16:00',suggested_type:'business',suggestion_confidence:.98,
+  arrival={id:1,is_next_to_review:true,origin_name:'Thuis',destination_name:'Klant',date_label:'18-09 16:00',suggested_type:'business',suggestion_confidence:.98,
     proposal:{start_odometer:63700,suggested_odometer:63719,gps_km:18.7,route_complete:true,calibration:{ready:false}}};
   await context.openAssistantComplete(1);
   assert.equal(nodes.get('arrivalEditor').hidden,true);

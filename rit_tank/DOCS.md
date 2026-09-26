@@ -1,4 +1,6 @@
-# Rit & Tank 27.00
+# Rit & Tank 28.00
+
+Release 28.00 voegt Google-adressuggesties toe aan **Rit corrigeren**, voor vertrek, tussenstops en aankomst. Typ minimaal drie tekens en kies zelf een resultaat. Alleen een geselecteerd, door Google Places Details bevestigd volledig adres kan worden opgeslagen. De bestaande Google-configuratie, Text Search met Nederlandse voorkeur, adresnotatie en correctiehistorie worden hergebruikt. Ongewijzigde adressen blijven exact behouden; ook historische onvolledige tekst blijft zichtbaar. Zoekfouten wijzigen niets. Er is geen nieuwe provider, sleutel of databaseschemamigratie. Kilometerstanden, afstanden en vergoeding veranderen niet door alleen een adrescorrectie.
 
 Release 27.00 voegt een maand-/jaarcontrole toe vóór PDF- en CSV-export. De controle gebruikt exact de zichtbare PDF-rit-/etapperegels en de actuele kilometervergoeding. Ontbrekende volledige adressen, ontbrekende/ongeldige tellerstanden, een dalende tellerstand binnen één etappe en een eindtijd vóór de starttijd zijn fouten die export blokkeren. Zichtbare 0-km-ritten blijven behouden als waarschuwing (met onderscheid tussen gelijke en verschillende adressen). Opvallende afstand/tellerafwijkingen, onwaarschijnlijke tijdsduur/snelheid en exact overeenkomende mogelijke dubbele ritten geven een waarschuwing. Waarschuwingen vereisen expliciete bevestiging, ook via de backend voor PDF, preview en CSV. Vanuit een aandachtspunt opent de bestaande ritmodal voor adres-, tellerstand- en tijdcorrecties; na opslaan worden controle en totalen opnieuw berekend.
 

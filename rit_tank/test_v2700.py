@@ -165,7 +165,9 @@ class Export2700Tests(unittest.TestCase):
         self.assert_exports(422); self.assert_exports(422, True)
         edit = json.loads(self.get('/api/business/1/edit').wfile.getvalue())
         stop = edit['stops'][0]
-        app.edit_business_trip(1, {'stops': [{'id': stop['id'], 'address': ADDRESS}]})
+        selected = {'place_id': 'chosen', 'address': ADDRESS, 'address_components': [{'longText': k, 'types': [k]} for k in ['route', 'street_number', 'postal_code', 'locality']]}
+        with patch.object(app, 'google_place_details', return_value=selected):
+            app.edit_business_trip(1, {'stops': [{'id': stop['id'], 'address': ADDRESS, 'place_id': 'chosen'}]})
         self.assert_exports(200)
 
     def test_warnings_require_exact_explicit_override(self):
@@ -228,7 +230,9 @@ class Export2700Tests(unittest.TestCase):
                              ('Thuis', ADDRESS, 52, 6, '2026-09-01', '2026-09-01')).lastrowid
             con.execute("UPDATE trip_stops SET known_place_id=?,manual_label='Thuis'", (kp,))
         self.assert_exports(200)
-        app.edit_business_trip(1, {'stops': [{'id': 1, 'address': OTHER}]})
+        selected = {'place_id': 'chosen', 'address': OTHER, 'address_components': [{'longText': k, 'types': [k]} for k in ['route', 'street_number', 'postal_code', 'locality']]}
+        with patch.object(app, 'google_place_details', return_value=selected):
+            app.edit_business_trip(1, {'stops': [{'id': 1, 'address': OTHER, 'place_id': 'chosen'}]})
         self.assertEqual(app.business_report('all')['rows'][0]['origin']['report_address'], OTHER)
 
     def test_correction_odometer_time_audit_and_linked_event(self):
