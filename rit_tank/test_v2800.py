@@ -147,6 +147,13 @@ class Correction2800Tests(unittest.TestCase):
             self.assertEqual(app.google_places_text_search('Stationsstraat')[0]['address'], OTHER)
             self.assertEqual(http.call_args.kwargs['payload']['regionCode'], 'NL')
             self.assertEqual(http.call_args.kwargs['payload']['languageCode'], 'nl')
+            self.assertIn('rectangle', http.call_args.kwargs['payload']['locationBias'])
+            app.google_places_text_search('Stationsstraat', location={'latitude': 52.3, 'longitude': 6.5})
+            bias = http.call_args.kwargs['payload']['locationBias']['circle']
+            self.assertEqual(bias['center'], {'latitude': 52.3, 'longitude': 6.5})
+            self.assertEqual(bias['radius'], 1800)
+            app.google_places_text_search('Stationsstraat', location={'latitude': 'NaN', 'longitude': 6.5})
+            self.assertIn('rectangle', http.call_args.kwargs['payload']['locationBias'])
 
     def test_ui_actual_frontend_logic(self):
         result = subprocess.run(['node', str(ROOT/'test_ui_v2800.cjs')], capture_output=True, text=True)

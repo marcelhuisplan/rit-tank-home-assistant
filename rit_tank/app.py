@@ -615,8 +615,8 @@ def google_nearby(lat: float, lon: float) -> list[dict[str, Any]]:
     return google_places.google_nearby(lat, lon, dependencies=_places_dependencies())
 
 
-def google_places_text_search(query: str) -> list[dict[str, Any]]:
-    return google_places.google_places_text_search(query, dependencies=_places_dependencies())
+def google_places_text_search(query: str, location: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    return google_places.google_places_text_search(query, location=location, dependencies=_places_dependencies())
 
 
 def google_place_details(place_id: str) -> dict[str, Any] | None:
@@ -2718,7 +2718,8 @@ async function searchEditAddress(id){
   let current=()=>session===EDIT_REQUEST&&EDIT_ADDRESS_STATE.get(id)===state&&state.request===request;
   $('editStatus'+id).textContent='Google-adressen zoeken…';
   try{
-    let result=await api('api/places/search-address',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
+    let stop=EDIT_STOPS.find(s=>s.id===id),location={latitude:stop?.latitude,longitude:stop?.longitude};
+    let result=await api('api/places/search-address',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,location})});
     if(!current())return;
     let box=$('editChoices'+id);box.innerHTML='';
     let places=(result.places||[]).filter(p=>p.place_id&&p.address);
@@ -3316,7 +3317,7 @@ class Handler(BaseHTTPRequestHandler):
                 query = str(payload.get('query') or '').strip()[:200]
                 if not query:
                     raise ValueError('Vul een adres of zoekterm in.')
-                return json_response(self, {'places': google_places_text_search(query)})
+                return json_response(self, {'places': google_places_text_search(query, location=payload.get('location'))})
             if path in ('/api/location/reverse', '/api/location/addresses'):
                 lat = to_float(payload.get('latitude'))
                 lon = to_float(payload.get('longitude'))

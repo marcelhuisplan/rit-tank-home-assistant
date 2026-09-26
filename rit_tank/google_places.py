@@ -83,7 +83,7 @@ def google_nearby(lat: float, lon: float, *, dependencies: Mapping[str, Any]) ->
     return out
 
 
-def google_places_text_search(query: str, *, dependencies: Mapping[str, Any]) -> list[dict[str, Any]]:
+def google_places_text_search(query: str, *, location: dict[str, Any] | None = None, dependencies: Mapping[str, Any]) -> list[dict[str, Any]]:
     """
     Zoek adressen op vrije tekst (voor handmatige adrescorrectie).
     Gebruikt Places API v1 Text Search en levert kandidaten met
@@ -100,7 +100,20 @@ def google_places_text_search(query: str, *, dependencies: Mapping[str, Any]) ->
         'languageCode': 'nl',
         'regionCode': 'NL',
         'maxResultCount': 8,
+        # A geographic preference, never a hardcoded result or country exclusion.
+        'locationBias': {'rectangle': {
+            'low': {'latitude': 50.7, 'longitude': 3.2},
+            'high': {'latitude': 53.7, 'longitude': 7.3},
+        }},
     }
+    if isinstance(location, dict):
+        lat = _provider(dependencies, 'to_float')(location.get('latitude'))
+        lon = _provider(dependencies, 'to_float')(location.get('longitude'))
+        if lat is not None and lon is not None and -90 <= lat <= 90 and -180 <= lon <= 180:
+            payload['locationBias'] = {'circle': {
+                'center': {'latitude': lat, 'longitude': lon},
+                'radius': float(places_radius_m(dependencies=dependencies)),
+            }}
     data = _provider(dependencies, 'http_json')(
         'https://places.googleapis.com/v1/places:searchText',
         method='POST', payload=payload,
