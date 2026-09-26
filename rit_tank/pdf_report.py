@@ -286,6 +286,11 @@ def _full_address(value: Any) -> str:
 
 
 def report_stop_address(stop: dict[str, Any], *, dependencies: Mapping[str, Callable[..., Any]]) -> str:
+    # A stored per-stop address is the user's choice. A nearby known place or
+    # cached/enriched location must never replace it (e.g. number 10 with 4).
+    address = _full_address(stop.get('manual_label'))
+    if address:
+        return address
     address = _full_address(stop.get('location_address'))
     if address:
         return address
@@ -294,9 +299,6 @@ def report_stop_address(stop: dict[str, Any], *, dependencies: Mapping[str, Call
         address = _full_address((place or {}).get('address'))
         if address:
             return address
-    address = _full_address(stop.get('manual_label'))
-    if address:
-        return address
     if stop.get('latitude') is not None and stop.get('longitude') is not None:
         address = _full_address(_provider(dependencies, 'cached_report_address')(
             float(stop['latitude']), float(stop['longitude']),
@@ -452,6 +454,8 @@ def build_business_report(period: str = 'month', year: str | None = None, month:
             # Select from the stored stop, before UI enrichment can replace its address.
             for raw, stop in zip(stops, enriched['stops']):
                 stop['report_address'] = report_stop_address(raw, dependencies=deps)
+            enriched['report_origin'] = enriched['stops'][0]
+            enriched['report_destination'] = enriched['stops'][-1]
             trips.append(enriched)
     trips.sort(key=lambda trip: parse_dt(trip['stops'][0]['created_at']))
 
@@ -783,14 +787,30 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         table_y = page.y
         page.y = draw_table_header(page, 36, table_y)
 
+        trips_by_id = {trip.get('id'): trip for trip in report['trips']}
         for row_num, row in enumerate(report_rows, start=1):
             layout = row_layout(row)
+            trip = trips_by_id.get(row.get('trip_id'), {})
+            route_lines = []
+            if row['segment_number'] == 1 and len(trip.get('stops') or []) > 2:
+                # Non-financial trip heading: first to last stop. The existing
+                # intermediate legs remain the only counted/reimbursed rows.
+                origin = trip['report_origin']['report_address']
+                destination = trip['report_destination']['report_address']
+                route_lines = _SimplePdfPage.wrap_lines(f'Rit: {origin} → {destination}', 515, 8.5)
+            route_height = len(route_lines) * 12 + (6 if route_lines else 0)
 
-            if page.need(layout[3] + 3):
+            if page.need(layout[3] + route_height + 3):
                 page = new_page(compact=True)
                 page.y = draw_table_header(page, 36, page.y)
-            if page.need(layout[3] + 3):
+            if page.need(layout[3] + route_height + 3):
                 raise ValueError('Het volledige ritadres past niet op een PDF-pagina.')
+
+            for line in route_lines:
+                page.y -= 12
+                page.text(line, 40, page.y, 8.5, bold=True, rgb=palette['text'])
+            if route_lines:
+                page.y -= 6
 
             page.y = draw_table_row(page, page.y, row_num, row, layout)
 

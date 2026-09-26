@@ -1,5 +1,12 @@
 # Changelog
 
+## 29.00
+
+- Opgeslagen stopadressen hebben voorrang op nabijgelegen bekende plekken en afgeleide adressen; CSV gebruikt dezelfde centrale rapportadressen als PDF en rapportcontrole.
+- Bij drie of meer stops toont de PDF een ritkop van eerste naar laatste stop, zonder etappes dubbel te tellen of te vergoeden.
+- Regressie: Verenlandweg 4 → Verenlandweg 10, 26-09-2026 19:43–20:43, 64.600 → 64.603 km (3 km), inclusief echte PDF-inhoud, preview, CSV, Google-correcties en rollback.
+- Geen schemawijziging, historische data-update of wijziging aan fiscale ritgegevens; audit blijft behouden.
+
 ## 28.00
 
 - Google-adreszoeker in Rit corrigeren, met expliciete selectie en servervalidatie via bestaande Places Details.

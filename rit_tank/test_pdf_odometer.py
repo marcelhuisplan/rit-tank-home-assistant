@@ -55,9 +55,10 @@ class ReportAddressTests(unittest.TestCase):
         self.place.assert_not_called()
         self.cache.assert_not_called()
 
-    def test_known_place_address_precedes_manual_and_cached_addresses(self):
+    def test_stored_manual_address_precedes_known_place_and_cache(self):
         self.assertEqual(self.address(known_place_id=1, manual_label=LONG,
-                                      latitude=52, longitude=6), HOME)
+                                      latitude=52, longitude=6), LONG)
+        self.place.assert_not_called()
         self.cache.assert_not_called()
 
     def test_full_manual_address_precedes_cache(self):

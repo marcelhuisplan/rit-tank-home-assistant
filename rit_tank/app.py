@@ -38,7 +38,7 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '28.00'
+APP_VERSION = '29.00'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
@@ -3503,7 +3503,7 @@ class Handler(BaseHTTPRequestHandler):
             if enriched.get('trip_type') == 'business':
                 reimbursement = pdf_report.calculate_km_reimbursement(enriched.get('km'), km_rate)
                 for stop in enriched.get('stops',[]):
-                    writer.writerow([enriched['id'],enriched.get('trip_type_label') or '',enriched['status'],enriched.get('purpose') or '',enriched.get('client') or '',enriched.get('started_at') or '',enriched.get('ended_at') or '',enriched.get('km') or 0,enriched.get('business_km') or 0,enriched.get('private_km') or 0,enriched.get('private_detour_km') or 0,enriched.get('deviating_route') or '',stop.get('sequence_no'),stop.get('created_at'),stop.get('odometer'),stop.get('segment_km') or 0,stop.get('segment_trip_type_label') or '',stop.get('segment_classification_source') or '',stop.get('segment_suggested_type') or '',stop.get('segment_suggestion_reason') or '',stop.get('latitude') if stop.get('latitude') is not None else '',stop.get('longitude') if stop.get('longitude') is not None else '',stop.get('place_id') or '',stop.get('known_place_name') or '',stop.get('location_label') or '',stop.get('note') or '',rate_text,pdf_report.format_decimal_plain(reimbursement)])
+                    writer.writerow([enriched['id'],enriched.get('trip_type_label') or '',enriched['status'],enriched.get('purpose') or '',enriched.get('client') or '',enriched.get('started_at') or '',enriched.get('ended_at') or '',enriched.get('km') or 0,enriched.get('business_km') or 0,enriched.get('private_km') or 0,enriched.get('private_detour_km') or 0,enriched.get('deviating_route') or '',stop.get('sequence_no'),stop.get('created_at'),stop.get('odometer'),stop.get('segment_km') or 0,stop.get('segment_trip_type_label') or '',stop.get('segment_classification_source') or '',stop.get('segment_suggested_type') or '',stop.get('segment_suggestion_reason') or '',stop.get('latitude') if stop.get('latitude') is not None else '',stop.get('longitude') if stop.get('longitude') is not None else '',stop.get('place_id') or '',stop.get('known_place_name') or '',stop.get('report_address') or '',stop.get('note') or '',rate_text,pdf_report.format_decimal_plain(reimbursement)])
         data=output.getvalue().encode('utf-8-sig'); self.send_response(200); self.send_header('Content-Type','text/csv; charset=utf-8'); self.send_header('Content-Disposition','attachment; filename="zakelijke_kilometerregistratie_export.csv"'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
 
     def export_business_pdf(self, period: str = 'month', year: str | None = None, month: str | None = None,

@@ -1,4 +1,6 @@
-# Rit & Tank 28.00
+# Rit & Tank 29.00
+
+Release 29.00 herstelt de adresbron voor rapportages: een volledig opgeslagen stopadres gaat vóór een nabijgelegen bekende plek of adrescache. Editor, rapportcontrole, PDF-preview, PDF-alias en CSV gebruiken het actuele stopadres. Bij meerdere stops toont een niet-meetellende ritkop het eerste en laatste adres; bestaande etapperegels en tussenstops blijven behouden. Tellerstanden, afstand, tarief, tijden en audit blijven ongewijzigd. Geen datamigratie of automatische herschrijving van historische ritten.
 
 Release 28.00 voegt Google-adressuggesties toe aan **Rit corrigeren**, voor vertrek, tussenstops en aankomst. Typ minimaal drie tekens en kies zelf een resultaat. Alleen een geselecteerd, door Google Places Details bevestigd volledig adres kan worden opgeslagen. De bestaande Google-configuratie, Text Search met Nederlandse voorkeur, adresnotatie en correctiehistorie worden hergebruikt. Ongewijzigde adressen blijven exact behouden; ook historische onvolledige tekst blijft zichtbaar. Zoekfouten wijzigen niets. Er is geen nieuwe provider, sleutel of databaseschemamigratie. Kilometerstanden, afstanden en vergoeding veranderen niet door alleen een adrescorrectie.
 
@@ -41,8 +43,8 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **28.00**.
+- Huidige release: **29.00**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
-- Volgende release: **29.00**.
+- Volgende release: **30.00**.
 - Dit is een **handmatig** releasebeleid: het versienummer (`APP_VERSION` in `app.py`, `version` in `config.yaml`, de titels in `README.md`/`DOCS.md`) wordt alleen door een expliciete, door de eigenaar aangevraagde wijziging opgehoogd. De applicatie verhoogt dit nummer nooit automatisch tijdens runtime.

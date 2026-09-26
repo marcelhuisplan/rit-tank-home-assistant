@@ -1,4 +1,6 @@
-# Rit & Tank 28.00
+# Rit & Tank 29.00
+
+Release 29.00 herstelt de adresbron voor rapportages: een volledig opgeslagen stopadres gaat vóór een nabijgelegen bekende plek of adrescache. Editor, rapportcontrole, PDF-preview, PDF-alias en CSV gebruiken het actuele stopadres. Bij meerdere stops toont een niet-meetellende ritkop het eerste en laatste adres; bestaande etapperegels en tussenstops blijven behouden. Tellerstanden, afstand, tarief, tijden en audit blijven ongewijzigd. Geen datamigratie of automatische herschrijving van historische ritten.
 
 Release 28.00 voegt Google-adressuggesties toe aan **Rit corrigeren**, voor vertrek, tussenstops en aankomst. Typ minimaal drie tekens en kies zelf een resultaat. Alleen een geselecteerd, door Google Places Details bevestigd volledig adres kan worden opgeslagen. De bestaande Google-configuratie, Text Search met Nederlandse voorkeur, adresnotatie en correctiehistorie worden hergebruikt. Ongewijzigde adressen blijven exact behouden; ook historische onvolledige tekst blijft zichtbaar. Zoekfouten wijzigen niets. Er is geen nieuwe provider, sleutel of databaseschemamigratie. Kilometerstanden, afstanden en vergoeding veranderen niet door alleen een adrescorrectie.
 
