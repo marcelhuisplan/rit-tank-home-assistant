@@ -1,4 +1,20 @@
-# Rit & Tank 30.00
+# Rit & Tank 31.00
+
+De fysieke kilometerteller is bij ritafsluiting de definitieve bron voor de geregistreerde afstand. GPS wordt gebruikt als hulpmiddel en afwijkingscontrole.
+
+## Fysieke tellercontrole (31.00)
+
+- Bevestig bij vertrek en iedere stop de werkelijke teller in hele kilometers: `64375` en `64.375` betekenen beide 64375 km. Fractionele kilometers worden geweigerd.
+- GPS gemeten, voorgestelde eindstand en werkelijke teller zijn gescheiden. Een adres-/routeantwoord verandert de fysieke invoer niet.
+- Bij afsluiten berekent de server de afstand uit de opgeslagen startteller en bevestigde eindteller. 64334 → 64375 geeft 41 km, ook als GPS 36,4 km aangeeft.
+- De afwijkingsmodal verschijnt bij **meer dan 2 km EN meer dan 5%** verschil. De relatieve afwijking is `abs(tellerafstand - GPS) / max(tellerafstand, GPS)`.
+- Ontbrekende, onderbroken of onvoldoende GPS vraagt afzonderlijk aandacht. Ontbrekende GPS is geen nulmeting. De fysieke teller blijft leidend.
+- De tweede bevestiging geldt 10 minuten, is sessiegebonden en geldt alleen voor dezelfde invoer en ongewijzigde administratie. Annuleren vóór definitief verzenden slaat niets op; een reeds verzonden definitieve opslag is niet terug te draaien via Annuleren.
+- Tussenstops bewaren afzonderlijke GPS-controles; ritafsluiting vergelijkt de volledige rit. Bij ontbrekende oudere GPS blijft het totaal onbekend.
+- Controlewaarden en bevestiging worden duurzaam in `audit_log.details` opgeslagen. Geen nieuwe tabellen/kolommen, historische herberekening of volledige GPS-puntenroute.
+- De centrale settings `distance_warning_km` (standaard 2) en `distance_warning_fraction` (standaard 0.05) zijn via de bestaande geautoriseerde settings-API configureerbaar. Beide voorwaarden moeten gelden. Geen vaste kilometeropslag of nieuwe kalibratie.
+- Bestaande CSV-compatibiliteit blijft behouden: rittotalen/ritvergoeding worden per stop herhaald; tel `segment_km` op of dedupliceer op `rit_id`. PDF gebruikt etappes.
+
 
 Release 30.00 voegt **Nieuwe administratie starten** toe onder Instellingen → Administratie. Een exacte RESET-bevestiging, actuele fysieke tellerstand, beveiligd bevestigingstoken en private lokale back-up zijn verplicht vóór het wissen. Instellingen en bekende locaties blijven behouden. De adrescorrecties uit release 29.00 blijven intact.
 
@@ -45,8 +61,8 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **30.00**.
+- Huidige release: **31.00**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
-- Volgende release: **31.00**.
+- Volgende release: **32.00**.
 - Dit is een **handmatig** releasebeleid: het versienummer (`APP_VERSION` in `app.py`, `version` in `config.yaml`, de titels in `README.md`/`DOCS.md`) wordt alleen door een expliciete, door de eigenaar aangevraagde wijziging opgehoogd. De applicatie verhoogt dit nummer nooit automatisch tijdens runtime.

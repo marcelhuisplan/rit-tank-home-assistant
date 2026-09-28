@@ -342,7 +342,8 @@ def start_business_trip(payload: dict[str, Any], *, dependencies: Mapping[str, A
             'create',
             'trip',
             trip_id,
-            {'mode': 'segment_classification', 'purpose': purpose, 'client': client, 'start': point},
+            {'mode': 'segment_classification', 'purpose': purpose, 'client': client, 'start': point,
+             'distance_control': payload.get('_distance_control')},
             con=con,
         )
         con.commit()
@@ -364,6 +365,7 @@ def add_business_stop(
         raise ValueError('Er is geen actieve ritregistratie.')
     point = _trip_point_payload(payload, dependencies=dependencies)
     tracking = _provider(dependencies, 'assistant_state_get')('trip_distance_tracking', {}) or {}
+    measured = _provider(dependencies, 'distance_segment_snapshot')(trip, point['odometer'])
     normalize_segment_type = _provider(dependencies, 'normalize_segment_type')
     with _provider(dependencies, 'DB_LOCK'), _provider(dependencies, 'db')() as con:
         last = con.execute(
@@ -411,10 +413,17 @@ def add_business_stop(
                 float(tracking.get('segment_m') or 0) / 1000,
                 float(point['odometer']) - float(last['odometer']),
                 int(tracking.get('sample_count') or 0),
-                payload.get('odometer_checked') is True,
+                payload.get('odometer_checked') is True and payload.get('physical_confirmed') is True,
                 con=con,
             )
         remember_segment(last_stop, point, segment_type, con=con, dependencies=dependencies)
+        control = payload.get('_distance_control')
+        # The challenge's GPS snapshot is the one actually shown and confirmed.
+        if control and control.get('segment'):
+            measured = control['segment']
+        _provider(dependencies, 'audit')('distance_segment', 'trip', int(trip['id']),
+                                       {**measured, 'stop_id': stop_id,
+                                        'physical_confirmed': payload.get('physical_confirmed') is True}, con=con)
         overall = 'business'
         if finish:
             route = str(payload.get('deviating_route') or '').strip()[:300]
@@ -441,6 +450,7 @@ def add_business_stop(
                     'overall_trip_type': overall,
                     'suggestion': suggestion.get('reason'),
                     'end': point,
+                    'distance_control': control,
                 },
                 con=con,
             )
@@ -458,6 +468,7 @@ def add_business_stop(
                     'segment_trip_type': segment_type,
                     'suggestion': suggestion.get('reason'),
                     'point': point,
+                    'distance_control': control,
                 },
                 con=con,
             )

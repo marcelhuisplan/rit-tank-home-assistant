@@ -13,6 +13,7 @@ const context = vm.createContext({
   $:id=>{assert(nodes.has(id), 'Missing ID '+id);return nodes.get(id)},
   DATA:{business:{active_trip:null},current_odometer:63700}, ASSISTANT_ITEM:null,ASSISTANT_TYPE:'',
   api:async(path,opts)=>{if(opts){sent.push(JSON.parse(opts.body));return {ok:true}}return {arrivals:[arrival]}},
+  submitPhysical:async(path,payload,onSaved)=>{sent.push(payload);await onSaved({ok:true})},
   toast:m=>{message=m},reloadData:async()=>{},updateAssistantRouteUI(){},setAssistantType:t=>{},
   initOdometerWheel:(prefix,n)=>{nodes.get(prefix+'Odo').value=n},
   openModal(){},closeModal(){},fmt:(v,d)=>Number(v).toFixed(d),setTimeout:f=>f(),guideTo(){},
@@ -32,11 +33,14 @@ vm.runInContext(script.slice(start,end),context);
   assert.equal(nodes.get('arrivalOdoChecked').checked,false);
   assert.equal(nodes.get('arrivalSave').textContent,'✓ Alles akkoord');
   await context.saveAssistantArrival();
+  assert.equal(sent.length,0,'Physical confirmation is mandatory');
+  nodes.get('assistantPhysicalConfirmed').checked=true;
+  await context.saveAssistantArrival();
   assert.equal(sent[0].odometer,63719);
   assert.equal(sent[0].odometer_checked,false,'Accepting a proposal must not train');
   await context.openAssistantComplete(1);context.editArrivalProposal();
   assert.equal(nodes.get('arrivalEditor').hidden,false);
-  nodes.get('assistantOdo').value=63720;nodes.get('arrivalOdoChecked').checked=true;
+  nodes.get('assistantPhysicalValue').value=63720;nodes.get('assistantPhysicalConfirmed').checked=true;nodes.get('arrivalOdoChecked').checked=true;
   await context.saveAssistantArrival();assert.equal(sent[1].odometer,63720);assert.equal(sent[1].odometer_checked,true);
   arrival.proposal.suggested_odometer=null;arrival.proposal.route_complete=false;
   await context.openAssistantComplete(1);

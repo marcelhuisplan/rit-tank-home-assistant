@@ -31,6 +31,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse, quote, urlencode
 from zoneinfo import ZoneInfo
 
@@ -51,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '30.00'
+APP_VERSION = '31.00'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
@@ -548,7 +549,8 @@ def reset_administration(payload: dict[str, Any]) -> dict[str, Any]:
             pass
         google_places._PLACE_CACHE.clear()
         google_places._GEOCODE_CACHE.clear()
-        RESET_TOKENS.clear()
+    RESET_TOKENS.clear()
+    odometer_control.PENDING.clear()
     try:
         publish_sensors_async()
     except Exception:
@@ -599,13 +601,21 @@ def set_settings(payload: dict[str, Any]) -> dict[str, Any]:
         'assistant_mode', 'assistant_auto_confidence', 'distance_learning_enabled',
         'assistant_notify_service', 'assistant_sync_zones', 'assistant_unknown_stops',
         'assistant_check_seconds', 'assistant_unknown_stop_minutes', 'assistant_fast_stop_seconds',
-        'assistant_min_trip_m', 'km_reimbursement_rate'
+        'assistant_min_trip_m', 'km_reimbursement_rate', 'distance_warning_km', 'distance_warning_fraction'
     )
     allow_empty = {'assistant_location_entity', 'assistant_notify_service', 'location_fallback_entity'}
     with DB_LOCK, db() as con:
         for key in allowed:
             if key in payload:
                 value = str(payload[key]).strip()[:160]
+                if key in {'distance_warning_km', 'distance_warning_fraction'}:
+                    try:
+                        limit = float(value.replace(',', '.'))
+                    except ValueError:
+                        raise ValueError('Vul een geldige afwijkingsgrens in.') from None
+                    if not math.isfinite(limit) or limit < 0 or (key == 'distance_warning_fraction' and limit > 1):
+                        raise ValueError('Vul een geldige afwijkingsgrens in.')
+                    value = str(limit)
                 if key == 'km_reimbursement_rate':
                     try:
                         rate = Decimal(value.replace(',', '.'))
@@ -706,6 +716,19 @@ try:
     from . import assistant
 except ImportError:
     import assistant
+
+try:
+    from . import odometer_control
+except ImportError:
+    import odometer_control
+
+
+def distance_segment_snapshot(trip, end):
+    return odometer_control.segment_snapshot(SimpleNamespace(**globals()), trip, end)
+
+
+def physical_trip_submit(payload, kind, binding, arrival_id=None):
+    return odometer_control.submit(SimpleNamespace(**globals()), payload, kind, binding, arrival_id)
 
 
 def _places_dependencies() -> dict[str, Any]:
@@ -1824,7 +1847,14 @@ def province_allowed_for_push(lat: float, lon: float) -> tuple[bool, str, dict[s
 
 
 def trip_distance_tracking_public() -> dict[str, Any]:
-    return assistant.trip_distance_tracking_public(dependencies=_assistant_dependencies())
+    result = assistant.trip_distance_tracking_public(dependencies=_assistant_dependencies())
+    trip = active_business_trip()
+    if trip and trip.get('stops'):
+        measure = odometer_control.trip_measurement(SimpleNamespace(**globals()), trip, trip['stops'][-1]['odometer'])
+        result.update(trip_start_odometer=trip['stops'][0]['odometer'],
+                      gps_total_km=measure['gps_km'], gps_partial_km=measure['gps_partial_km'],
+                      gps_missing=measure['gps_missing'], gps_incomplete=measure['gps_incomplete'])
+    return result
 
 
 
@@ -1881,6 +1911,7 @@ def start_assistant_threads() -> None:
 
 def _trips_dependencies() -> dict[str, Any]:
     return {
+        'distance_segment_snapshot': distance_segment_snapshot,
         'db': db,
         'DB_LOCK': DB_LOCK,
         'haversine_m': haversine_m,
@@ -2561,6 +2592,15 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 @media(max-width:390px){.hero{grid-template-columns:1fr 105px;padding:18px}.odo strong{font-size:34px}.action-secondary{font-size:13px}.kpis{grid-template-columns:repeat(2,1fr)}.brand h1{font-size:23px}}
 .hero-car img{display:block;width:100%;height:auto;object-fit:contain;border-radius:20px}.hero-car{min-width:0}.hero{grid-template-columns:minmax(0,1fr) minmax(200px,1.1fr);gap:18px}
 @media(max-width:560px){.hero{grid-template-columns:minmax(0,1fr);gap:12px}.hero-car{width:100%;max-width:360px;justify-self:center}.hero-car img{border-radius:16px}}
+.physical-card{padding:16px;margin:12px 0;border:1px solid var(--line);border-radius:18px;background:var(--card);overflow-wrap:anywhere}
+.physical-facts{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin:12px 0}
+.physical-facts small{display:block;color:var(--muted);font-size:12px}.physical-facts b{display:block;margin-top:5px;font-size:19px}
+.physical-card input[type=text]{box-sizing:border-box;width:100%;min-width:0;font-size:22px;padding:14px;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:12px}
+.physical-consent{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.5;margin:14px 0}.physical-consent input{flex:0 0 auto;width:20px;height:20px}
+.physical-warning{color:#ffcf81;white-space:pre-line;line-height:1.5;font-size:14px}
+#distanceModal{z-index:1500}#distanceModal .sheet,#tripModal .sheet,#assistantModal .sheet{box-sizing:border-box;width:min(100%,620px);max-height:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-bottom:calc(24px + env(safe-area-inset-bottom))}
+#tripStepOdo{display:none}#distanceModal .physical-actions{display:grid;gap:10px;margin-top:16px}#distanceModal button{min-height:48px;white-space:normal}
+@media(max-width:360px){.physical-facts{grid-template-columns:minmax(0,1fr)}}
 </style>
 </head>
 <body>
@@ -2643,11 +2683,24 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 <div class="modal" id="kmModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>🛣️ Kilometerstand</h2><button class="close" onclick="closeModal('kmModal')">✕</button></div><input id="kmOdo" type="hidden"><div class="guide-section active" id="kmStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Nieuwe kilometerstand</b><small>Laatste stand is vooringesteld</small></div><div class="odo-wheelbox" id="kmOdoWheels"></div><div class="odo-live"><b id="kmOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="kmOdoLast"></div><button class="guide-next" type="button" onclick="guideTo('kmStepRest')">Verder →</button></div><div class="guide-section" id="kmStepRest"><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="kmDate" type="datetime-local"></div><div class="field"><label>Notitie (optioneel)</label><input id="kmNote" maxlength="200" placeholder="Bijv. thuiskomst, zakelijke rit..."></div><button class="save" onclick="saveKm()">Kilometerstand opslaan</button></div></div></div>
 
 <div class="modal" id="tripModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2 id="tripModalTitle">💼 Zakelijke rit</h2><button class="close" onclick="closeModal('tripModal')">✕</button></div>
+  <section class="physical-card" id="physicalTripCard" aria-labelledby="physicalTripHeading">
+    <h3 id="physicalTripHeading">Kilometerteller controleren</h3>
+    <div class="physical-facts"><div><small id="physicalStartLabel">Startteller</small><b id="physicalStart">—</b></div><div><small>GPS gemeten</small><b id="physicalGps">—</b></div><div><small>Voorgestelde eindstand</small><b id="physicalProposal">—</b></div></div>
+    <p class="physical-warning" id="physicalGpsWarning" role="status"></p>
+    <label for="physicalTripValue">Werkelijke tellerstand</label>
+    <input id="physicalTripValue" type="text" inputmode="numeric" autocomplete="off" maxlength="10" oninput="physicalTripChanged()" aria-describedby="physicalTripHelp">
+    <p id="physicalTripHelp" class="assistant-note">Controleer de kilometerteller van de auto. Hele kilometers, bijvoorbeeld 64.375.</p>
+    <label class="physical-consent"><input id="physicalTripConfirmed" type="checkbox" onchange="physicalTripConsent()">Ik heb deze fysieke tellerstand gecontroleerd.</label>
+    <p id="physicalTripDistance" class="assistant-note" aria-live="polite"></p>
+    <button class="guide-next" type="button" onclick="guideTo('tripStepLocation')">Verder naar locatie →</button>
+  </section>
   <div id="tripStartFields"><div class="tax-note">Start hier een zakelijke ritregistratie. Leg daarna zelf de volgende locatie vast of sluit de rit af.</div><div class="purpose-grid"><div class="field"><label>Doel / afspraak</label><input id="tripPurpose" maxlength="120" placeholder="Bijv. klantbezoek"></div><div class="field"><label>Klant / project</label><input id="tripClient" maxlength="120" placeholder="Optioneel"></div></div><div class="field"><label>Ritnotitie (optioneel)</label><input id="tripTripNote" maxlength="250" placeholder="Bijv. offertebespreking"></div></div>
   <input id="tripOdo" type="hidden"><div class="guide-section active" id="tripStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small id="tripOdoStepHint">Laatste stand is vooringesteld</small></div><div class="odo-suggest" id="tripOdoSuggestion"><div class="odo-suggest-label">Berekende kilometerstand</div><div class="odo-suggest-value"><b id="tripOdoSuggestedValue">—</b> <span>km</span></div><div class="odo-suggest-detail" id="tripOdoSuggestedDetail"></div><div class="odo-suggest-actions"><button class="odo-suggest-accept" type="button" onclick="acceptTripOdoSuggestion()">✓ Akkoord</button><button class="odo-suggest-edit" type="button" onclick="editTripOdoSuggestion()">Wijzigen</button></div></div><div class="odo-editor" id="tripOdoEditor"><div class="odo-wheelbox" id="tripOdoWheels"></div><div class="odo-live"><b id="tripOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="tripOdoLast"></div><label class="assistant-note"><input type="checkbox" id="tripOdoChecked"> Ik heb de vorige én huidige tellerstand gecontroleerd; gebruik dit traject voor kilometerleren.</label><button class="guide-next" type="button" onclick="guideTo('tripStepLocation')">Kilometerstand bevestigen →</button></div></div><div class="guide-section" id="tripStepLocation"><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="tripDate" type="datetime-local"></div><div class="trip-location-box"><b id="tripLocationTitle">📍 Nog geen locatie vastgelegd</b><small id="tripLocationDetail">Tik hieronder zodra je op de juiste plek bent.</small><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin-top:8px"><button id="tripHomeButton" class="location-big" type="button" onclick="selectTripHome()" style="margin-top:0">🏠 Thuis</button><button class="location-big" type="button" onclick="captureTripLocation()" style="margin-top:0">📍 Gebruik huidige locatie</button></div><div id="tripAddressChoices" class="address-choices"></div><div class="field"><label for="tripManualAddress">Adres uit je afspraak (eventueel corrigeren)</label><input id="tripManualAddress" maxlength="120" placeholder="Straat, huisnummer en plaats"></div><div class="google-attrib" id="tripGoogleAttrib" style="display:none">Adres via <b translate="no">Google Maps</b></div></div></div>
   <div class="field"><label>Notitie bij deze stop (optioneel)</label><input id="tripStopNote" maxlength="250" placeholder="Bijv. bezoek afgerond"></div><div id="tripFinishFields" style="display:none"><div class="field"><label>Afwijkende route (alleen indien van toepassing)</label><input id="tripDeviatingRoute" maxlength="300" placeholder="Bijv. omleiding via A1 wegens afsluiting"></div></div>
   <button class="save" id="tripSaveButton" onclick="saveTripPoint()">Opslaan</button>
 </div></div>
+
+<div class="modal" id="distanceModal" role="dialog" aria-modal="true" aria-labelledby="distanceTitle"><div class="sheet"><div class="sheethead"><h2 id="distanceTitle">⚠️ Tellerstand controleren</h2><button class="close" aria-label="Terug" onclick="cancelPhysicalCheck()">✕</button></div><p id="distanceExplanation" class="physical-warning"></p><div class="physical-facts" id="distanceFacts"></div><p class="assistant-note">Na bevestiging gebruiken we de fysieke kilometerteller, niet de GPS-schatting.</p><p id="distanceError" class="physical-warning" role="status"></p><div class="physical-actions"><button class="odo-suggest-edit" id="distanceBack" onclick="cancelPhysicalCheck()">Terug en controleren</button><button class="save" id="distanceConfirm" onclick="confirmPhysicalCheck()">Tellerstand bevestigen</button></div></div></div>
 
 <div class="modal" id="tripEditModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>✏️ Rit corrigeren</h2><button class="close" onclick="closeModal('tripEditModal')">✕</button></div>
   <input id="editTripId" type="hidden"><div id="editTripStops"></div><div class="field"><label>Doel / afspraak</label><input id="editTripPurpose" maxlength="120"></div><div class="field"><label>Klant / project</label><input id="editTripClient" maxlength="120"></div><div class="field"><label>Afwijkende route</label><input id="editTripRoute" maxlength="300" placeholder="Alleen invullen indien van toepassing"></div><div class="field"><label>Toelichting</label><input id="editTripNote" maxlength="250"></div><div class="tax-note">Een correctie wordt vastgelegd in het wijzigingslogboek.</div><button id="editTripSave" class="save" onclick="saveTripEdit()">Correctie opslaan</button>
@@ -2701,7 +2754,8 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <div class="guide-section active" id="assistantStepOdo"><div class="guide-head"><span class="step-badge">2</span><b>Kilometerstand bij aankomst</b><small>Scroll de cijfers</small></div><div class="odo-wheelbox" id="assistantOdoWheels"></div><div class="odo-live"><b id="assistantOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="assistantOdoLast"></div></div>
   <label class="assistant-note"><input type="checkbox" id="arrivalOdoChecked"> Ik heb de vertrek- én aankomststand op de echte teller gecontroleerd. Gebruik dit traject voor kilometerleren.</label></div>
   <label class="assistant-note" id="arrivalFinishWrap"><input type="checkbox" id="arrivalFinish"> Ook mijn actieve ritregistratie afsluiten</label>
-  <button class="save" id="arrivalSave" onclick="saveAssistantArrival()">✓ Alles akkoord</button>
+  <section class="physical-card"><label for="assistantPhysicalValue">Werkelijke tellerstand</label><input id="assistantPhysicalValue" type="text" inputmode="numeric" maxlength="10" autocomplete="off" oninput="$('assistantPhysicalConfirmed').checked=false;cancelPhysicalCheck()"><p class="assistant-note">Controleer de fysieke vertrek- én aankomstteller. GPS en routeberekeningen zijn uitsluitend voorstellen.</p><label class="physical-consent"><input id="assistantPhysicalConfirmed" type="checkbox">Ik heb beide fysieke tellerstanden gecontroleerd.</label></section>
+  <button class="save" id="arrivalSave" onclick="saveAssistantArrival()">Gecontroleerde aankomst opslaan</button>
 </div></div>
 
 <div class="modal" id="settingsModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>⚙️ Instellingen</h2><button class="close" onclick="closeModal('settingsModal')">✕</button></div>
@@ -2783,7 +2837,7 @@ function fmt(n,d=1){if(n===null||n===undefined||Number.isNaN(Number(n)))return '
 function money(n){let c=DATA?.settings?.currency||'€';return n===null||n===undefined?'—':`${c} ${fmt(n,2)}`}
 function localInputNow(){let d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,16)}
 function toast(msg,error=false){let t=$('toast');t.textContent=msg;t.className='toast show'+(error?' error':'');setTimeout(()=>t.className='toast',3300)}
-let modalScrollY=0;function lockModalScroll(){if(document.body.classList.contains('modal-open'))return;modalScrollY=window.scrollY;document.body.style.top=`-${modalScrollY}px`;document.body.classList.add('modal-open')}function unlockModalScroll(){if(document.querySelector('.modal.show'))return;let scrollY=modalScrollY;document.body.classList.remove('modal-open');document.body.style.top='';modalScrollY=0;window.scrollTo(0,scrollY)}function closeModal(id){$(id).classList.remove('show');unlockModalScroll()} function openModal(id){lockModalScroll();$(id).classList.add('show');let sh=$(id).querySelector('.sheet');if(sh)sh.scrollTop=0}
+let modalScrollY=0;function lockModalScroll(){if(document.body.classList.contains('modal-open'))return;modalScrollY=window.scrollY;document.body.style.top=`-${modalScrollY}px`;document.body.classList.add('modal-open')}function unlockModalScroll(){if(document.querySelector('.modal.show'))return;let scrollY=modalScrollY;document.body.classList.remove('modal-open');document.body.style.top='';modalScrollY=0;window.scrollTo(0,scrollY)}function closeModal(id){if(id==='assistantModal')openAssistantComplete.request=(openAssistantComplete.request||0)+1;if(['tripModal','assistantModal','distanceModal'].includes(id)){PHYSICAL_PENDING=null;++PHYSICAL_GENERATION;}$(id).classList.remove('show');unlockModalScroll()} function openModal(id){lockModalScroll();$(id).classList.add('show');let sh=$(id).querySelector('.sheet');if(sh)sh.scrollTop=0}
 let GUIDE_TIMER=null;
 function guideTo(id,delay=80){clearTimeout(GUIDE_TIMER);GUIDE_TIMER=setTimeout(()=>{let el=$(id);if(!el)return;let modal=el.closest('.modal');if(modal&&!modal.classList.contains('show'))return;if(modal)modal.querySelectorAll('.guide-section').forEach(x=>x.classList.toggle('active',x===el));let sheet=el.closest('.sheet');if(sheet){let top=el.getBoundingClientRect().top-sheet.getBoundingClientRect().top+sheet.scrollTop-24;sheet.scrollTo({top:Math.max(0,top),behavior:'smooth'})}else el.scrollIntoView({behavior:'smooth',block:'center'})},delay)}
 async function reloadData(){try{DATA=await api(`api/summary?period=${PERIOD}`);await migrateLocationFallback();render();handleLaunchAction()}catch(e){toast(e.message,true)}}
@@ -2808,10 +2862,14 @@ async function selectAssistantAddressResult(i){ADDR_SELECTED=ADDR_RESULTS[i];if(
 async function useAssistantAddressResult(){if(!ADDR_SELECTED||!ADDR_ARRIVAL){toast('Kies eerst een adres uit de resultaten.',true);return}try{await api(`api/assistant/${ADDR_ARRIVAL.id}/correct-route`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(assistantRoutePayload())});let fresh=await api('api/assistant/arrivals'),updated=(fresh.arrivals||[]).find(v=>Number(v.id)===Number(ADDR_ARRIVAL.id));if(!updated)throw new Error('Bijgewerkt voorstel niet gevonden.');ADDR_ARRIVAL=updated;ASSISTANT_ITEM=updated;updateAssistantRouteUI(updated);ADDR_SELECTED=null;ADDR_RESULTS=[];$('addrQuery').value='';await reloadData();let current=(DATA.business?.assistant?.pending||[]).find(v=>Number(v.id)===Number(updated.id));if(current){ADDR_ARRIVAL=current;ASSISTANT_ITEM=current;updateAssistantRouteUI(current)}guideTo('assistantRouteSection');toast('Route aangepast en controle bijgewerkt')}catch(e){toast(e.message,true)}}
 function setAssistantType(type){ASSISTANT_TYPE='business';$('assistantBusiness').classList.toggle('active',true)}
 async function openAssistantComplete(id){
+  let request=(openAssistantComplete.request||0)+1;openAssistantComplete.request=request;
   try {
     let fresh=await api('api/assistant/arrivals'),x=(fresh.arrivals||[]).find(v=>Number(v.id)===Number(id));
+    if(request!==openAssistantComplete.request)return;
     if(!x){toast('Dit voorstel is al verwerkt.');reloadData();return}
     if(!x.is_next_to_review){toast('Deze rit is nog niet aan de beurt. Handel eerst de eerdere rit af.',true);return}
+    let preserve=ASSISTANT_ITEM?.id===x.id&&$('assistantModal').classList.contains('show')?{
+      value:$('assistantPhysicalValue').value,start:$('assistantStartOdo').value,checked:$('assistantPhysicalConfirmed').checked}:null;
     ASSISTANT_ITEM=x;ASSISTANT_TYPE='business';
     let p=x.proposal||{},active=DATA.business?.active_trip,last=active?.stops?.at(-1);
     let usable=p.suggested_odometer!=null&&p.route_complete&&(!last||Number(last.odometer)===Number(p.start_odometer));
@@ -2828,6 +2886,9 @@ async function openAssistantComplete(id){
     if(!usable)$('assistantReason').textContent+=' · Geen volledig GPS-voorstel: controleer beide tellerstanden.';
     setAssistantType(ASSISTANT_TYPE);openModal('assistantModal');
     initOdometerWheel('assistant',usable?p.suggested_odometer:Number(last?.odometer??p.start_odometer??DATA.current_odometer??0));
+    $('assistantPhysicalValue').value=usable?p.suggested_odometer:'';
+    $('assistantPhysicalConfirmed').checked=false;
+    if(preserve){$('assistantPhysicalValue').value=preserve.value;$('assistantStartOdo').value=preserve.start;$('assistantPhysicalConfirmed').checked=preserve.checked;}
   } catch(e){toast(e.message,true)}
 }
 function editArrivalProposal(){
@@ -2837,14 +2898,14 @@ function editArrivalProposal(){
 }
 async function saveAssistantArrival(){
   if(!ASSISTANT_ITEM||$('arrivalSave').disabled)return;
+  if(!$('assistantPhysicalConfirmed').checked){toast('Controleer en bevestig beide fysieke tellerstanden.',true);return}
   ASSISTANT_TYPE='business';
   if($('assistantStartOdo').value===''){toast('Vul de vertrekstand in.',true);editArrivalProposal();return}
-  let payload={trip_type:ASSISTANT_TYPE,start_odometer:$('assistantStartOdo').value,odometer:$('assistantOdo').value,
+  let payload={physical_confirmed:true,trip_id:DATA.business?.active_trip?.id??null,trip_type:ASSISTANT_TYPE,start_odometer:$('assistantStartOdo').value,odometer:$('assistantPhysicalValue').value,
     odometer_checked:$('arrivalOdoChecked').checked,finish:$('arrivalFinish').checked};
-  $('arrivalSave').disabled=true;
-  try{await api(`api/assistant/${ASSISTANT_ITEM.id}/complete`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  await submitPhysical(`api/assistant/${ASSISTANT_ITEM.id}/complete`,payload,async()=>{
     closeModal('assistantModal');toast('Gecontroleerde aankomst opgeslagen');ASSISTANT_ITEM=null;await reloadData();
-  }catch(e){toast(e.message,true)}finally{$('arrivalSave').disabled=false}
+  });
 }
 function renderBusinessHistory(arr){let box=$('businessHistory');box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">Nog geen ritten in deze periode.</div>';return}arr.forEach(t=>{let d=document.createElement('div');d.className='trip-card';let stops=(t.stops||[]).map((x,i)=>{let icon=i===0?'●':(i===t.stops.length-1&&t.status==='completed'?'🏁':'•');let map=x.google_maps_uri?`<a target="_blank" rel="noopener" href="${escAttr(x.google_maps_uri)}">📍</a>`:'';return `<div class="trip-stop"><div class="dot">${icon}</div><div><b>${esc(x.location_address||x.location_label||'Adres nog niet beschikbaar')}</b><small>${x.date_label} ${x.time_label} · ${fmt(x.odometer,0)} km${i?` · +${fmt(x.segment_km,1)} km`:''}${i&&x.segment_trip_type_label?` <span class="leg-pill ${x.segment_trip_type}">${esc(x.segment_trip_type_label)}</span>`:''}${x.note?'<br>'+esc(x.note):''}</small></div>${map}</div>`}).join(''),type=t.trip_type||'business';d.innerHTML=`<div class="trip-top"><div><strong>${esc(t.purpose||t.trip_type_label||'Rit')}${t.client?' · '+esc(t.client):''}</strong><small>${t.started_label||''}${t.status==='active'?' · ACTIEF':''}</small><span class="trip-type-pill ${type}">${esc(t.trip_type_label||'Zakelijk')}</span></div><div class="trip-km">${fmt(t.km||0,1)} km</div></div>${t.deviating_route?`<div class="tax-note">Afwijkende route: ${esc(t.deviating_route)}</div>`:''}<div class="trip-route">${stops}</div><div class="trip-actions"><button class="editbtn" onclick="openTripEdit(${t.id})">✏️</button><button class="trash" onclick="removeBusinessTrip(${t.id})">🗑️</button></div>`;box.appendChild(d)})}
 function renderAudit(arr){let box=$('auditHistory');if(!box)return;box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">Nog geen wijzigingen.</div>';return}arr.forEach(a=>{let d=document.createElement('div');d.className='audit-row';d.innerHTML=`<b>${esc(a.label||a.action)} · ${esc(a.entity_type||'')}</b><small>${esc(a.date_label||'')} ${a.entity_id?`· #${a.entity_id}`:''}</small>`;box.appendChild(d)})}
@@ -2937,6 +2998,7 @@ async function refreshTripOdoProposal(request){
   try{
     let sug=await api('api/business/odometer-suggestion',{signal:controller.signal});
     if(!current())return;
+    DATA.business.odometer_suggestion=sug;
     if(!showTripOdoProposal(sug)){
       $('tripOdoEditor').hidden=false;initOdometerWheel('trip',$('tripOdo').value);
       $('tripOdoStepHint').textContent='Onvoldoende of onderbroken GPS-data — controleer de teller';
@@ -2947,7 +3009,7 @@ async function refreshTripOdoProposal(request){
     $('tripOdoStepHint').textContent='Voorstel niet beschikbaar — controleer de teller';
   }finally{clearTimeout(timer)}
 }
-async function openTripPoint(mode){clearTimeout(TRIP_SEARCH_TIMER);TRIP_MODE=mode;++TRIP_PROPOSAL_REQUEST;++TRIP_ADDRESS_REQUEST;++TRIP_ROUTE_PREVIEW_REQUEST;TRIP_GPS=null;$('tripAddressChoices').innerHTML='';$('tripManualAddress').value='';$('tripOdoChecked').checked=false;TRIP_LOCATION=null;TRIP_SEGMENT_TYPE='business';TRIP_ODO_MANUAL=false;let active=DATA.business?.active_trip;$('tripModalTitle').textContent=mode==='start'?'🚗 Ritregistratie starten':mode==='finish'?'🏁 Laatste locatie':'📍 Volgende locatie';$('tripStartFields').style.display=mode==='start'?'block':'none';$('tripFinishFields').style.display=mode==='finish'?'block':'none';$('tripHomeButton').hidden=false;$('tripDate').value=localInputNow();$('tripStopNote').value='';if(mode==='start'){$('tripPurpose').value='klantbezoek';$('tripClient').value='';$('tripTripNote').value=''};if(mode==='finish')$('tripDeviatingRoute').value=active?.deviating_route||'';$('tripLocationTitle').textContent='📍 Nog geen locatie vastgelegd';$('tripLocationDetail').textContent='Tik hieronder zodra je op de juiste plek bent.';$('tripGoogleAttrib').style.display='none';$('tripSaveButton').textContent=mode==='start'?'Registratie starten':mode==='finish'?'Ritregistratie afsluiten':'Locatie opslaan';$('tripOdoSuggestion').classList.remove('show');$('tripOdoEditor').hidden=mode!=='start';$('tripOdoStepHint').textContent=mode==='start'?'Laatste stand is vooringesteld':'Berekende stand ophalen…';initOdometerWheel('trip',DATA.current_odometer??0);if(mode!=='start')await refreshTripOdoProposal(TRIP_PROPOSAL_REQUEST);openModal('tripModal');setTimeout(()=>guideTo('tripStepOdo',0),80)}
+async function openTripPoint(mode){clearTimeout(TRIP_SEARCH_TIMER);TRIP_MODE=mode;++TRIP_PROPOSAL_REQUEST;++TRIP_ADDRESS_REQUEST;++TRIP_ROUTE_PREVIEW_REQUEST;TRIP_GPS=null;$('tripAddressChoices').innerHTML='';$('tripManualAddress').value='';$('tripOdoChecked').checked=false;TRIP_LOCATION=null;TRIP_SEGMENT_TYPE='business';TRIP_ODO_MANUAL=false;let active=DATA.business?.active_trip;$('tripModalTitle').textContent=mode==='start'?'🚗 Ritregistratie starten':mode==='finish'?'🏁 Laatste locatie':'📍 Volgende locatie';$('tripStartFields').style.display=mode==='start'?'block':'none';$('tripFinishFields').style.display=mode==='finish'?'block':'none';$('tripHomeButton').hidden=false;$('tripDate').value=localInputNow();$('tripStopNote').value='';if(mode==='start'){$('tripPurpose').value='klantbezoek';$('tripClient').value='';$('tripTripNote').value=''};if(mode==='finish')$('tripDeviatingRoute').value=active?.deviating_route||'';$('tripLocationTitle').textContent='📍 Nog geen locatie vastgelegd';$('tripLocationDetail').textContent='Tik hieronder zodra je op de juiste plek bent.';$('tripGoogleAttrib').style.display='none';$('tripSaveButton').textContent=mode==='start'?'Registratie starten':mode==='finish'?'Ritregistratie afsluiten':'Locatie opslaan';$('tripOdoSuggestion').classList.remove('show');$('tripOdoEditor').hidden=mode!=='start';$('tripOdoStepHint').textContent=mode==='start'?'Laatste stand is vooringesteld':'Berekende stand ophalen…';initOdometerWheel('trip',DATA.current_odometer??0);if(mode!=='start')await refreshTripOdoProposal(TRIP_PROPOSAL_REQUEST);initPhysicalTrip(mode,active);openModal('tripModal');setTimeout(()=>$('physicalTripCard').scrollIntoView({block:'start'}),80)}
 let TRIP_SEARCH_TIMER=null,TRIP_ADDRESS_REQUEST=0,TRIP_ROUTE_PREVIEW_REQUEST=0,TRIP_ADDRESSES=[],TRIP_GPS=null;
 async function captureTripLocation(){clearTimeout(TRIP_SEARCH_TIMER);let request=++TRIP_ADDRESS_REQUEST,title=$('tripLocationTitle'),detail=$('tripLocationDetail');TRIP_LOCATION=null;TRIP_GPS=null;TRIP_ADDRESSES=[];$('tripManualAddress').value='';$('tripAddressChoices').innerHTML='';title.textContent='📍 Locatie bepalen…';detail.textContent='Adressen in de buurt ophalen.';try{
  let loc=await resolveLocation();if(request!==TRIP_ADDRESS_REQUEST)return;TRIP_GPS=loc;
@@ -3029,19 +3091,69 @@ $('tripManualAddress').addEventListener('input',()=>{
   if($('tripManualAddress').value.trim().length>=3)TRIP_SEARCH_TIMER=setTimeout(searchTripManualAddress,350);
 });
 $('tripManualAddress').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();searchTripManualAddress()}});
+// Physical odometer flow: proposals never own the physical input after initialization.
+let PHYSICAL_PENDING=null,PHYSICAL_BUSY=false,PHYSICAL_GENERATION=0,PHYSICAL_START=null,PHYSICAL_TRIP_ID=null;
+let PHYSICAL_SESSION=null;
+function physicalSession(){if(!PHYSICAL_SESSION)PHYSICAL_SESSION=Array.from(crypto.getRandomValues(new Uint8Array(24)),x=>x.toString(16).padStart(2,'0')).join('');return PHYSICAL_SESSION}
+function physicalNumber(raw){let s=String(raw).trim();if(/^[0-9]{1,3}(\.[0-9]{3})+$/.test(s))s=s.replaceAll('.','');if(!/^[0-9]+([.,]0)?$/.test(s))return null;let n=Number(s.replace(',','.'));return Number.isSafeInteger(n)&&n>=0&&n<=999999?n:null}
+function physicalTripChanged(){TRIP_ODO_MANUAL=true;$('physicalTripConfirmed').checked=false;cancelPhysicalCheck();renderPhysicalDistance()}
+function physicalTripConsent(){TRIP_ODO_MANUAL=true;cancelPhysicalCheck();renderPhysicalDistance()}
+function renderPhysicalDistance(){let n=physicalNumber($('physicalTripValue').value),km=n!=null&&PHYSICAL_START!=null?n-PHYSICAL_START:null;$('physicalTripDistance').textContent=TRIP_MODE==='start'?'Deze fysieke teller wordt de startstand.':km!=null&&km>=0?'Afstand volgens teller: '+fmt(km,0)+' km':'Vul een geldige tellerstand in.'}
+function initPhysicalTrip(mode,active){
+  cancelPhysicalCheck();PHYSICAL_TRIP_ID=active?.id??null;
+  let sug=DATA.business?.odometer_suggestion||{};
+  PHYSICAL_START=mode==='finish'?active?.start_odometer:active?.last_odometer;
+  $('physicalStartLabel').textContent=mode==='stop'?'Teller vorige stop':'Startteller';
+  $('physicalStart').textContent=PHYSICAL_START!=null?fmt(PHYSICAL_START,0)+' km':'Bij vertrek bevestigen';
+  let gps=mode==='finish'?sug.gps_total_km:sug.tracked_km;
+  $('physicalGps').textContent=mode==='start'?'Nog niet gestart':gps!=null&&gps>0?fmt(gps,1)+' km':'Geen volledige meting';
+  $('physicalProposal').textContent=mode==='start'?'—':sug.suggested_odometer!=null?fmt(sug.suggested_odometer,0)+' km':'Niet beschikbaar';
+  $('physicalGpsWarning').textContent=mode==='start'?'':sug.gps_incomplete||sug.suggestion_reliable===false?sug.distance_warning||'GPS-route mogelijk onderbroken — controleer de tellerstand.':sug.gps_missing?'GPS ontbreekt of is niet voor de hele rit beschikbaar. Controleer de fysieke teller.':'';
+  $('physicalTripValue').value=mode==='start'?DATA.current_odometer??'':sug.suggested_odometer??'';
+  $('physicalTripConfirmed').checked=false;renderPhysicalDistance();fitPhysicalViewport();
+}
+function cancelPhysicalCheck(){PHYSICAL_PENDING=null;++PHYSICAL_GENERATION;if($('distanceModal'))closeModal('distanceModal')}
+function physicalBusy(value){PHYSICAL_BUSY=value;for(let id of ['tripSaveButton','arrivalSave','distanceConfirm'])if($(id))$(id).disabled=value}
+function showPhysicalCheck(check){
+  $('distanceTitle').textContent=check.significant?'⚠️ Verschil gevonden':'⚠️ GPS controleren';
+  let lines=[];if(check.significant)lines.push('De kilometerteller wijkt af van de GPS-meting.');
+  if(check.gps_incomplete)lines.push('GPS-route mogelijk onderbroken — controleer de tellerstand.');
+  if(check.gps_missing)lines.push('GPS ontbreekt of is niet voor de hele rit beschikbaar.');
+  if(check.gps_insufficient)lines.push('Onvoldoende GPS-samples — controleer de tellerstand.');
+  $('distanceExplanation').textContent=lines.join('\n');
+  let facts=[['GPS gemeten',check.gps_km==null?'Niet volledig beschikbaar':fmt(check.gps_km,1)+' km'],['Volgens kilometerteller',fmt(check.odometer_km,0)+' km'],['Verschil',check.difference_km==null?'Niet te bepalen':(check.difference_km>0?'+':'')+fmt(check.difference_km,1)+' km'],['Relatief',check.relative_difference==null?'Niet te bepalen':fmt(check.relative_difference*100,1)+'%'],['Startteller',fmt(check.start_odometer,0)+' km'],['Eindteller',fmt(check.end_odometer,0)+' km']];
+  $('distanceFacts').innerHTML=facts.map(([label,value])=>`<div><small>${esc(label)}</small><b>${esc(value)}</b></div>`).join('');
+  $('distanceError').textContent='';document.activeElement?.blur();openModal('distanceModal');fitPhysicalViewport();$('distanceConfirm').focus({preventScroll:true});
+}
+async function submitPhysical(path,payload,onSaved,token=null){
+  if(PHYSICAL_BUSY)return;
+  let generation=PHYSICAL_GENERATION;physicalBusy(true);
+  try{
+    let response=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Trip-Session':physicalSession()},body:JSON.stringify({...payload,...(token?{confirmation_token:token}:{})})});
+    let result=await response.json();
+    if(generation!==PHYSICAL_GENERATION)return;
+    if(response.status===409&&result.confirmation_required){PHYSICAL_PENDING={path,payload:structuredClone(payload),onSaved,token:result.confirmation_token};showPhysicalCheck(result.check);return}
+    if(!response.ok)throw Error(result.error||'Opslaan mislukt. Controleer de rit opnieuw.');
+    PHYSICAL_PENDING=null;closeModal('distanceModal');await onSaved(result);
+  }catch(e){$('distanceError').textContent=e.message;toast(e.message,true)}finally{physicalBusy(false)}
+}
+async function confirmPhysicalCheck(){let pending=PHYSICAL_PENDING;if(!pending||PHYSICAL_BUSY)return;await submitPhysical(pending.path,pending.payload,pending.onSaved,pending.token)}
+function fitPhysicalViewport(){let view=window.visualViewport;if(!view)return;for(let id of ['tripModal','assistantModal','distanceModal']){let modal=$(id);if(modal){modal.style.top=view.offsetTop+'px';modal.style.height=view.height+'px';modal.style.bottom='auto'}}}
+if(typeof window!=='undefined'&&window.visualViewport){window.visualViewport.addEventListener('resize',fitPhysicalViewport);window.visualViewport.addEventListener('scroll',fitPhysicalViewport)}
 async function saveTripPoint(){
+  if(PHYSICAL_BUSY)return;
+  if(!$('physicalTripConfirmed').checked){toast('Controleer en bevestig de fysieke tellerstand.',true);$('physicalTripValue').focus();return}
   if(!TRIP_LOCATION){toast('Leg eerst de huidige locatie vast met 📍.',true);return}
   if(TRIP_MODE!=='start')TRIP_SEGMENT_TYPE='business';
   let path=TRIP_MODE==='start'?'api/business/start':TRIP_MODE==='finish'?'api/business/finish':'api/business/stop';
-  let payload={odometer_checked:$('tripOdoChecked').checked,odometer:$('tripOdo').value,created_at:$('tripDate').value,latitude:TRIP_LOCATION.latitude,longitude:TRIP_LOCATION.longitude,location_accuracy:TRIP_LOCATION.accuracy??null,location_source:TRIP_LOCATION.source||'',place_id:TRIP_LOCATION.place_id||'',manual_label:TRIP_LOCATION.manual_label||'',note:$('tripStopNote').value,segment_trip_type:'business'};
+  let payload={physical_confirmed:true,trip_id:PHYSICAL_TRIP_ID,odometer_checked:false,odometer:$('physicalTripValue').value,created_at:$('tripDate').value,latitude:TRIP_LOCATION.latitude,longitude:TRIP_LOCATION.longitude,location_accuracy:TRIP_LOCATION.accuracy??null,location_source:TRIP_LOCATION.source||'',place_id:TRIP_LOCATION.place_id||'',manual_label:TRIP_LOCATION.manual_label||'',note:$('tripStopNote').value,segment_trip_type:'business'};
   if(TRIP_MODE==='start'){payload.purpose=$('tripPurpose').value;payload.client=$('tripClient').value;payload.trip_note=$('tripTripNote').value}
   if(TRIP_MODE==='finish')payload.deviating_route=$('tripDeviatingRoute').value;
-  try{
-    await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  await submitPhysical(path,payload,async()=>{
     closeModal('tripModal');
     toast(TRIP_MODE==='start'?'Ritregistratie gestart':TRIP_MODE==='finish'?'Ritregistratie afgesloten':'Zakelijke etappe opgeslagen');
     switchView('business');reloadData();
-  }catch(e){toast(e.message,true)}
+  });
 }
 function esc(s){let d=document.createElement('div');d.textContent=s||'';return d.innerHTML} function escAttr(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
 async function removeEvent(id){if(!confirm('Deze registratie verwijderen?'))return;try{await api(`api/events/${id}`,{method:'DELETE'});toast('Registratie verwijderd');reloadData()}catch(e){toast(e.message,true)}}
@@ -3522,6 +3634,22 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {'error': 'Administratie wissen mislukt. Herstart de add-on voor herstel.'}, 500)
         payload = read_json(self)
         try:
+            physical_routes = {'/api/business/start': 'start', '/api/trips/start': 'start',
+                               '/api/business/stop': 'stop', '/api/trips/location': 'stop',
+                               '/api/business/finish': 'finish', '/api/trips/finish': 'finish'}
+            physical_arrival = re.fullmatch(r'/api/assistant/(\d+)/complete', path)
+            if path in physical_routes or physical_arrival:
+                if (self.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json'
+                        or self.headers.get('Sec-Fetch-Site', '') == 'cross-site'):
+                    return json_response(self, {'error': 'Ongeldige aanvraagbron of inhoud.'}, 403)
+                session = self.headers.get('X-Trip-Session', '')
+                if not re.fullmatch(r'[a-zA-Z0-9_-]{20,100}', session):
+                    return json_response(self, {'error': 'Open de rit opnieuw voor een veilige bevestiging.'}, 403)
+                binding = hashlib.sha256((self.headers.get('Cookie', '') + '|' +
+                           self.headers.get('X-Ingress-Path', '') + '|' + session).encode()).hexdigest()
+                result = physical_trip_submit(payload, physical_routes.get(path, 'assistant'), binding,
+                                              int(physical_arrival.group(1)) if physical_arrival else None)
+                return json_response(self, result, 409 if result.get('confirmation_required') else 201)
             if path == '/api/places/nearby':
                 lat = to_float(payload.get('latitude'))
                 lon = to_float(payload.get('longitude'))

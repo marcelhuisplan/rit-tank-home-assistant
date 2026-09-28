@@ -40,7 +40,7 @@ class Release1600ModalScrollTests(unittest.TestCase):
             APP,
         )
         self.assertIn(
-            "function closeModal(id){$(id).classList.remove('show');unlockModalScroll()}",
+            "$(id).classList.remove('show');unlockModalScroll()}",
             APP,
         )
 

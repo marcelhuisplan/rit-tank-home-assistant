@@ -122,7 +122,7 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(len(snapshot['stops']), len(event_ids))
 
     def test_current_version_is_consistent_across_runtime_and_docs(self):
-        version = '30.00'
+        version = '31.00'
         root = Path(__file__).parent
         self.assertEqual(app.APP_VERSION, version)
         self.assertRegex((root / 'config.yaml').read_text(encoding='utf-8'), rf"(?m)^version: ['\"]{re.escape(version)}['\"]$")
@@ -130,11 +130,11 @@ class AutonomyTests(unittest.TestCase):
         self.assertTrue((root / 'CHANGELOG.md').read_text(encoding='utf-8').startswith(f'# Changelog\n\n## {version}'))
         self.assertTrue((root / 'DOCS.md').read_text(encoding='utf-8').startswith(f'# Rit & Tank {version}'))
         readme = (root / 'README.md').read_text(encoding='utf-8')
-        self.assertIn('Huidige release: **30.00**.', readme)
-        self.assertIn('Volgende release: **31.00**.', readme)
+        self.assertIn('Huidige release: **31.00**.', readme)
+        self.assertIn('Volgende release: **32.00**.', readme)
         ci = (root.parent / '.github' / 'workflows' / 'ci.yml').read_text(encoding='utf-8')
-        self.assertEqual(ci.count("app.APP_VERSION == '30.00'"), 2)
-        self.assertIn('BUILD_VERSION=30.00', ci)
+        self.assertEqual(ci.count("app.APP_VERSION == '31.00'"), 2)
+        self.assertIn('BUILD_VERSION=31.00', ci)
         self.assertIn(f'rit-tank-shell-{version}'.encode('utf-8'), app.SERVICE_WORKER)
         self.assertEqual(app.summary()['app']['version'], version)
 
@@ -206,13 +206,13 @@ class AutonomyTests(unittest.TestCase):
 
     def test_checked_arrival_trains_and_gap_does_not(self):
         item = self.arrival()
-        app.complete_assistant_arrival(item['id'],{'trip_type':'business','start_odometer':10000,'odometer':10010,'odometer_checked':True})
+        app.complete_assistant_arrival(item['id'],{'trip_type':'business','start_odometer':10000,'odometer':10010,'odometer_checked':True,'physical_confirmed':True})
         self.assertEqual(app.distance_calibration()['samples'],1)
 
     def test_incomplete_arrival_has_no_suggested_odometer(self):
         item = self.arrival(incomplete=True)
         self.assertIsNone(item['proposal']['suggested_odometer'])
-        app.complete_assistant_arrival(item['id'],{'trip_type':'business','start_odometer':10000,'odometer':10010,'odometer_checked':True})
+        app.complete_assistant_arrival(item['id'],{'trip_type':'business','start_odometer':10000,'odometer':10010,'odometer_checked':True,'physical_confirmed':True})
         self.assertEqual(app.distance_calibration()['samples'],0)
 
     def test_overlap_rejected(self):
@@ -281,7 +281,7 @@ class AutonomyTests(unittest.TestCase):
         state.update(segment_m=10000,sample_count=20,last_update=app.iso_local())
         app.assistant_state_set('trip_distance_tracking',state)
         self.assertEqual(app.trip_distance_tracking_public()['suggested_odometer'],10010)
-        app.add_business_stop({'odometer':10010,'created_at':app.iso_local(),'latitude':52.1,'longitude':6.1,'segment_trip_type':'business','odometer_checked':True})
+        app.add_business_stop({'odometer':10010,'created_at':app.iso_local(),'latitude':52.1,'longitude':6.1,'segment_trip_type':'business','odometer_checked':True,'physical_confirmed':True})
         self.assertEqual(app.distance_calibration()['samples'],1)
         self.assertEqual(app.assistant_state_get('trip_distance_tracking')['segment_m'],0)
 
