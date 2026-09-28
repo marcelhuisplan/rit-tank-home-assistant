@@ -1,5 +1,15 @@
 # Changelog
 
+## 31.00
+
+- Fysieke tellerbevestiging bij start, tussenstop en afsluiten; server berekent definitieve afstand uit de tellers. Nederlandse notatie 64.375 = 64375 km.
+- GPS/voorstel/fysieke invoer gescheiden; vertraagde route- en adresantwoorden overschrijven de werkelijke teller niet.
+- Centrale afwijkingscontrole: meer dan 2 km EN meer dan 5%, symmetrisch ten opzichte van de grootste afstand.
+- Afzonderlijke waarschuwingen voor ontbrekende/onderbroken GPS; sessiegebonden, eenmalige bevestiging van exact dezelfde gegevens vóór opslag.
+- Duurzame audit van tellerafstand, GPS-snapshot, afwijkingen, grenzen en bevestiging. GPS per etappe en hele rit onderscheiden.
+- Geen schemamigratie of automatische wijziging van historische ritten. PDF/CSV, adressen en release-30-resetgedrag behouden.
+- Uitgebreide server-, UI- en regressietests. Main blijft ongewijzigd tot expliciete mergegoedkeuring.
+
 ## 30.00
 
 - Veilige nieuwe administratie via Instellingen: exacte RESET-bevestiging, CSRF-token en verplichte actuele fysieke kilometerteller.

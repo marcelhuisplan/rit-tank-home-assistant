@@ -14,6 +14,7 @@ REQUIRED_RUNTIME_MODULES = [
     'home_assistant.py',
     'trips.py',
     'assistant.py',
+    'odometer_control.py',
 ]
 
 
