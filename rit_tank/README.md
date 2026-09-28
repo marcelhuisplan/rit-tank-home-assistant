@@ -41,7 +41,7 @@ iOS-achtergrondlocaties komen op wisselende momenten binnen; een stopmelding pre
 
 Gebruik je al de lokale app? Lees eerst [`DOCS.md`](DOCS.md) voor de installatie- en update-instructies. Gegevens worden niet automatisch overgezet en de meldingslinks vragen nog aanpassing aan de nieuwe appidentiteit.
 
-Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijzigingen. De volledige suite bevat 278 Python-tests (inclusief 35 release-30-tests) en JavaScript-logicatests; een installatie- en iPhone-test volgen op het doelapparaat. Iedere pull request doorloopt automatisch Python-tests, compile- en importchecks, een productie-Docker-build en runtime packaging/importvalidatie in die image.
+Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijzigingen. De volledige suite bevat 279 Python-tests (inclusief 36 release-30-tests) en JavaScript-logicatests; een installatie- en iPhone-test volgen op het doelapparaat. Iedere pull request doorloopt automatisch Python-tests, compile- en importchecks, een productie-Docker-build en runtime packaging/importvalidatie in die image.
 
 ## Releasebeleid
 

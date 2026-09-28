@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import csv
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 import hashlib
@@ -450,17 +450,17 @@ def init_db() -> None:
 
 
 def reset_odometer(value: Any) -> float:
-    # Dutch grouping is explicit: 64.603 means 64603, 64603,5 means 64603.5.
+    # Physical start uses the same whole kilometres as the six odometer wheels.
     if isinstance(value, bool):
-        raise ValueError('Vul een geldige actuele kilometerstand in (0 t/m 999.999 km).')
+        raise ValueError('Vul de actuele kilometerstand in hele kilometers in (0 t/m 999.999 km).')
     text = str(value if value is not None else '').strip()
-    if re.fullmatch(r'\d{1,3}(?:\.\d{3})+(?:,\d)?', text):
+    if re.fullmatch(r'\d{1,3}(?:\.\d{3})+', text):
         text = text.replace('.', '')
-    if not re.fullmatch(r'\d+(?:[.,]\d)?', text):
-        raise ValueError('Vul een geldige actuele kilometerstand in (0 t/m 999.999 km).')
+    if not re.fullmatch(r'\d+(?:[.,]0)?', text):
+        raise ValueError('Vul de actuele kilometerstand in hele kilometers in (0 t/m 999.999 km).')
     number = float(text.replace(',', '.'))
     if not math.isfinite(number) or not 0 <= number <= 999999:
-        raise ValueError('Vul een geldige actuele kilometerstand in (0 t/m 999.999 km).')
+        raise ValueError('Vul de actuele kilometerstand in hele kilometers in (0 t/m 999.999 km).')
     return number
 
 
@@ -472,7 +472,7 @@ def _reset_backup(con: sqlite3.Connection) -> Path:
     directory = Path(tempfile.mkdtemp(prefix='reset_', dir=root))
     target_path = directory / 'rit_tank.db'
     target_path.touch(mode=0o600, exist_ok=False)
-    with sqlite3.connect(DB_PATH) as source, sqlite3.connect(target_path) as target:
+    with closing(sqlite3.connect(DB_PATH)) as source, closing(sqlite3.connect(target_path)) as target:
         source.backup(target)
         if target.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
             raise RuntimeError('Backup validation failed')
@@ -523,7 +523,9 @@ def reset_administration(payload: dict[str, Any]) -> dict[str, Any]:
                     con.execute(f'DELETE FROM {table}')
                 # Backup status is technical state; GPS, proposals and diagnostics are old data.
                 con.execute("DELETE FROM assistant_state WHERE key != 'backup_status'")
-                stamp = iso_local()
+                # Existing datetime-local forms have minute precision. A first trip
+                # entered immediately after reset must sort at/after this baseline.
+                stamp = iso_local(now_local().replace(second=0, microsecond=0))
                 for key, value in (('administration_reset_id', backup.name),
                                    ('administration_started_at', stamp),
                                    ('administration_baseline', str(baseline))):
@@ -2755,7 +2757,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <p>Vóór het wissen wordt een private lokale herstelback-up gemaakt. Deze bevat de oude gegevens en is niet via de app beschikbaar. Eerder gedownloade bestanden en Google Drive-archieven blijven bestaan.</p>
   <div class="field"><label for="resetConfirmation">Typ exact RESET</label><input id="resetConfirmation" autocomplete="off" autocapitalize="characters" spellcheck="false" oninput="updateAdministrationReset()"></div>
   <div id="resetOdometerStep" hidden>
-    <div class="field"><label for="resetOdometer">Wat is de huidige kilometerstand van de auto?</label><input id="resetOdometer" type="text" inputmode="decimal" placeholder="Bijvoorbeeld 64.603" aria-describedby="resetOdometerHelp" oninput="updateAdministrationReset()"><small id="resetOdometerHelp">Vul de echte tellerstand in (0 t/m 999.999 km). Punten scheiden duizendtallen, een komma geeft decimalen aan. Gereden sinds start administratie begint op 0 km.</small></div>
+    <div class="field"><label for="resetOdometer">Wat is de huidige kilometerstand van de auto?</label><input id="resetOdometer" type="text" inputmode="decimal" placeholder="Bijvoorbeeld 64.603" aria-describedby="resetOdometerHelp" oninput="updateAdministrationReset()"><small id="resetOdometerHelp">Vul de echte tellerstand in hele kilometers in (0 t/m 999.999 km). Punten scheiden duizendtallen. Gereden sinds start administratie begint op 0 km.</small></div>
     <p id="resetBaselinePreview" role="status"></p>
   </div>
   <p id="resetError" role="alert"></p>
@@ -3159,8 +3161,8 @@ async function openSettings(){$('administrationStatus').textContent=`Gereden sin
 let ADMIN_RESET_TOKEN='',ADMIN_RESET_BUSY=false;
 function resetOdometerValue(){
   let value=$('resetOdometer').value.trim();
-  if(/^\d{1,3}(?:\.\d{3})+(?:,\d)?$/.test(value))value=value.replace(/\./g,'');
-  if(!/^\d+(?:[.,]\d)?$/.test(value))return null;
+  if(/^\d{1,3}(?:\.\d{3})+$/.test(value))value=value.replace(/\./g,'');
+  if(!/^\d+(?:[.,]0)?$/.test(value))return null;
   let n=Number(value.replace(',','.'));return Number.isFinite(n)&&n>=0&&n<=999999?n:null;
 }
 function updateAdministrationReset(){

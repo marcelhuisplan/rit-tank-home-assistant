@@ -6,7 +6,7 @@ Release 30.00 voegt **Nieuwe administratie starten** toe onder Instellingen → 
 
 1. Open **Instellingen → Administratie → Nieuwe administratie starten**.
 2. Lees de waarschuwing en typ exact **RESET**. Spaties of kleine letters worden geweigerd.
-3. Vul de **huidige kilometerstand van de auto** in. Bijvoorbeeld `64.603` (= 64603 km); decimalen kunnen als `64603,5`. Het bereik sluit aan op de bestaande zes tellerwielen: 0 t/m 999999 km.
+3. Vul de **huidige kilometerstand van de auto** in. Bijvoorbeeld `64.603` (= 64603 km); voer hele kilometers in, net als op de bestaande tellerwielen. Het bereik sluit aan op de bestaande zes tellerwielen: 0 t/m 999999 km.
 4. Controleer de weergegeven tellerstand en kies **Administratie definitief wissen**. Annuleren is mogelijk tot het definitieve verzoek; een al verzonden reset kan niet ongedaan worden gemaakt via de app.
 5. De app herlaadt: geen oude ritten/tankbeurten, gereden sinds start administratie **0 km**, fysieke tellerstand bijvoorbeeld **64.603 km**. De eerste echte rit start op deze tellerstand.
 
@@ -29,7 +29,7 @@ De kilometerteller is een **fysieke odometer**, geen interne cumulatieve teller.
 | `known_places` | Bewust ingerichte locaties, thuisadres en HA-zonekoppelingen behouden |
 | `/data/options.json`, omgevingsvariabelen, sessiesleutel | Ongewijzigd; Google Places, Home Assistant, Drive, PWA en secrets blijven behouden |
 
-De baseline is geen rit of tankbeurt en telt niet mee in historie/aantallen. Hij blijft beschikbaar voor odometerberekeningen en de algemene auto-CSV. Nieuwe registraties vóór de starttijd of onder de baseline worden geweigerd. De baseline kan niet als losse gebeurtenis worden verwijderd. Na herstart overschrijft de oude add-onoptie `initial_odometer` hem niet. Bestaande record-id-reeksen blijven oplopen, zodat oude notificaties niet op nieuwe ritten kunnen slaan.
+De baseline is geen rit of tankbeurt en telt niet mee in historie/aantallen. Hij blijft beschikbaar voor odometerberekeningen en de algemene auto-CSV. De starttijd sluit aan op de minuutprecisie van de bestaande invoerformulieren. Nieuwe registraties vóór de starttijd of onder de baseline worden geweigerd. De baseline kan niet als losse gebeurtenis worden verwijderd. Na herstart overschrijft de oude add-onoptie `initial_odometer` hem niet. Bestaande record-id-reeksen blijven oplopen, zodat oude notificaties niet op nieuwe ritten kunnen slaan.
 
 ### Veiligheid, back-up en herstel
 

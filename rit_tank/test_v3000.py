@@ -91,10 +91,10 @@ class Reset3000Tests(unittest.TestCase):
             self.assertEqual(self.reset({'confirmation':value,'odometer':64603}).status,400)
         self.assertEqual(self.snapshot(),self.before)
     def test_valid_odometer_formats(self):
-        for value,expected in [(64603,64603),('64.603',64603),('64603,5',64603.5),('64.603,5',64603.5),('0',0),('999.999',999999)]:
+        for value,expected in [(64603,64603),('64.603',64603),('64603,0',64603),('64603.0',64603),('0',0),('999.999',999999)]:
             with self.subTest(value=value):self.assertEqual(app.reset_odometer(value),expected)
     def test_invalid_odometer_refused_without_backup(self):
-        for value in [None,'','-1',-1,'NaN','Infinity',float('inf'),float('nan'),True,'64.60.3','1e5',1000000,'64603,55',[],{}]:
+        for value in [None,'','-1',-1,'NaN','Infinity',float('inf'),float('nan'),True,'64.60.3','1e5',1000000,'64603,55','64603,5','64.603,5',[],{}]:
             with self.subTest(value=value):self.assertEqual(self.reset({'confirmation':'RESET','odometer':value}).status,400)
         self.assertEqual(self.snapshot(),self.before);self.assertFalse((app.DATA_DIR/'administration_backups').exists())
     def test_get_and_delete_cannot_reset(self):
@@ -260,6 +260,18 @@ class Reset3000Tests(unittest.TestCase):
         import subprocess
         result=subprocess.run(['node',str(Path(__file__).with_name('test_ui_v3000.cjs'))],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    def test_first_trip_in_reset_minute_matches_existing_ui_precision(self):
+        now=app.now_local().replace(second=42,microsecond=0)
+        with patch.object(app,'now_local',return_value=now):
+            self.assertEqual(self.reset().status,200)
+            point=self.point(64603,0)
+            point['created_at']=now.isoformat()[:16]
+            app.start_business_trip(point)
+            self.assertEqual(app.current_odometer(app.rows_events()),64603)
+            self.assertEqual(app.summary()['administration_km'],0)
+            point=self.point(64610,10);app.add_business_stop(point,finish=True)
+            self.assertEqual(app.summary()['administration_km'],7)
 
     def test_baseline_cannot_be_deleted(self):
         self.reset()

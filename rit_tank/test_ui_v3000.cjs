@@ -14,7 +14,7 @@ const run=code=>vm.runInContext(code,ctx);
  await run('openAdministrationReset()');assert.equal($('resetFinalButton').disabled,true);assert.equal($('resetOdometerStep').hidden,true);
  for(const value of ['reset','RESET ',' RESET']){$('resetConfirmation').value=value;run('updateAdministrationReset()');assert.equal($('resetFinalButton').disabled,true)}
  $('resetConfirmation').value='RESET';run('updateAdministrationReset()');assert.equal($('resetOdometerStep').hidden,false);assert.equal($('resetFinalButton').disabled,true);
- for(const value of ['', '-1','NaN','1e5','1000000','64.60.3']){$('resetOdometer').value=value;run('updateAdministrationReset()');assert.equal($('resetFinalButton').disabled,true)}
+ for(const value of ['', '-1','NaN','1e5','1000000','64.60.3','64603,5','64.603,5']){$('resetOdometer').value=value;run('updateAdministrationReset()');assert.equal($('resetFinalButton').disabled,true)}
  $('resetOdometer').value='64.603';run('updateAdministrationReset()');assert.equal($('resetFinalButton').disabled,false);assert.match($('resetBaselinePreview').textContent,/64603/);assert.match($('resetBaselinePreview').textContent,/0 km/);
  run('cancelAdministrationReset()');await run('submitAdministrationReset()');assert.equal(calls.filter(x=>x.opts).length,0);assert.equal($('administrationResetModal').show,false);
  await run('openAdministrationReset()');$('resetConfirmation').value='RESET';$('resetOdometer').value='64603';fail=true;
