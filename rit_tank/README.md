@@ -1,6 +1,8 @@
-# Rit & Tank 29.00
+# Rit & Tank 30.00
 
-Release 29.00 herstelt de adresbron voor rapportages: een volledig opgeslagen stopadres gaat vóór een nabijgelegen bekende plek of adrescache. Editor, rapportcontrole, PDF-preview, PDF-alias en CSV gebruiken het actuele stopadres. Bij meerdere stops toont een niet-meetellende ritkop het eerste en laatste adres; bestaande etapperegels en tussenstops blijven behouden. Tellerstanden, afstand, tarief, tijden en audit blijven ongewijzigd. Geen datamigratie of automatische herschrijving van historische ritten.
+Release 30.00 voegt **Nieuwe administratie starten** toe onder Instellingen → Administratie. Een exacte RESET-bevestiging, actuele fysieke tellerstand, beveiligd bevestigingstoken en private lokale back-up zijn verplicht vóór het wissen. Instellingen en bekende locaties blijven behouden. De adrescorrecties uit release 29.00 blijven intact.
+
+Zie [DOCS.md](DOCS.md#nieuwe-administratie-starten-3000) voor resetgrenzen, back-up en herstel.
 
 Release 28.00 voegt Google-adressuggesties toe aan **Rit corrigeren**, voor vertrek, tussenstops en aankomst. Typ minimaal drie tekens en kies zelf een resultaat. Alleen een geselecteerd, door Google Places Details bevestigd volledig adres kan worden opgeslagen. De bestaande Google-configuratie, Text Search met Nederlandse voorkeur, adresnotatie en correctiehistorie worden hergebruikt. Ongewijzigde adressen blijven exact behouden; ook historische onvolledige tekst blijft zichtbaar. Zoekfouten wijzigen niets. Er is geen nieuwe provider, sleutel of databaseschemamigratie. Kilometerstanden, afstanden en vergoeding veranderen niet door alleen een adrescorrectie.
 
@@ -39,12 +41,12 @@ iOS-achtergrondlocaties komen op wisselende momenten binnen; een stopmelding pre
 
 Gebruik je al de lokale app? Lees eerst [`DOCS.md`](DOCS.md) voor de installatie- en update-instructies. Gegevens worden niet automatisch overgezet en de meldingslinks vragen nog aanpassing aan de nieuwe appidentiteit.
 
-Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijzigingen. Er zijn 18 offline backendtests en JavaScript-logicatests; een installatie- en iPhone-test volgen op het doelapparaat. Iedere pull request doorloopt automatisch Python-tests, compile- en importchecks, een productie-Docker-build en runtime packaging/importvalidatie in die image.
+Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijzigingen. De volledige suite bevat 279 Python-tests (inclusief 36 release-30-tests) en JavaScript-logicatests; een installatie- en iPhone-test volgen op het doelapparaat. Iedere pull request doorloopt automatisch Python-tests, compile- en importchecks, een productie-Docker-build en runtime packaging/importvalidatie in die image.
 
 ## Releasebeleid
 
-- Huidige release: **29.00**.
+- Huidige release: **30.00**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
-- Volgende release: **30.00**.
+- Volgende release: **31.00**.
 - Dit is een **handmatig** releasebeleid: het versienummer (`APP_VERSION` in `app.py`, `version` in `config.yaml`, de titels in `README.md`/`DOCS.md`) wordt alleen door een expliciete, door de eigenaar aangevraagde wijziging opgehoogd. De applicatie verhoogt dit nummer nooit automatisch tijdens runtime.

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import base64
 import csv
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from decimal import Decimal, InvalidOperation
+from functools import wraps
 import hashlib
 import html
 import hmac
@@ -38,7 +39,19 @@ DB_PATH = DATA_DIR / 'rit_tank.db'
 OPTIONS_PATH = DATA_DIR / 'options.json'
 PORT = 8099
 DB_LOCK = threading.RLock()
-APP_VERSION = '29.00'
+ADMINISTRATION_LOCK = threading.RLock()
+RESET_TOKENS: dict[str, tuple[str, float]] = {}
+
+
+def administration_serialized(function):
+    """Keep complete HTTP operations and GPS processing on one side of a reset."""
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with ADMINISTRATION_LOCK:
+            return function(*args, **kwargs)
+    return wrapped
+
+APP_VERSION = '30.00'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 SESSION_COOKIE = 'rit_tank_session'
 LOGIN_LOCK = threading.RLock()
@@ -434,6 +447,113 @@ def init_db() -> None:
                 (iso_local(), 'odometer', initial, 'Begin-kilometerstand')
             )
         con.commit()
+
+
+def reset_odometer(value: Any) -> float:
+    # Physical start uses the same whole kilometres as the six odometer wheels.
+    if isinstance(value, bool):
+        raise ValueError('Vul de actuele kilometerstand in hele kilometers in (0 t/m 999.999 km).')
+    text = str(value if value is not None else '').strip()
+    if re.fullmatch(r'\d{1,3}(?:\.\d{3})+', text):
+        text = text.replace('.', '')
+    if not re.fullmatch(r'\d+(?:[.,]0)?', text):
+        raise ValueError('Vul de actuele kilometerstand in hele kilometers in (0 t/m 999.999 km).')
+    number = float(text.replace(',', '.'))
+    if not math.isfinite(number) or not 0 <= number <= 999999:
+        raise ValueError('Vul de actuele kilometerstand in hele kilometers in (0 t/m 999.999 km).')
+    return number
+
+
+def _reset_backup(con: sqlite3.Connection) -> Path:
+    """Caller holds BEGIN IMMEDIATE; a second reader backs up the committed WAL."""
+    root = DATA_DIR / 'administration_backups'
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(root, 0o700)
+    directory = Path(tempfile.mkdtemp(prefix='reset_', dir=root))
+    target_path = directory / 'rit_tank.db'
+    target_path.touch(mode=0o600, exist_ok=False)
+    with closing(sqlite3.connect(DB_PATH)) as source, closing(sqlite3.connect(target_path)) as target:
+        source.backup(target)
+        if target.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+            raise RuntimeError('Backup validation failed')
+    return directory
+
+
+def _recover_reset_receipts() -> None:
+    """Recover an interrupted receipt move before HTTP/GPS threads start."""
+    marker = DATA_DIR / 'administration-reset.pending'
+    if not marker.exists():
+        return
+    name = marker.read_text(encoding='ascii')
+    if not re.fullmatch(r'reset_[a-z0-9_]+', name):
+        raise RuntimeError('Ongeldige reset-herstelmarkering.')
+    archived = DATA_DIR / 'administration_backups' / name / 'receipts'
+    with db() as con:
+        row = con.execute("SELECT value FROM settings WHERE key='administration_reset_id'").fetchone()
+    committed = row is not None and row[0] == name
+    if not committed and archived.exists():
+        if RECEIPT_DIR.exists():
+            raise RuntimeError('Herstel tankbonnen vereist controle; administratie niet gestart.')
+        archived.rename(RECEIPT_DIR)
+    marker.unlink()
+
+
+@administration_serialized
+def reset_administration(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get('confirmation') != 'RESET':
+        raise ValueError('Typ exact RESET om de administratie te wissen.')
+    baseline = reset_odometer(payload.get('odometer'))
+    with BACKUP_LOCK, DB_LOCK:
+        _recover_reset_receipts()
+        try:
+            with db() as con:
+                con.execute('BEGIN IMMEDIATE')
+                backup = _reset_backup(con)
+                # The marker plus the transactional reset id also handles process crashes.
+                marker = DATA_DIR / 'administration-reset.pending'
+                with marker.open('x', encoding='ascii') as handle:
+                    os.chmod(marker, 0o600)
+                    handle.write(backup.name)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                if RECEIPT_DIR.exists():
+                    RECEIPT_DIR.rename(backup / 'receipts')
+                for table in ('assistant_arrivals', 'trip_stops', 'business_trips', 'events',
+                              'audit_log', 'route_memory', 'distance_calibration', 'report_addresses'):
+                    con.execute(f'DELETE FROM {table}')
+                # Backup status is technical state; GPS, proposals and diagnostics are old data.
+                con.execute("DELETE FROM assistant_state WHERE key != 'backup_status'")
+                # Existing datetime-local forms have minute precision. A first trip
+                # entered immediately after reset must sort at/after this baseline.
+                stamp = iso_local(now_local().replace(second=0, microsecond=0))
+                for key, value in (('administration_reset_id', backup.name),
+                                   ('administration_started_at', stamp),
+                                   ('administration_baseline', str(baseline))):
+                    con.execute('INSERT INTO settings(key,value) VALUES(?,?) '
+                                'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, value))
+                con.execute("INSERT INTO events(created_at,type,odometer,note,source_kind) "
+                            "VALUES(?,'odometer',?,'Start administratie','administration_baseline')",
+                            (stamp, baseline))
+                audit('administration_reset', 'administration', None, {'odometer': baseline}, con=con)
+                if con.execute('PRAGMA foreign_key_check').fetchone():
+                    raise RuntimeError('Reset integrity check failed')
+                # Context manager commits once; every earlier error rolls back.
+        except Exception:
+            _recover_reset_receipts()
+            raise ValueError('Administratie wissen mislukt. De oude administratie is behouden. Probeer opnieuw.') from None
+        # A leftover marker is harmless after commit and is recovered on next startup/reset.
+        try:
+            _recover_reset_receipts()
+        except OSError:
+            pass
+        google_places._PLACE_CACHE.clear()
+        google_places._GEOCODE_CACHE.clear()
+        RESET_TOKENS.clear()
+    try:
+        publish_sensors_async()
+    except Exception:
+        pass  # The committed reset remains successful if HA publishing is unavailable.
+    return {'ok': True, 'odometer': baseline, 'administration_km': 0}
 
 
 def get_settings() -> dict[str, Any]:
@@ -846,6 +966,13 @@ def rows_events() -> list[dict[str, Any]]:
 
 
 def validate_odometer(created_at: str, odometer: float, ignore_id: int | None = None) -> tuple[bool, str]:
+    if not math.isfinite(odometer) or odometer < 0:
+        return False, 'Vul een geldige kilometerstand in.'
+    settings = get_settings()
+    started = settings.get('administration_started_at')
+    if started and (parse_dt(created_at) < parse_dt(started) or
+                    odometer < float(settings['administration_baseline'])):
+        return False, 'Deze registratie ligt vóór het startpunt van de nieuwe administratie.'
     params_prev: list[Any] = [created_at]
     params_next: list[Any] = [created_at]
     extra = ''
@@ -1132,7 +1259,7 @@ def audit(action: str, entity_type: str, entity_id: int | None, details: Any = N
 def recent_audit(limit: int = 30) -> list[dict[str, Any]]:
     with DB_LOCK, db() as con:
         rows = [dict(r) for r in con.execute('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?', (max(1, min(limit, 100)),))]
-    labels = {'create':'Aangemaakt','update':'Gewijzigd','delete':'Verwijderd','stop':'Stop toegevoegd','finish':'Rit afgesloten','receipt':'Tankbon toegevoegd'}
+    labels = {'administration_reset':'Nieuwe administratie gestart','create':'Aangemaakt','update':'Gewijzigd','delete':'Verwijderd','stop':'Stop toegevoegd','finish':'Rit afgesloten','receipt':'Tankbon toegevoegd'}
     out=[]
     for r in rows:
         try: details=json.loads(r.get('details') or '{}')
@@ -1485,6 +1612,7 @@ def assistant_state_set(key: str, value: Any) -> None:
 DIAGNOSTIC_LOCK = threading.Lock()
 
 
+@administration_serialized
 def diagnostic_event(event: str, **details: Any) -> None:
     return assistant.diagnostic_event(event, **details, dependencies=_assistant_dependencies())
 
@@ -1629,6 +1757,7 @@ def create_assistant_arrival(origin_place_id: int | None, destination_place_id: 
 
 
 
+@administration_serialized
 def confirm_assistant_arrival(arrival_id: int, trip_type: str, source: str='app') -> dict[str, Any]:
     return assistant.confirm_assistant_arrival(arrival_id, trip_type, source, dependencies=_assistant_dependencies())
 
@@ -1704,6 +1833,7 @@ def reset_trip_distance_tracking(trip: dict[str, Any] | None=None) -> None:
 
 
 
+@administration_serialized
 def track_active_trip_distance(loc: dict[str, Any], cfg: dict[str, Any]) -> None:
     return assistant.track_active_trip_distance(loc, cfg, dependencies=_assistant_dependencies())
 
@@ -1729,6 +1859,7 @@ def _assistant_action_listener() -> None:
 
 
 
+@administration_serialized
 def _process_assistant_location(loc: dict[str, Any], cfg: dict[str, Any]) -> None:
     return assistant._process_assistant_location(loc, cfg, dependencies=_assistant_dependencies())
 
@@ -1893,6 +2024,8 @@ def delete_event(event_id: int) -> None:
     with DB_LOCK, db() as con:
         row=con.execute('SELECT * FROM events WHERE id=?',(event_id,)).fetchone()
         if row:
+            if row['source_kind'] == 'administration_baseline':
+                raise ValueError('Het startpunt van de administratie kan niet worden verwijderd.')
             snapshot=dict(row); receipt=str(snapshot.get('receipt_path') or '')
             con.execute('DELETE FROM events WHERE id=?',(event_id,)); audit('delete','event',event_id,snapshot,con=con); con.commit()
             if receipt:
@@ -2153,7 +2286,7 @@ def overall_full_tank_average(rows: list[dict[str, Any]]) -> dict[str, Any] | No
 
 def serialize_recent(rows: list[dict[str, Any]], limit: int = 30) -> list[dict[str, Any]]:
     out = []
-    visible = [r for r in rows if str(r.get('source_kind') or '') != 'business']
+    visible = [r for r in rows if str(r.get('source_kind') or '') not in {'business', 'administration_baseline'}]
     for r in reversed(visible[-limit:]):
         dt = event_dt(r)
         item = dict(r)
@@ -2194,6 +2327,7 @@ def summary(period: str = 'month') -> dict[str, Any]:
         'period_full_tank': full_avg,
         'overall_full_tank': overall_full_tank_average(rows),
         'current_odometer': odo,
+        'administration_km': round(sum(float(r.get('delta_km') or 0) for r in rows), 1),
         'since_full_km': round(since_full_km,1) if since_full_km is not None else None,
         'chart': chart_for_period(period, rows),
         'recent': enrich_recent(rows),
@@ -2201,7 +2335,7 @@ def summary(period: str = 'month') -> dict[str, Any]:
         'recent_stations': recent_stations(rows),
         'latest_fuel': latest_fuel,
         'latest_full_cycle': cycles[-1] if cycles else None,
-        'total_events': len([r for r in rows if str(r.get('source_kind') or '') != 'business']),
+        'total_events': len([r for r in rows if str(r.get('source_kind') or '') not in {'business', 'administration_baseline'}]),
         'has_events': bool(rows),
         'business': {
             'period': business_stats_for_period(period),
@@ -2607,7 +2741,28 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
       <button type="button" class="btn" onclick="downloadDiagnosticLog()">Download log</button>
     </div>
   </section>
+  <section class="assistant-settings" aria-labelledby="administrationTitle">
+    <h3 id="administrationTitle">Administratie</h3>
+    <p>Verwijder alle rit- en testgegevens en begin met een schone administratie. Instellingen en configuratie blijven behouden.</p>
+    <p id="administrationStatus"></p>
+    <button type="button" class="linkbtn" onclick="openAdministrationReset()">Nieuwe administratie starten</button>
+  </section>
   <button class="save" onclick="saveSettings()">Instellingen opslaan</button><div class="settings-actions"><a class="linkbtn" href="api/export.csv">⬇️ Tank/auto CSV</a><a class="linkbtn" id="settingsBusinessCsv" onclick="openPdfSelector(event,'csv')" href="api/business.csv">🧾 Ritten CSV</a><a class="linkbtn" id="settingsBusinessPdf" onclick="openPdfSelector(event)" href="api/business.pdf?period=month">📄 Fiscale PDF</a><button class="linkbtn" style="font:inherit" onclick="reloadData()">↻ Vernieuwen</button></div>
+</div></div>
+
+<div class="modal" id="administrationResetModal" role="dialog" aria-modal="true" aria-labelledby="resetTitle"><div class="sheet">
+  <div class="sheethead"><h2 id="resetTitle">Nieuwe administratie starten</h2><button type="button" class="close" aria-label="Annuleren" onclick="cancelAdministrationReset()">✕</button></div>
+  <p>Dit verwijdert permanent alle ritten en administratieve testgegevens. Dit kan niet ongedaan worden gemaakt.</p>
+  <p>Ook tankbeurten, tankbonnen, correcties en aangeleerde ritgegevens verdwijnen uit de administratie. Instellingen en bekende locaties blijven behouden.</p>
+  <p>Vóór het wissen wordt een private lokale herstelback-up gemaakt. Deze bevat de oude gegevens en is niet via de app beschikbaar. Eerder gedownloade bestanden en Google Drive-archieven blijven bestaan.</p>
+  <div class="field"><label for="resetConfirmation">Typ exact RESET</label><input id="resetConfirmation" autocomplete="off" autocapitalize="characters" spellcheck="false" oninput="updateAdministrationReset()"></div>
+  <div id="resetOdometerStep" hidden>
+    <div class="field"><label for="resetOdometer">Wat is de huidige kilometerstand van de auto?</label><input id="resetOdometer" type="text" inputmode="decimal" placeholder="Bijvoorbeeld 64.603" aria-describedby="resetOdometerHelp" oninput="updateAdministrationReset()"><small id="resetOdometerHelp">Vul de echte tellerstand in hele kilometers in (0 t/m 999.999 km). Punten scheiden duizendtallen. Gereden sinds start administratie begint op 0 km.</small></div>
+    <p id="resetBaselinePreview" role="status"></p>
+  </div>
+  <p id="resetError" role="alert"></p>
+  <button type="button" class="save" id="resetFinalButton" style="background:#a32121" disabled onclick="submitAdministrationReset()">Administratie definitief wissen</button>
+  <button type="button" class="linkbtn" onclick="cancelAdministrationReset()">Annuleren</button>
 </div></div>
 
 <script>
@@ -3002,7 +3157,39 @@ async function removeKnownPlace(id){if(!confirm('Deze bekende plek verwijderen? 
 
 async function loadLocationEntities(){let sel=$('setLocationEntity'),asel=$('setAssistantLocation'),saved=savedLocationFallback(),asaved=DATA?.settings?.assistant_location_entity||'';sel.innerHTML='<option value="">Geen — alleen GPS van browser</option>';asel.innerHTML='<option value="">Kies person/device_tracker</option>';let entities=[];try{entities=(await api('api/location/entities')).entities||[]}catch(e){toast('Locatielijst niet beschikbaar; opgeslagen keuzes blijven behouden.',true)}for(let [target,value] of [[sel,saved],[asel,asaved]]){for(let x of entities){let o=document.createElement('option');o.value=x.entity_id;o.textContent=`${x.name} (${x.entity_id})`;target.appendChild(o)}if(value&&!entities.some(x=>x.entity_id===value)){let o=document.createElement('option');o.value=value;o.textContent=value+' (opgeslagen; nu niet beschikbaar)';target.appendChild(o)}target.value=value}}
 async function loadNotifyServices(){let sel=$('setAssistantNotify'),saved=DATA?.settings?.assistant_notify_service||'';sel.innerHTML='<option value="">Kies mobiele meldingsservice</option>';try{let r=await api('api/notify/services');(r.services||[]).forEach(x=>{let o=document.createElement('option');o.value=x.service;o.textContent=`${x.name} (${x.service})`;sel.appendChild(o)});sel.value=saved}catch(e){let o=document.createElement('option');o.textContent='Meldingsservices niet beschikbaar';o.disabled=true;sel.appendChild(o)}}
-async function openSettings(){$('setKmRate').value=String(DATA.settings.km_reimbursement_rate??'0.25').replace('.',',');$('setVehicle').value=DATA.settings.vehicle_name;$('setFuel').value=DATA.settings.fuel_type;$('setCurrency').value=DATA.settings.currency;$('setDriver').value=DATA.settings.driver_name||'';$('setCompany').value=DATA.settings.company_name||'';$('setMake').value=DATA.settings.vehicle_make||'';$('setModel').value=DATA.settings.vehicle_model||'';$('setPlate').value=DATA.settings.license_plate||'';$('setPeriodFrom').value=DATA.settings.vehicle_period_from||'';$('setPeriodTo').value=DATA.settings.vehicle_period_to||'';$('setInitial').value=DATA.current_odometer??'';$('initialWrap').style.display=DATA.has_events?'none':'block';$('setAssistantEnabled').checked=String(DATA.settings.assistant_enabled||'0')==='1';$('setAssistantSyncZones').checked=String(DATA.settings.assistant_sync_zones||'1')!=='0';$('setAssistantUnknown').checked=String(DATA.settings.assistant_unknown_stops||'1')!=='0';$('setAssistantStopMin').value=DATA.settings.assistant_unknown_stop_minutes||4;$('setAssistantFastStop').value=DATA.settings.assistant_fast_stop_seconds||30;$('setAssistantMinTrip').value=DATA.settings.assistant_min_trip_m||500;$('setDistanceLearning').checked=String(DATA.settings.distance_learning_enabled||'1')==='1';let calibration=DATA.business?.calibration||{};$('calibrationStatus').textContent=`${calibration.samples||0} gecontroleerde trajecten · ${calibration.ready?'correctie '+((calibration.factor-1)*100).toFixed(1)+'%':'nog geen stabiele correctie (minimaal 5 trajecten)'}`;let ar=DATA.business?.assistant?.runtime||{},ac=DATA.business?.assistant?.config||{},bs=DATA.app?.backup||{};$('backupStatusText').textContent=!bs.enabled?'Back-up staat uit in de add-onconfiguratie.':!bs.configured?'Vul Drive-map, Google-inloggegevens en een back-upwachtwoord van minimaal 12 tekens in.':bs.last_error?`Laatste fout: ${bs.last_error}`:bs.last_ok_at?`Laatste back-up: ${bs.last_ok_at} · ${bs.last_file}`:`Gereed · dagelijks vanaf ${String(bs.hour).padStart(2,'0')}:00 · ${bs.retention_days===0?'onbeperkt bewaren':bs.retention_days+' dagen bewaren'}.`;$('techStatus').innerHTML=`Google Places + ritlocaties: <b class="${DATA.app.places_enabled?'badge-ok':'badge-off'}">${DATA.app.places_enabled?'API-key actief':'API-key ontbreekt'}</b><br>Voor zakelijke adressen ook Geocoding API inschakelen.<br>Zoekradius: ${DATA.app.places_radius_m} m · maximaal ${DATA.app.places_max_results} resultaten<br>Bekende plekken: ${(DATA.business?.known_places||[]).length}<br>Ritassistent WebSocket: <b class="${ar.ws_connected?'badge-ok':'badge-off'}">${ar.ws_connected?'verbonden':'niet verbonden'}</b>${ar.last_error?`<br>Laatste melding: ${esc(ar.last_error)}`:''}<br>PWA: <b class="${PWA_WORKER_READY?'badge-ok':'badge-off'}">${isStandalone()?'geïnstalleerd':PWA_WORKER_READY?'offline gereed':'HTTPS vereist'}</b><br>Versie ${DATA.app.version}`;updatePwaInstallUi();await loadLocationEntities();await loadNotifyServices();openModal('settingsModal')}
+async function openSettings(){$('administrationStatus').textContent=`Gereden sinds start administratie: ${fmt(DATA.administration_km||0,1)} km · Actuele kilometerstand auto: ${DATA.current_odometer==null?'—':fmt(DATA.current_odometer,1)} km`;$('setKmRate').value=String(DATA.settings.km_reimbursement_rate??'0.25').replace('.',',');$('setVehicle').value=DATA.settings.vehicle_name;$('setFuel').value=DATA.settings.fuel_type;$('setCurrency').value=DATA.settings.currency;$('setDriver').value=DATA.settings.driver_name||'';$('setCompany').value=DATA.settings.company_name||'';$('setMake').value=DATA.settings.vehicle_make||'';$('setModel').value=DATA.settings.vehicle_model||'';$('setPlate').value=DATA.settings.license_plate||'';$('setPeriodFrom').value=DATA.settings.vehicle_period_from||'';$('setPeriodTo').value=DATA.settings.vehicle_period_to||'';$('setInitial').value=DATA.current_odometer??'';$('initialWrap').style.display=DATA.has_events?'none':'block';$('setAssistantEnabled').checked=String(DATA.settings.assistant_enabled||'0')==='1';$('setAssistantSyncZones').checked=String(DATA.settings.assistant_sync_zones||'1')!=='0';$('setAssistantUnknown').checked=String(DATA.settings.assistant_unknown_stops||'1')!=='0';$('setAssistantStopMin').value=DATA.settings.assistant_unknown_stop_minutes||4;$('setAssistantFastStop').value=DATA.settings.assistant_fast_stop_seconds||30;$('setAssistantMinTrip').value=DATA.settings.assistant_min_trip_m||500;$('setDistanceLearning').checked=String(DATA.settings.distance_learning_enabled||'1')==='1';let calibration=DATA.business?.calibration||{};$('calibrationStatus').textContent=`${calibration.samples||0} gecontroleerde trajecten · ${calibration.ready?'correctie '+((calibration.factor-1)*100).toFixed(1)+'%':'nog geen stabiele correctie (minimaal 5 trajecten)'}`;let ar=DATA.business?.assistant?.runtime||{},ac=DATA.business?.assistant?.config||{},bs=DATA.app?.backup||{};$('backupStatusText').textContent=!bs.enabled?'Back-up staat uit in de add-onconfiguratie.':!bs.configured?'Vul Drive-map, Google-inloggegevens en een back-upwachtwoord van minimaal 12 tekens in.':bs.last_error?`Laatste fout: ${bs.last_error}`:bs.last_ok_at?`Laatste back-up: ${bs.last_ok_at} · ${bs.last_file}`:`Gereed · dagelijks vanaf ${String(bs.hour).padStart(2,'0')}:00 · ${bs.retention_days===0?'onbeperkt bewaren':bs.retention_days+' dagen bewaren'}.`;$('techStatus').innerHTML=`Google Places + ritlocaties: <b class="${DATA.app.places_enabled?'badge-ok':'badge-off'}">${DATA.app.places_enabled?'API-key actief':'API-key ontbreekt'}</b><br>Voor zakelijke adressen ook Geocoding API inschakelen.<br>Zoekradius: ${DATA.app.places_radius_m} m · maximaal ${DATA.app.places_max_results} resultaten<br>Bekende plekken: ${(DATA.business?.known_places||[]).length}<br>Ritassistent WebSocket: <b class="${ar.ws_connected?'badge-ok':'badge-off'}">${ar.ws_connected?'verbonden':'niet verbonden'}</b>${ar.last_error?`<br>Laatste melding: ${esc(ar.last_error)}`:''}<br>PWA: <b class="${PWA_WORKER_READY?'badge-ok':'badge-off'}">${isStandalone()?'geïnstalleerd':PWA_WORKER_READY?'offline gereed':'HTTPS vereist'}</b><br>Versie ${DATA.app.version}`;updatePwaInstallUi();await loadLocationEntities();await loadNotifyServices();openModal('settingsModal')}
+let ADMIN_RESET_TOKEN='',ADMIN_RESET_BUSY=false;
+function resetOdometerValue(){
+  let value=$('resetOdometer').value.trim();
+  if(/^\d{1,3}(?:\.\d{3})+$/.test(value))value=value.replace(/\./g,'');
+  if(!/^\d+(?:[.,]0)?$/.test(value))return null;
+  let n=Number(value.replace(',','.'));return Number.isFinite(n)&&n>=0&&n<=999999?n:null;
+}
+function updateAdministrationReset(){
+  let confirmed=$('resetConfirmation').value==='RESET',baseline=resetOdometerValue();
+  $('resetOdometerStep').hidden=!confirmed;
+  $('resetFinalButton').disabled=ADMIN_RESET_BUSY||!ADMIN_RESET_TOKEN||!confirmed||baseline===null;
+  $('resetBaselinePreview').textContent=baseline===null?'':`Actuele kilometerstand auto: ${fmt(baseline,1)} km · Gereden sinds start administratie: 0 km`;
+}
+async function openAdministrationReset(){
+  ADMIN_RESET_TOKEN='';$('resetConfirmation').value='';$('resetOdometer').value='';$('resetError').textContent='';
+  closeModal('settingsModal');openModal('administrationResetModal');updateAdministrationReset();$('resetConfirmation').focus();
+  try{let result=await api('api/administration/reset-token');if($('administrationResetModal').classList.contains('show')){ADMIN_RESET_TOKEN=result.token;updateAdministrationReset()}}
+  catch(e){$('resetError').textContent=e.message}
+}
+function cancelAdministrationReset(){
+  closeModal('administrationResetModal');ADMIN_RESET_TOKEN='';$('resetConfirmation').value='';$('resetOdometer').value='';
+}
+async function submitAdministrationReset(){
+  updateAdministrationReset();if($('resetFinalButton').disabled)return;
+  ADMIN_RESET_BUSY=true;updateAdministrationReset();
+  try{
+    await api('api/administration/reset',{method:'POST',headers:{'Content-Type':'application/json','X-Reset-Token':ADMIN_RESET_TOKEN},body:JSON.stringify({confirmation:$('resetConfirmation').value,odometer:$('resetOdometer').value})});
+    // Discard previews, forms and in-flight UI state together after a successful reset.
+    location.reload();
+  }catch(e){$('resetError').textContent=e.message}
+  finally{ADMIN_RESET_BUSY=false;updateAdministrationReset()}
+}
 async function saveSettings(){let payload={km_reimbursement_rate:$('setKmRate').value,location_fallback_entity:$('setLocationEntity').value||'',distance_learning_enabled:$('setDistanceLearning').checked?'1':'0',vehicle_name:$('setVehicle').value,fuel_type:$('setFuel').value,currency:$('setCurrency').value,driver_name:$('setDriver').value,company_name:$('setCompany').value,vehicle_make:$('setMake').value,vehicle_model:$('setModel').value,license_plate:$('setPlate').value,vehicle_period_from:$('setPeriodFrom').value,vehicle_period_to:$('setPeriodTo').value,initial_odometer:$('setInitial').value,assistant_enabled:$('setAssistantEnabled').checked?'1':'0',assistant_location_entity:$('setAssistantLocation').value||'',assistant_notify_service:$('setAssistantNotify').value||'',assistant_sync_zones:$('setAssistantSyncZones').checked?'1':'0',assistant_unknown_stops:$('setAssistantUnknown').checked?'1':'0',assistant_unknown_stop_minutes:$('setAssistantStopMin').value||4,assistant_fast_stop_seconds:$('setAssistantFastStop').value||30,assistant_check_seconds:'10',assistant_min_trip_m:$('setAssistantMinTrip').value||500};try{await api('api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('settingsModal');toast('Instellingen opgeslagen');reloadData()}catch(e){toast(e.message,true)}}
 async function runBackupNow(){toast('Versleutelde Drive-back-up maken…');try{let r=await api('api/backup/run',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast(`Back-up gemaakt · ${r.last_file}`);await reloadData();openSettings()}catch(e){toast(e.message,true)}}
 async function loadDiagnosticLog(){try{let report=await api('api/assistant/diagnostics');$('diagnosticText').value=JSON.stringify(report,null,2);$('diagnosticStatus').textContent=`Opgehaald: ${report.generated_at} · ${report.events.length} gebeurtenissen. Je kunt nu kopiëren of downloaden.`}catch(e){$('diagnosticStatus').textContent='Ophalen mislukt. Controleer je verbinding en probeer opnieuw.'}}
@@ -3177,6 +3364,7 @@ class Handler(BaseHTTPRequestHandler):
         cookie = f'{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict'
         return json_response(self, {'ok': True}, 200, {'Set-Cookie': cookie})
 
+    @administration_serialized
     def do_GET(self) -> None:
         path, q = self._path()
         if path in ('/', '', '/login'):
@@ -3233,6 +3421,17 @@ class Handler(BaseHTTPRequestHandler):
         ms = re.fullmatch(r'/api/stats/(day|week|month|year)', path)
         if ms:
             return json_response(self, summary(ms.group(1)))
+        if path == '/api/administration/reset':
+            return json_response(self, {'error': 'Gebruik de bevestigingsdialoog in Instellingen.'}, 405, {'Allow': 'POST'})
+        if path == '/api/administration/reset-token':
+            now = time.monotonic()
+            for token, (_, expires) in list(RESET_TOKENS.items()):
+                if expires <= now:
+                    RESET_TOKENS.pop(token, None)
+            token = secrets.token_urlsafe(32)
+            binding = self.headers.get('Cookie', '') + '|' + self.headers.get('X-Ingress-Path', '')
+            RESET_TOKENS[token] = (binding, now + 600)
+            return json_response(self, {'token': token})
         if path == '/api/settings':
             return json_response(self, get_settings())
         if path == '/api/location/entities':
@@ -3297,6 +3496,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.serve_receipt(int(mr.group(1)))
         return json_response(self, {'error': 'Niet gevonden'}, 404)
 
+    @administration_serialized
     def do_POST(self) -> None:
         path, _ = self._path()
         if path == '/api/auth/login':
@@ -3305,6 +3505,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._logout()
         if not self._authorize_mutation():
             return
+        if path == '/api/administration/reset':
+            binding = self.headers.get('Cookie', '') + '|' + self.headers.get('X-Ingress-Path', '')
+            token = self.headers.get('X-Reset-Token', '')
+            saved = RESET_TOKENS.get(token)
+            if (not saved or saved[0] != binding or saved[1] <= time.monotonic() or
+                    self.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json' or
+                    self.headers.get('Sec-Fetch-Site', '') == 'cross-site'):
+                return json_response(self, {'error': 'Ongeldige of verlopen bevestiging. Open de dialoog opnieuw.'}, 403)
+            try:
+                return json_response(self, reset_administration(read_json(self)))
+            except ValueError as exc:
+                return json_response(self, {'error': str(exc)}, 400)
+            except Exception:
+                # Never send/log raw database errors, addresses, payloads or secrets.
+                return json_response(self, {'error': 'Administratie wissen mislukt. Herstart de add-on voor herstel.'}, 500)
         payload = read_json(self)
         try:
             if path == '/api/places/nearby':
@@ -3412,6 +3627,7 @@ class Handler(BaseHTTPRequestHandler):
             print('POST error:', repr(e))
             return json_response(self, {'error': 'Opslaan mislukt.'}, 500)
 
+    @administration_serialized
     def do_DELETE(self) -> None:
         path, _ = self._path()
         if not self._authorize_mutation():
@@ -3463,7 +3679,7 @@ class Handler(BaseHTTPRequestHandler):
         name=Path(str(row['receipt_path'])).name; path=RECEIPT_DIR/name
         if not path.exists(): return json_response(self, {'error':'Tankbonbestand ontbreekt.'},404)
         ctype={'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.webp':'image/webp','.heic':'image/heic','.heif':'image/heif'}.get(path.suffix.lower(),'application/octet-stream')
-        data=path.read_bytes(); self.send_response(200); self.send_header('Content-Type',ctype); self.send_header('Content-Length',str(len(data))); self.send_header('Cache-Control','private, max-age=300'); self.end_headers(); self.wfile.write(data)
+        data=path.read_bytes(); self.send_response(200); self.send_header('Content-Type',ctype); self.send_header('Content-Length',str(len(data))); self.send_header('Cache-Control','no-store'); self.end_headers(); self.wfile.write(data)
 
     def export_csv(self) -> None:
         rows = rows_events()
@@ -3532,6 +3748,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     init_db()
+    _recover_reset_receipts()
     publish_sensors_async()
     start_assistant_threads()
     server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)

@@ -738,6 +738,16 @@ def edit_business_trip(
                 con.execute('UPDATE trip_stops SET ' + ','.join(updates) + ' WHERE id=? AND trip_id=?',
                             (*values, stop_id, trip_id))
                 saved = con.execute('SELECT * FROM trip_stops WHERE id=?', (stop_id,)).fetchone()
+                # Corrections cannot move a new administration behind its physical start.
+                settings = dict(con.execute("SELECT key,value FROM settings WHERE key IN "
+                                            "('administration_started_at','administration_baseline')").fetchall())
+                started = settings.get('administration_started_at')
+                if started and (
+                    _provider(dependencies, 'parse_dt')(saved['created_at']) <
+                    _provider(dependencies, 'parse_dt')(started) or
+                    float(saved['odometer']) < float(settings['administration_baseline'])
+                ):
+                    raise ValueError('Deze correctie ligt vóór het startpunt van de nieuwe administratie.')
                 if original.get('event_id') and ('odometer' in change or 'created_at' in change):
                     con.execute('UPDATE events SET odometer=?,created_at=? WHERE id=?',
                                 (saved['odometer'], saved['created_at'], original['event_id']))

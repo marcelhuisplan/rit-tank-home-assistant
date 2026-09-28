@@ -1,6 +1,46 @@
-# Rit & Tank 29.00
+# Rit & Tank 30.00
 
-Release 29.00 herstelt de adresbron voor rapportages: een volledig opgeslagen stopadres gaat vóór een nabijgelegen bekende plek of adrescache. Editor, rapportcontrole, PDF-preview, PDF-alias en CSV gebruiken het actuele stopadres. Bij meerdere stops toont een niet-meetellende ritkop het eerste en laatste adres; bestaande etapperegels en tussenstops blijven behouden. Tellerstanden, afstand, tarief, tijden en audit blijven ongewijzigd. Geen datamigratie of automatische herschrijving van historische ritten.
+Release 30.00 voegt **Nieuwe administratie starten** toe onder Instellingen → Administratie. Een exacte RESET-bevestiging, actuele fysieke tellerstand, beveiligd bevestigingstoken en private lokale back-up zijn verplicht vóór het wissen. Instellingen en bekende locaties blijven behouden. De adrescorrecties uit release 29.00 blijven intact.
+
+## Nieuwe administratie starten (30.00)
+
+1. Open **Instellingen → Administratie → Nieuwe administratie starten**.
+2. Lees de waarschuwing en typ exact **RESET**. Spaties of kleine letters worden geweigerd.
+3. Vul de **huidige kilometerstand van de auto** in. Bijvoorbeeld `64.603` (= 64603 km); voer hele kilometers in, net als op de bestaande tellerwielen. Het bereik sluit aan op de bestaande zes tellerwielen: 0 t/m 999999 km.
+4. Controleer de weergegeven tellerstand en kies **Administratie definitief wissen**. Annuleren is mogelijk tot het definitieve verzoek; een al verzonden reset kan niet ongedaan worden gemaakt via de app.
+5. De app herlaadt: geen oude ritten/tankbeurten, gereden sinds start administratie **0 km**, fysieke tellerstand bijvoorbeeld **64.603 km**. De eerste echte rit start op deze tellerstand.
+
+### Datamodel en resetgrenzen
+
+De kilometerteller is een **fysieke odometer**, geen interne cumulatieve teller. `events.odometer` en `trip_stops.odometer` slaan echte standen op. `rows_events()` berekent verschillen; ritafstanden komen uit de stopstanden. Er wordt geen bestaande teller kunstmatig naar nul teruggezet.
+
+| Opslag | Gedrag bij reset |
+| --- | --- |
+| `business_trips`, `trip_stops` | Alle actieve en afgesloten ritten, tussenstops en adrescorrecties verwijderen |
+| `events` | Alle oude kilometerregistraties en tankbeurten verwijderen; één nieuwe fysieke baseline aanmaken |
+| `audit_log` | Oude snapshots verwijderen, ook adres-/locatiedetails; één minimale startgebeurtenis met tijd en baseline |
+| `assistant_arrivals` | Oude aankomsten, correcties, notificatiestatus en ritverwijzingen verwijderen |
+| `route_memory`, `distance_calibration` | Uit testadministratie geleerd gedrag/afstanden verwijderen |
+| `assistant_state` | GPS-voortgang, voorstellen, meldingen en diagnoselog verwijderen; technische `backup_status` behouden |
+| `report_addresses`, Google-geheugencaches | Afgeleide adrescaches leegmaken |
+| `receipts/` | Oude tankbonbestanden uit actieve opslag naar de private herstelback-up verplaatsen |
+| Rapporten, statistieken, PDF en CSV | Worden opnieuw opgebouwd uit de database; geen lokale rapportarchieftabel of exportbestanden |
+| `settings` | Voertuig, kenteken, bestuurder, tarief, voorkeuren en assistentconfiguratie behouden; reset-id/starttijd/baseline in bestaande key/value-tabel |
+| `known_places` | Bewust ingerichte locaties, thuisadres en HA-zonekoppelingen behouden |
+| `/data/options.json`, omgevingsvariabelen, sessiesleutel | Ongewijzigd; Google Places, Home Assistant, Drive, PWA en secrets blijven behouden |
+
+De baseline is geen rit of tankbeurt en telt niet mee in historie/aantallen. Hij blijft beschikbaar voor odometerberekeningen en de algemene auto-CSV. De starttijd sluit aan op de minuutprecisie van de bestaande invoerformulieren. Nieuwe registraties vóór de starttijd of onder de baseline worden geweigerd. De baseline kan niet als losse gebeurtenis worden verwijderd. Na herstart overschrijft de oude add-onoptie `initial_odometer` hem niet. Bestaande record-id-reeksen blijven oplopen, zodat oude notificaties niet op nieuwe ritten kunnen slaan.
+
+### Veiligheid, back-up en herstel
+
+- Alleen geautoriseerde **POST `/api/administration/reset`** met JSON, exact `RESET`, geldige tellerstand én een willekeurig bevestigingstoken in `X-Reset-Token`. GET kan niet wissen. Token via geautoriseerde GET `/api/administration/reset-token`, tien minuten geldig, gebonden aan sessie/Ingress-pad; na succes vervallen alle open resetdialogen. Bestaande sessie-/Origin-controle blijft actief; cross-site verzoeken worden geweigerd. Er wordt geen CORS-toegang verleend.
+- Eén SQLite-transactie (`BEGIN IMMEDIATE`) omvat verwijdering, baseline en minimale audit. Validatie gebeurt vóór iedere wijziging. Elke fout vóór commit geeft rollback en een Nederlandse melding zonder databasefoutdetails.
+- Vlak vóór verwijderen maakt de SQLite backup-API een consistente kopie inclusief WAL-inhoud en controleert de integriteit. Fout bij back-up betekent **niet wissen**.
+- Private opslag: **`/data/administration_backups/reset_<uniek>/rit_tank.db`**, maprechten `0700`, database `0600`. Eventuele tankbonnen staan onder dezelfde map in `receipts/`. Geen downloadroute of statische webpublicatie. Deze back-up is lokaal, niet apart versleuteld, en wordt niet naar Drive geüpload; hij valt onder de private add-onopslag. Bewaar/verwijder hem bewust als beheerder; geen automatische retentie voor deze herstelkopieën.
+- Een private herstelmarkering en de transactionele reset-id herstellen een onderbroken verplaatsing van tankbonnen bij de volgende add-onstart. Bij rollback gaan de bonnen terug; na commit blijven ze uitsluitend in de herstelback-up. Back-ups bevatten dus bewust nog de oude administratie, de actieve audit niet. Handmatig terugzetten vereist beheerderstoegang en een gestopte add-on; geen herstelknop in deze release.
+- HTTP-verzoeken en verwerking van GPS-/notificatieacties worden gesynchroniseerd met de reset, zodat lopende verwerking geen oude ritvoortgang terugschrijft. Open formulieren en PDF-previews in het huidige venster verdwijnen door herladen na succes.
+- Eerder gedownloade PDF/CSV-bestanden, reeds verzonden telefoonmeldingen, Home Assistant Recorder-historie en bestaande Google Drive-archieven/back-ups vallen buiten deze lokale reset. Nieuwe rapportages en actuele HA-sensoren gebruiken de nieuwe administratie.
+- Geen nieuwe tabellen of kolommen; geen simulatiemodus.
 
 Release 28.00 voegt Google-adressuggesties toe aan **Rit corrigeren**, voor vertrek, tussenstops en aankomst. Typ minimaal drie tekens en kies zelf een resultaat. Alleen een geselecteerd, door Google Places Details bevestigd volledig adres kan worden opgeslagen. De bestaande Google-configuratie, Text Search met Nederlandse voorkeur, adresnotatie en correctiehistorie worden hergebruikt. Ongewijzigde adressen blijven exact behouden; ook historische onvolledige tekst blijft zichtbaar. Zoekfouten wijzigen niets. Er is geen nieuwe provider, sleutel of databaseschemamigratie. Kilometerstanden, afstanden en vergoeding veranderen niet door alleen een adrescorrectie.
 
