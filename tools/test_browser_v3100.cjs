@@ -59,9 +59,13 @@ const check={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6,relat
    await page.screenshot({path:path.join(output,engine+'-'+device+'-input.png')});
    // Simulate reduced visual viewport with software keyboard. Real iOS hardware remains acceptance testing.
    await page.setViewportSize({width,height:360});await page.locator('#physicalTripValue').focus();
+   // visualViewport resize is delivered asynchronously; wait for the application's
+   // listener to fit the modal, without calling it directly or relaxing the limit.
+   await page.waitForFunction(()=>window.visualViewport.height<=361&&document.getElementById('tripModal').getBoundingClientRect().height<=361);
    const box=await page.locator('#tripModal').boundingBox();assert.ok(box.height<=361);
    assert.equal(await page.locator('#tripModal .sheet').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
    await page.setViewportSize({width,height});
+   await page.waitForFunction(expected=>Math.abs(document.getElementById('tripModal').getBoundingClientRect().height-expected)<=1,height);
    await page.locator('#tripSaveButton').click();await page.locator('#distanceModal').waitFor({state:'visible'});
    assert.match(await page.locator('#distanceFacts').textContent(),/41 km/);
    assert.match(await page.locator('#distanceExplanation').textContent(),/onderbroken/);
