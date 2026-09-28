@@ -1,5 +1,13 @@
 # Changelog
 
+## 30.00
+
+- Veilige nieuwe administratie via Instellingen: exacte RESET-bevestiging, CSRF-token en verplichte actuele fysieke kilometerteller.
+- Oude ritten, stops, tankbeurten, correcties, GPS-voortgang en afgeleide gegevens atomair gewist; instellingen, thuisadres en secrets behouden.
+- Private SQLite-herstelback-up met tankbonnen; rollback en herstel na onderbroken bestandsverplaatsing.
+- Administratieve kilometers beginnen op nul; echte tellerstand vormt de baseline voor volgende ritten en exports.
+- Regressietests voor bevestiging, CSRF, rollback, back-up, behoud instellingen, rapporten en aansluitende fysieke tellerstanden. Release-29-adresprioriteit behouden.
+
 ## 29.00
 
 - Opgeslagen stopadressen hebben voorrang op nabijgelegen bekende plekken en afgeleide adressen; CSV gebruikt dezelfde centrale rapportadressen als PDF en rapportcontrole.
