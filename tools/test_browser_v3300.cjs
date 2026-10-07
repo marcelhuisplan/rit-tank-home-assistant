@@ -93,6 +93,36 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
     await page.waitForTimeout(30);assert.equal(await input.inputValue(),'25.231');
     await page.setViewportSize({width,height});await page.waitForTimeout(30);assert.equal(await input.inputValue(),'25.231');
 
+    // Stop: long title keeps the close control safe and the save action clear of GPS details.
+    await page.goto('https://rit-tank.test/?case=finish');
+    await page.waitForFunction(()=>typeof DATA!=='undefined'&&DATA?.business?.active_trip);
+    await page.evaluate(()=>openTripPoint('stop'));
+    await page.waitForFunction(()=>document.getElementById('physicalTripValue').value.length>0);
+    assert.equal(await page.locator('#tripSaveButton').textContent(),'Locatie opslaan');
+    const closeMetrics=await page.locator('#tripModal .close').evaluate(el=>{
+      const r=el.getBoundingClientRect(),s=el.closest('.sheet').getBoundingClientRect();
+      return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height,
+        sheetLeft:s.left,sheetRight:s.right,viewportWidth:innerWidth,viewportHeight:innerHeight};
+    });
+    assert.ok(closeMetrics.width>=44&&closeMetrics.height>=44,engine+' '+device+' close touch target');
+    assert.ok(closeMetrics.left>=closeMetrics.sheetLeft&&closeMetrics.right<=closeMetrics.sheetRight+.5,
+      engine+' '+device+' close inside sheet');
+    assert.ok(closeMetrics.left>=0&&closeMetrics.right<=closeMetrics.viewportWidth+.5&&closeMetrics.top>=0&&closeMetrics.bottom<=closeMetrics.viewportHeight+.5,
+      engine+' '+device+' close inside viewport');
+    await page.locator('#physicalGpsDetails summary').click();
+    await page.locator('#physicalGpsDetails').scrollIntoViewIfNeeded();
+    const stopSpacing=await page.evaluate(()=>{
+      const gps=document.getElementById('physicalGpsDetails').getBoundingClientRect();
+      const save=document.getElementById('tripSaveButton').getBoundingClientRect();
+      const sheet=document.querySelector('#tripModal .sheet');
+      return {gap:save.top-gps.bottom,position:getComputedStyle(document.getElementById('tripSaveButton')).position,
+        paddingBottom:parseFloat(getComputedStyle(sheet).paddingBottom)};
+    });
+    assert.equal(stopSpacing.position,'static',engine+' '+device+' save action does not float over content');
+    assert.ok(stopSpacing.gap>=12,engine+' '+device+' GPS/save spacing');
+    assert.ok(stopSpacing.paddingBottom>=18,engine+' '+device+' safe bottom breathing room');
+    assert.equal(await page.locator('#tripModal .sheet').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
+
     // Finish: server-oriented physical total is prominent; GPS stays folded until requested.
     await page.goto('https://rit-tank.test/?case=finish');
     await page.waitForFunction(()=>typeof DATA!=='undefined'&&DATA?.business?.active_trip);
