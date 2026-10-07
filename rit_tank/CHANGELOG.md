@@ -1,5 +1,10 @@
 # Changelog
 
+## 33.04
+
+- Rit starten, Tussenstop en Rit afsluiten begrenzen het scrollbare ritvenster opnieuw onder de iPhone-safe-area, zodat de sticky mintgroene sluitknop niet meer onder de bovenrand kan verdwijnen.
+- De mobiele regressietest gebruikt expliciet iPhone 15 Pro en iPad Pro 13” met gesimuleerde safe-area-insets en controleert de sluitknop bovenaan én helemaal onderaan op zichtbaarheid, vrije ruimte en aanklikbaarheid.
+
 ## 33.03
 
 - De gedeelde sluitknop van Rit starten, Tussenstop en Rit afsluiten is 56 × 56 pixels, fel mintgroen met een groot, dik, donker kruis en een toegankelijke naam.
