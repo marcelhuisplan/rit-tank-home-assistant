@@ -2452,34 +2452,6 @@ LOGIN_HTML = f'''<!doctype html>
 <meta name="theme-color" content="#0d3a30"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Rit & Tank"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="huisplan-icon-180.png"><link rel="icon" type="image/png" href="huisplan-icon-192.png"><title>Inloggen · Rit & Tank</title>
 <style>:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:radial-gradient(circle at top,#153d34,#0c0f12 55%);color:#f5faf8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center;padding:calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom))}}main{{width:min(100%,420px);background:#151c20;border:1px solid #2f6658;border-radius:28px;padding:26px;box-shadow:0 24px 70px #0008}}.icon{{width:76px;height:76px;border-radius:22px;display:block;margin:0 auto 18px}}h1{{margin:0;text-align:center;font-size:30px}}p{{color:#aebdb8;text-align:center;line-height:1.45}}label{{font-size:12px;font-weight:800;color:#b8c7c2}}input{{width:100%;margin-top:7px;border:1px solid #3a4b50;background:#0d1215;color:white;border-radius:15px;padding:14px;font-size:17px}}button{{width:100%;margin-top:15px;border:0;border-radius:15px;background:linear-gradient(135deg,#0e78b8,#0aa684);color:white;padding:14px;font-size:17px;font-weight:900}}#message{{min-height:20px;margin-top:12px;color:#ff9ba5;text-align:center;font-size:13px}}small{{display:block;color:#778883;text-align:center;margin-top:18px}}
-/* Release 33.00: calm, touch-first physical odometer flow */
-.trip-sheet{width:min(100%,680px)!important}
-.simplified-odo-card{padding:clamp(18px,4vw,28px);border-radius:26px;background:linear-gradient(155deg,#101a18,#10161a 70%);border-color:rgba(88,223,177,.25)}
-.physical-kicker{color:var(--teal);font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
-.simplified-odo-card h3{margin:6px 0 14px;font-size:clamp(24px,6vw,34px)}
-.physical-startline{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:12px 14px;margin:0 0 16px;border-radius:16px;background:#0b1113;border:1px solid rgba(255,255,255,.06)}
-.physical-startline span{color:var(--muted);font-size:13px}.physical-startline b{font-size:clamp(22px,6vw,32px);color:#fff;white-space:nowrap}
-.physical-input-label{display:block;color:var(--muted);font-size:13px;font-weight:800;margin-bottom:7px}
-.physical-input-wrap{position:relative;min-width:0}
-.simplified-odo-card #physicalTripValue{width:100%;min-width:0;height:clamp(94px,18vw,122px);padding:12px 72px 12px 14px;border-radius:22px;border:2px solid rgba(88,223,177,.32);background:#090e10;color:#fff;text-align:center;font-size:clamp(46px,13vw,76px);font-weight:900;line-height:1;letter-spacing:-.035em;font-variant-numeric:tabular-nums;outline:none}
-.simplified-odo-card #physicalTripValue:focus{border-color:var(--teal);box-shadow:0 0 0 4px rgba(88,223,177,.10)}
-.physical-input-unit{position:absolute;right:20px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:900;font-size:18px;pointer-events:none}
-.physical-help{margin:12px 2px 4px;color:var(--muted);font-size:14px;line-height:1.45}
-.physical-distance{margin:12px 0 0;color:#fff;font-weight:800;font-size:16px;min-height:24px}
-.physical-distance strong{display:block;color:var(--teal);font-size:clamp(30px,9vw,46px);line-height:1.05;margin-top:4px}
-.physical-primary,.trip-save-sticky{width:100%;min-height:60px;border:0;border-radius:18px;padding:14px 16px;font-size:17px;font-weight:950;line-height:1.2;touch-action:manipulation}
-.physical-primary{margin-top:18px;background:linear-gradient(135deg,#65efc6,#2bcdb1);color:#05251d;box-shadow:0 12px 28px rgba(43,205,177,.16);position:sticky;bottom:calc(8px + env(safe-area-inset-bottom));z-index:4}
-.physical-primary.confirmed{background:#183f35;color:#a8f6df;border:1px solid #2d806b;box-shadow:none}
-.trip-save-sticky{margin-top:18px;background:linear-gradient(135deg,#65efc6,#2bcdb1);color:#05251d;position:sticky;bottom:calc(8px + env(safe-area-inset-bottom));z-index:3;box-shadow:0 10px 26px rgba(0,0,0,.32)}
-.gps-details{margin-top:18px;border-top:1px solid rgba(255,255,255,.08);padding-top:12px}.gps-details summary{cursor:pointer;color:#9bc9bc;font-weight:850;min-height:44px;display:flex;align-items:center;touch-action:manipulation}.gps-details .physical-facts{margin:8px 0}.gps-details .physical-warning{margin-bottom:0}
-#tripStepLocation{padding:16px;border-radius:22px;border-color:rgba(88,223,177,.18);background:#0f1718}
-#tripStepLocation .trip-location-box{padding:14px;border-radius:18px;background:#0b1214}
-#tripStepLocation .location-big{min-height:58px;border-radius:17px;font-size:16px}
-#tripStepLocation input{font-size:16px;min-height:50px}
-#tripModal .sheet{padding-bottom:calc(18px + env(safe-area-inset-bottom))}
-.trip-success-card{text-align:center;padding:10px 0}.trip-success-check{width:72px;height:72px;border-radius:50%;margin:4px auto 14px;display:grid;place-items:center;background:#153f34;color:#77f0ce;font-size:42px;font-weight:900}.trip-success-card h2{font-size:30px;margin:0 0 18px}.trip-success-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:left}.trip-success-grid>div{background:#0d1416;border:1px solid #27373a;border-radius:16px;padding:13px;min-width:0}.trip-success-grid small{display:block;color:var(--muted);font-size:11px;margin-bottom:5px}.trip-success-grid b{display:block;color:#fff;font-size:15px;overflow-wrap:anywhere}.trip-success-distance{grid-column:1/-1;text-align:center!important}.trip-success-distance b{font-size:36px!important;color:var(--teal)!important}.trip-success-actions{display:grid;gap:10px;margin-top:18px}.trip-success-actions button{min-height:56px;border-radius:17px;font-weight:900;font-size:16px}
-@media(max-width:390px){.simplified-odo-card{padding:16px}.simplified-odo-card #physicalTripValue{height:92px;font-size:46px;padding-right:58px}.physical-input-unit{right:14px;font-size:15px}.trip-success-grid{grid-template-columns:1fr}.trip-success-distance{grid-column:auto}}
-@media(min-width:768px){.trip-sheet{padding-left:28px!important;padding-right:28px!important}.simplified-odo-card #physicalTripValue{font-size:72px}.trip-location-actions .location-big{min-height:64px;font-size:17px}}
 
 </style></head>
 <body><main><img class="icon" src="huisplan-icon-192.png" alt="Huisplan-logo"><h1>Rit & Tank</h1><p>Log in op je zelfstandige ritten-app.</p><form id="login"><label for="password">Wachtwoord</label><input id="password" type="password" autocomplete="current-password" required autofocus><button type="submit">Inloggen</button><div id="message" role="alert"></div></form><small>Versie {APP_VERSION} · beveiligde standalone-modus</small></main>
@@ -2643,6 +2615,35 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 #distanceModal{z-index:1500}#distanceModal .sheet,#tripModal .sheet,#assistantModal .sheet{box-sizing:border-box;width:min(100%,620px);max-height:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-bottom:calc(24px + env(safe-area-inset-bottom))}
 #tripStepOdo{display:none}#distanceModal .physical-actions{display:grid;gap:10px;margin-top:16px}#distanceModal button{min-height:48px;white-space:normal}
 @media(max-width:360px){.physical-facts{grid-template-columns:minmax(0,1fr)}}
+/* Release 33.00: calm, touch-first physical odometer flow */
+.trip-sheet{width:min(100%,680px)!important}
+.simplified-odo-card{padding:clamp(18px,4vw,28px);border-radius:26px;background:linear-gradient(155deg,#101a18,#10161a 70%);border-color:rgba(88,223,177,.25)}
+.physical-kicker{color:var(--teal);font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+.simplified-odo-card h3{margin:6px 0 14px;font-size:clamp(24px,6vw,34px)}
+.physical-startline{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:12px 14px;margin:0 0 16px;border-radius:16px;background:#0b1113;border:1px solid rgba(255,255,255,.06)}
+.physical-startline span{color:var(--muted);font-size:13px}.physical-startline b{font-size:clamp(22px,6vw,32px);color:#fff;white-space:nowrap}
+.physical-input-label{display:block;color:var(--muted);font-size:13px;font-weight:800;margin-bottom:7px}
+.physical-input-wrap{position:relative;min-width:0}
+.simplified-odo-card #physicalTripValue{width:100%;min-width:0;height:clamp(94px,18vw,122px);padding:12px 72px 12px 14px;border-radius:22px;border:2px solid rgba(88,223,177,.32);background:#090e10;color:#fff;text-align:center;font-size:clamp(46px,13vw,76px);font-weight:900;line-height:1;letter-spacing:-.035em;font-variant-numeric:tabular-nums;outline:none}
+.simplified-odo-card #physicalTripValue:focus{border-color:var(--teal);box-shadow:0 0 0 4px rgba(88,223,177,.10)}
+.physical-input-unit{position:absolute;right:20px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:900;font-size:18px;pointer-events:none}
+.physical-help{margin:12px 2px 4px;color:var(--muted);font-size:14px;line-height:1.45}
+.physical-distance{margin:12px 0 0;color:#fff;font-weight:800;font-size:16px;min-height:24px}
+.physical-distance strong{display:block;color:var(--teal);font-size:clamp(30px,9vw,46px);line-height:1.05;margin-top:4px}
+.physical-primary,.trip-save-sticky{width:100%;min-height:60px;border:0;border-radius:18px;padding:14px 16px;font-size:17px;font-weight:950;line-height:1.2;touch-action:manipulation}
+.physical-primary{margin-top:18px;background:linear-gradient(135deg,#65efc6,#2bcdb1);color:#05251d;box-shadow:0 12px 28px rgba(43,205,177,.16);position:sticky;bottom:calc(8px + env(safe-area-inset-bottom));z-index:4}
+.physical-primary.confirmed{background:#183f35;color:#a8f6df;border:1px solid #2d806b;box-shadow:none}
+.trip-save-sticky{margin-top:18px;background:linear-gradient(135deg,#65efc6,#2bcdb1);color:#05251d;position:sticky;bottom:calc(8px + env(safe-area-inset-bottom));z-index:3;box-shadow:0 10px 26px rgba(0,0,0,.32)}
+.gps-details{margin-top:18px;border-top:1px solid rgba(255,255,255,.08);padding-top:12px}.gps-details summary{cursor:pointer;color:#9bc9bc;font-weight:850;min-height:44px;display:flex;align-items:center;touch-action:manipulation}.gps-details .physical-facts{margin:8px 0}.gps-details .physical-warning{margin-bottom:0}
+#tripStepLocation{padding:16px;border-radius:22px;border-color:rgba(88,223,177,.18);background:#0f1718}
+#tripStepLocation .trip-location-box{padding:14px;border-radius:18px;background:#0b1214}
+#tripStepLocation .location-big{min-height:58px;border-radius:17px;font-size:16px}
+#tripStepLocation input{font-size:16px;min-height:50px}
+#tripModal .sheet{padding-bottom:calc(18px + env(safe-area-inset-bottom))}
+.trip-success-card{text-align:center;padding:10px 0}.trip-success-check{width:72px;height:72px;border-radius:50%;margin:4px auto 14px;display:grid;place-items:center;background:#153f34;color:#77f0ce;font-size:42px;font-weight:900}.trip-success-card h2{font-size:30px;margin:0 0 18px}.trip-success-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:left}.trip-success-grid>div{background:#0d1416;border:1px solid #27373a;border-radius:16px;padding:13px;min-width:0}.trip-success-grid small{display:block;color:var(--muted);font-size:11px;margin-bottom:5px}.trip-success-grid b{display:block;color:#fff;font-size:15px;overflow-wrap:anywhere}.trip-success-distance{grid-column:1/-1;text-align:center!important}.trip-success-distance b{font-size:36px!important;color:var(--teal)!important}.trip-success-actions{display:grid;gap:10px;margin-top:18px}.trip-success-actions button{min-height:56px;border-radius:17px;font-weight:900;font-size:16px}
+@media(max-width:390px){.simplified-odo-card{padding:16px}.simplified-odo-card #physicalTripValue{height:92px;font-size:46px;padding-right:58px}.physical-input-unit{right:14px;font-size:15px}.trip-success-grid{grid-template-columns:1fr}.trip-success-distance{grid-column:auto}}
+@media(min-width:768px){.trip-sheet{padding-left:28px!important;padding-right:28px!important}.simplified-odo-card #physicalTripValue{font-size:72px}.trip-location-actions .location-big{min-height:64px;font-size:17px}}
+
 </style>
 </head>
 <body>
