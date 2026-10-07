@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '32.00'
+APP_VERSION = '33.00'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -2451,7 +2451,9 @@ LOGIN_HTML = f'''<!doctype html>
 <html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0d3a30"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Rit & Tank"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="huisplan-icon-180.png"><link rel="icon" type="image/png" href="huisplan-icon-192.png"><title>Inloggen · Rit & Tank</title>
-<style>:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:radial-gradient(circle at top,#153d34,#0c0f12 55%);color:#f5faf8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center;padding:calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom))}}main{{width:min(100%,420px);background:#151c20;border:1px solid #2f6658;border-radius:28px;padding:26px;box-shadow:0 24px 70px #0008}}.icon{{width:76px;height:76px;border-radius:22px;display:block;margin:0 auto 18px}}h1{{margin:0;text-align:center;font-size:30px}}p{{color:#aebdb8;text-align:center;line-height:1.45}}label{{font-size:12px;font-weight:800;color:#b8c7c2}}input{{width:100%;margin-top:7px;border:1px solid #3a4b50;background:#0d1215;color:white;border-radius:15px;padding:14px;font-size:17px}}button{{width:100%;margin-top:15px;border:0;border-radius:15px;background:linear-gradient(135deg,#0e78b8,#0aa684);color:white;padding:14px;font-size:17px;font-weight:900}}#message{{min-height:20px;margin-top:12px;color:#ff9ba5;text-align:center;font-size:13px}}small{{display:block;color:#778883;text-align:center;margin-top:18px}}</style></head>
+<style>:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:radial-gradient(circle at top,#153d34,#0c0f12 55%);color:#f5faf8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center;padding:calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom))}}main{{width:min(100%,420px);background:#151c20;border:1px solid #2f6658;border-radius:28px;padding:26px;box-shadow:0 24px 70px #0008}}.icon{{width:76px;height:76px;border-radius:22px;display:block;margin:0 auto 18px}}h1{{margin:0;text-align:center;font-size:30px}}p{{color:#aebdb8;text-align:center;line-height:1.45}}label{{font-size:12px;font-weight:800;color:#b8c7c2}}input{{width:100%;margin-top:7px;border:1px solid #3a4b50;background:#0d1215;color:white;border-radius:15px;padding:14px;font-size:17px}}button{{width:100%;margin-top:15px;border:0;border-radius:15px;background:linear-gradient(135deg,#0e78b8,#0aa684);color:white;padding:14px;font-size:17px;font-weight:900}}#message{{min-height:20px;margin-top:12px;color:#ff9ba5;text-align:center;font-size:13px}}small{{display:block;color:#778883;text-align:center;margin-top:18px}}
+
+</style></head>
 <body><main><img class="icon" src="huisplan-icon-192.png" alt="Huisplan-logo"><h1>Rit & Tank</h1><p>Log in op je zelfstandige ritten-app.</p><form id="login"><label for="password">Wachtwoord</label><input id="password" type="password" autocomplete="current-password" required autofocus><button type="submit">Inloggen</button><div id="message" role="alert"></div></form><small>Versie {APP_VERSION} · beveiligde standalone-modus</small></main>
 <script>document.getElementById('login').addEventListener('submit',async e=>{{e.preventDefault();let m=document.getElementById('message'),b=e.currentTarget.querySelector('button');m.textContent='';b.disabled=true;try{{let r=await fetch('api/auth/login',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{password:document.getElementById('password').value}})}}),d=await r.json();if(!r.ok)throw new Error(d.error||'Inloggen mislukt');location.replace('./')}}catch(err){{m.textContent=err.message}}finally{{b.disabled=false}}}});</script></body></html>'''.encode('utf-8')
 
@@ -2613,6 +2615,35 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 #distanceModal{z-index:1500}#distanceModal .sheet,#tripModal .sheet,#assistantModal .sheet{box-sizing:border-box;width:min(100%,620px);max-height:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-bottom:calc(24px + env(safe-area-inset-bottom))}
 #tripStepOdo{display:none}#distanceModal .physical-actions{display:grid;gap:10px;margin-top:16px}#distanceModal button{min-height:48px;white-space:normal}
 @media(max-width:360px){.physical-facts{grid-template-columns:minmax(0,1fr)}}
+/* Release 33.00: calm, touch-first physical odometer flow */
+.trip-sheet{width:min(100%,680px)!important}
+.simplified-odo-card{padding:clamp(18px,4vw,28px);border-radius:26px;background:linear-gradient(155deg,#101a18,#10161a 70%);border-color:rgba(88,223,177,.25)}
+.physical-kicker{color:var(--teal);font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+.simplified-odo-card h3{margin:6px 0 14px;font-size:clamp(24px,6vw,34px)}
+.physical-startline{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:12px 14px;margin:0 0 16px;border-radius:16px;background:#0b1113;border:1px solid rgba(255,255,255,.06)}
+.physical-startline span{color:var(--muted);font-size:13px}.physical-startline b{font-size:clamp(22px,6vw,32px);color:#fff;white-space:nowrap}
+.physical-input-label{display:block;color:var(--muted);font-size:13px;font-weight:800;margin-bottom:7px}
+.physical-input-wrap{position:relative;min-width:0}
+.simplified-odo-card #physicalTripValue{width:100%;min-width:0;height:clamp(94px,18vw,122px);padding:12px 72px 12px 14px;border-radius:22px;border:2px solid rgba(88,223,177,.32);background:#090e10;color:#fff;text-align:center;font-size:clamp(46px,13vw,76px);font-weight:900;line-height:1;letter-spacing:-.035em;font-variant-numeric:tabular-nums;outline:none}
+.simplified-odo-card #physicalTripValue:focus{border-color:var(--teal);box-shadow:0 0 0 4px rgba(88,223,177,.10)}
+.physical-input-unit{position:absolute;right:20px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:900;font-size:18px;pointer-events:none}
+.physical-help{margin:12px 2px 4px;color:var(--muted);font-size:14px;line-height:1.45}
+.physical-distance{margin:12px 0 0;color:#fff;font-weight:800;font-size:16px;min-height:24px}
+.physical-distance strong{display:block;color:var(--teal);font-size:clamp(30px,9vw,46px);line-height:1.05;margin-top:4px}
+.physical-primary,.trip-save-sticky{width:100%;min-height:60px;border:0;border-radius:18px;padding:14px 16px;font-size:17px;font-weight:950;line-height:1.2;touch-action:manipulation}
+.physical-primary{margin-top:18px;background:linear-gradient(135deg,#65efc6,#2bcdb1);color:#05251d;box-shadow:0 12px 28px rgba(43,205,177,.16);position:sticky;bottom:calc(8px + env(safe-area-inset-bottom));z-index:4}
+.physical-primary.confirmed{background:#183f35;color:#a8f6df;border:1px solid #2d806b;box-shadow:none}
+.trip-save-sticky{margin-top:18px;background:linear-gradient(135deg,#65efc6,#2bcdb1);color:#05251d;position:sticky;bottom:calc(8px + env(safe-area-inset-bottom));z-index:3;box-shadow:0 10px 26px rgba(0,0,0,.32)}
+.gps-details{margin-top:18px;border-top:1px solid rgba(255,255,255,.08);padding-top:12px}.gps-details summary{cursor:pointer;color:#9bc9bc;font-weight:850;min-height:44px;display:flex;align-items:center;touch-action:manipulation}.gps-details .physical-facts{margin:8px 0}.gps-details .physical-warning{margin-bottom:0}
+#tripStepLocation{padding:16px;border-radius:22px;border-color:rgba(88,223,177,.18);background:#0f1718}
+#tripStepLocation .trip-location-box{padding:14px;border-radius:18px;background:#0b1214}
+#tripStepLocation .location-big{min-height:58px;border-radius:17px;font-size:16px}
+#tripStepLocation input{font-size:16px;min-height:50px}
+#tripModal .sheet{padding-bottom:calc(18px + env(safe-area-inset-bottom))}
+.trip-success-card{text-align:center;padding:10px 0}.trip-success-check{width:72px;height:72px;border-radius:50%;margin:4px auto 14px;display:grid;place-items:center;background:#153f34;color:#77f0ce;font-size:42px;font-weight:900}.trip-success-card h2{font-size:30px;margin:0 0 18px}.trip-success-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:left}.trip-success-grid>div{background:#0d1416;border:1px solid #27373a;border-radius:16px;padding:13px;min-width:0}.trip-success-grid small{display:block;color:var(--muted);font-size:11px;margin-bottom:5px}.trip-success-grid b{display:block;color:#fff;font-size:15px;overflow-wrap:anywhere}.trip-success-distance{grid-column:1/-1;text-align:center!important}.trip-success-distance b{font-size:36px!important;color:var(--teal)!important}.trip-success-actions{display:grid;gap:10px;margin-top:18px}.trip-success-actions button{min-height:56px;border-radius:17px;font-weight:900;font-size:16px}
+@media(max-width:390px){.simplified-odo-card{padding:16px}.simplified-odo-card #physicalTripValue{height:92px;font-size:46px;padding-right:58px}.physical-input-unit{right:14px;font-size:15px}.trip-success-grid{grid-template-columns:1fr}.trip-success-distance{grid-column:auto}#tripStepLocation{padding:8px}#tripStepLocation .trip-location-box{padding:8px}#tripStepLocation .trip-location-actions .location-big{font-size:14px;padding-left:5px;padding-right:5px}}
+@media(min-width:768px){.trip-sheet{padding-left:28px!important;padding-right:28px!important}.simplified-odo-card #physicalTripValue{font-size:72px}.trip-location-actions .location-big{min-height:64px;font-size:17px}}
+
 </style>
 </head>
 <body>
@@ -2694,25 +2725,29 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 
 <div class="modal" id="kmModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>🛣️ Kilometerstand</h2><button class="close" onclick="closeModal('kmModal')">✕</button></div><input id="kmOdo" type="hidden"><div class="guide-section active" id="kmStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Nieuwe kilometerstand</b><small>Laatste stand is vooringesteld</small></div><div class="odo-wheelbox" id="kmOdoWheels"></div><div class="odo-live"><b id="kmOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="kmOdoLast"></div><button class="guide-next" type="button" onclick="guideTo('kmStepRest')">Verder →</button></div><div class="guide-section" id="kmStepRest"><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="kmDate" type="datetime-local"></div><div class="field"><label>Notitie (optioneel)</label><input id="kmNote" maxlength="200" placeholder="Bijv. thuiskomst, zakelijke rit..."></div><button class="save" onclick="saveKm()">Kilometerstand opslaan</button></div></div></div>
 
-<div class="modal" id="tripModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2 id="tripModalTitle">💼 Zakelijke rit</h2><button class="close" onclick="closeModal('tripModal')">✕</button></div>
-  <section class="physical-card" id="physicalTripCard" aria-labelledby="physicalTripHeading">
-    <h3 id="physicalTripHeading">Kilometerteller controleren</h3>
-    <div class="physical-facts"><div><small id="physicalStartLabel">Startteller</small><b id="physicalStart">—</b></div><div><small>GPS gemeten</small><b id="physicalGps">—</b></div><div><small>Voorgestelde eindstand</small><b id="physicalProposal">—</b></div></div>
-    <p class="physical-warning" id="physicalGpsWarning" role="status"></p>
-    <label for="physicalTripValue">Werkelijke tellerstand</label>
-    <input id="physicalTripValue" type="text" inputmode="numeric" autocomplete="off" maxlength="10" oninput="physicalTripChanged()" aria-describedby="physicalTripHelp">
-    <p id="physicalTripHelp" class="assistant-note">Controleer de kilometerteller van de auto. Hele kilometers, bijvoorbeeld 64.375.</p>
-    <label class="physical-consent"><input id="physicalTripConfirmed" type="checkbox" onchange="physicalTripConsent()">Ik heb deze fysieke tellerstand gecontroleerd.</label>
-    <p id="physicalTripDistance" class="assistant-note" aria-live="polite"></p>
-    <button class="guide-next" type="button" onclick="guideTo('tripStepLocation')">Verder naar locatie →</button>
+<div class="modal" id="tripModal"><div class="sheet trip-sheet"><div class="grab"></div><div class="sheethead"><h2 id="tripModalTitle">💼 Zakelijke rit</h2><button class="close" onclick="closeModal('tripModal')">✕</button></div>
+  <section class="physical-card simplified-odo-card" id="physicalTripCard" aria-labelledby="physicalTripHeading">
+    <div class="physical-kicker" id="physicalModeKicker">Kilometerstand</div>
+    <h3 id="physicalTripHeading">Kilometerstand</h3>
+    <div class="physical-startline" id="physicalStartRow"><span id="physicalStartLabel">Startstand</span><b id="physicalStart">—</b></div>
+    <label class="physical-input-label" id="physicalTripInputLabel" for="physicalTripValue">Werkelijke tellerstand</label>
+    <div class="physical-input-wrap"><input id="physicalTripValue" type="text" inputmode="numeric" enterkeyhint="done" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="10" onfocus="selectPhysicalTripValue(this)" onclick="selectPhysicalTripValue(this)" oninput="physicalTripChanged()" aria-describedby="physicalTripHelp"><span class="physical-input-unit">km</span></div>
+    <p id="physicalTripHelp" class="physical-help">Lees de kilometerstand van je auto af.</p>
+    <p id="physicalTripDistance" class="physical-distance" aria-live="polite"></p>
+    <input id="physicalTripConfirmed" type="checkbox" hidden>
+    <button id="physicalConfirmButton" class="physical-primary" type="button" onclick="confirmPhysicalTripStep()">✓ Startstand bevestigen</button>
+    <details class="gps-details" id="physicalGpsDetails"><summary>GPS-informatie bekijken</summary><div class="physical-facts"><div><small>GPS gemeten</small><b id="physicalGps">—</b></div><div><small>GPS-voorstel</small><b id="physicalProposal">—</b></div></div><p class="physical-warning" id="physicalGpsWarning" role="status"></p></details>
   </section>
-  <div id="tripStartFields"><div class="tax-note">Start hier een zakelijke ritregistratie. Leg daarna zelf de volgende locatie vast of sluit de rit af.</div><div class="purpose-grid"><div class="field"><label>Doel / afspraak</label><input id="tripPurpose" maxlength="120" placeholder="Bijv. klantbezoek"></div><div class="field"><label>Klant / project</label><input id="tripClient" maxlength="120" placeholder="Optioneel"></div></div><div class="field"><label>Ritnotitie (optioneel)</label><input id="tripTripNote" maxlength="250" placeholder="Bijv. offertebespreking"></div></div>
-  <input id="tripOdo" type="hidden"><div class="guide-section active" id="tripStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small id="tripOdoStepHint">Laatste stand is vooringesteld</small></div><div class="odo-suggest" id="tripOdoSuggestion"><div class="odo-suggest-label">Berekende kilometerstand</div><div class="odo-suggest-value"><b id="tripOdoSuggestedValue">—</b> <span>km</span></div><div class="odo-suggest-detail" id="tripOdoSuggestedDetail"></div><div class="odo-suggest-actions"><button class="odo-suggest-accept" type="button" onclick="acceptTripOdoSuggestion()">✓ Akkoord</button><button class="odo-suggest-edit" type="button" onclick="editTripOdoSuggestion()">Wijzigen</button></div></div><div class="odo-editor" id="tripOdoEditor"><div class="odo-wheelbox" id="tripOdoWheels"></div><div class="odo-live"><b id="tripOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="tripOdoLast"></div><label class="assistant-note"><input type="checkbox" id="tripOdoChecked"> Ik heb de vorige én huidige tellerstand gecontroleerd; gebruik dit traject voor kilometerleren.</label><button class="guide-next" type="button" onclick="guideTo('tripStepLocation')">Kilometerstand bevestigen →</button></div></div><div class="guide-section" id="tripStepLocation"><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="tripDate" type="datetime-local"></div><div class="trip-location-box"><b id="tripLocationTitle">📍 Nog geen locatie vastgelegd</b><small id="tripLocationDetail">Tik hieronder zodra je op de juiste plek bent.</small><div class="trip-location-actions"><button id="tripHomeButton" class="location-big" type="button" onclick="selectTripHome()">🏠 Thuis</button><button id="tripSchoolButton" class="location-big" type="button" onclick="selectTripSchool()">🏫 Beatrixschool</button><button id="tripCurrentLocationButton" class="location-big location-current" type="button" onclick="captureTripLocation()">📍 Gebruik huidige locatie</button></div><div id="tripAddressChoices" class="address-choices"></div><div class="field"><label for="tripManualAddress">Adres uit je afspraak (eventueel corrigeren)</label><input id="tripManualAddress" maxlength="120" placeholder="Straat, huisnummer en plaats"></div><div class="google-attrib" id="tripGoogleAttrib" style="display:none">Adres via <b translate="no">Google Maps</b></div></div></div>
+  <div id="tripStartFields"><div class="tax-note">Start hier een zakelijke ritregistratie. De fysieke tellerstand blijft leidend.</div><div class="purpose-grid"><div class="field"><label>Doel / afspraak</label><input id="tripPurpose" maxlength="120" placeholder="Bijv. klantbezoek"></div><div class="field"><label>Klant / project</label><input id="tripClient" maxlength="120" placeholder="Optioneel"></div></div><div class="field"><label>Ritnotitie (optioneel)</label><input id="tripTripNote" maxlength="250" placeholder="Bijv. offertebespreking"></div></div>
+  <input id="tripOdo" type="hidden"><div class="guide-section active" id="tripStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small id="tripOdoStepHint">Laatste stand is vooringesteld</small></div><div class="odo-suggest" id="tripOdoSuggestion"><div class="odo-suggest-label">Berekende kilometerstand</div><div class="odo-suggest-value"><b id="tripOdoSuggestedValue">—</b> <span>km</span></div><div class="odo-suggest-detail" id="tripOdoSuggestedDetail"></div><div class="odo-suggest-actions"><button class="odo-suggest-accept" type="button" onclick="acceptTripOdoSuggestion()">✓ Akkoord</button><button class="odo-suggest-edit" type="button" onclick="editTripOdoSuggestion()">Wijzigen</button></div></div><div class="odo-editor" id="tripOdoEditor"><div class="odo-wheelbox" id="tripOdoWheels"></div><div class="odo-live"><b id="tripOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="tripOdoLast"></div><label class="assistant-note"><input type="checkbox" id="tripOdoChecked"> Ik heb de vorige én huidige tellerstand gecontroleerd; gebruik dit traject voor kilometerleren.</label><button class="guide-next" type="button" onclick="guideTo('tripStepLocation')">Kilometerstand bevestigen →</button></div></div>
+  <div class="guide-section" id="tripStepLocation" hidden><div class="guide-head"><span class="step-badge">2</span><b>📍 Locatie vastleggen</b><small>Kies een snelknop of zoek een adres</small></div><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="tripDate" type="datetime-local"></div><div class="trip-location-box"><b id="tripLocationTitle">📍 Nog geen locatie vastgelegd</b><small id="tripLocationDetail">Kies hieronder de juiste locatie.</small><div class="trip-location-actions"><button id="tripHomeButton" class="location-big" type="button" onclick="selectTripHome()">🏠 Thuis</button><button id="tripSchoolButton" class="location-big" type="button" onclick="selectTripSchool()">🏫 Beatrixschool</button><button id="tripCurrentLocationButton" class="location-big location-current" type="button" onclick="captureTripLocation()">📍 Gebruik huidige locatie</button></div><div id="tripAddressChoices" class="address-choices"></div><div class="field"><label for="tripManualAddress">Ander adres zoeken</label><input id="tripManualAddress" maxlength="120" placeholder="Straat, huisnummer en plaats"></div><div class="google-attrib" id="tripGoogleAttrib" style="display:none">Adres via <b translate="no">Google Maps</b></div></div></div>
   <div class="field"><label>Notitie bij deze stop (optioneel)</label><input id="tripStopNote" maxlength="250" placeholder="Bijv. bezoek afgerond"></div><div id="tripFinishFields" style="display:none"><div class="field"><label>Afwijkende route (alleen indien van toepassing)</label><input id="tripDeviatingRoute" maxlength="300" placeholder="Bijv. omleiding via A1 wegens afsluiting"></div></div>
-  <button class="save" id="tripSaveButton" onclick="saveTripPoint()">Opslaan</button>
+  <button class="trip-save-sticky" id="tripSaveButton" onclick="saveTripPoint()">Opslaan</button>
 </div></div>
 
-<div class="modal" id="distanceModal" role="dialog" aria-modal="true" aria-labelledby="distanceTitle"><div class="sheet"><div class="sheethead"><h2 id="distanceTitle">⚠️ Tellerstand controleren</h2><button class="close" aria-label="Terug" onclick="cancelPhysicalCheck()">✕</button></div><p id="distanceExplanation" class="physical-warning"></p><div class="physical-facts" id="distanceFacts"></div><p class="assistant-note">Na bevestiging gebruiken we de fysieke kilometerteller, niet de GPS-schatting.</p><p id="distanceError" class="physical-warning" role="status"></p><div class="physical-actions"><button class="odo-suggest-edit" id="distanceBack" onclick="cancelPhysicalCheck()">Terug en controleren</button><button class="save" id="distanceConfirm" onclick="confirmPhysicalCheck()">Tellerstand bevestigen</button></div></div></div>
+<div class="modal" id="distanceModal" role="dialog" aria-modal="true" aria-labelledby="distanceTitle"><div class="sheet"><div class="sheethead"><h2 id="distanceTitle">⚠️ Tellerstand controleren</h2><button class="close" aria-label="Terug" onclick="cancelPhysicalCheck()">✕</button></div><p id="distanceExplanation" class="physical-warning"></p><div class="physical-facts" id="distanceFacts"></div><p class="assistant-note">De fysieke kilometerstand blijft leidend. GPS is uitsluitend een controle en overschrijft je bevestigde tellerstand niet.</p><p id="distanceError" class="physical-warning" role="status"></p><div class="physical-actions"><button class="odo-suggest-edit" id="distanceBack" onclick="cancelPhysicalCheck()">Terug en controleren</button><button class="save" id="distanceConfirm" onclick="confirmPhysicalCheck()">Na controle verder</button></div></div></div>
+
+<div class="modal" id="tripSuccessModal" role="dialog" aria-modal="true" aria-labelledby="tripSuccessTitle"><div class="sheet trip-sheet"><div class="trip-success-card"><div class="trip-success-check">✓</div><h2 id="tripSuccessTitle">Rit vastgelegd!</h2><div class="trip-success-grid"><div><small>Startlocatie</small><b id="tripSuccessStartLocation">—</b></div><div><small>Eindlocatie</small><b id="tripSuccessEndLocation">—</b></div><div><small>Startstand</small><b id="tripSuccessStartOdo">—</b></div><div><small>Eindstand</small><b id="tripSuccessEndOdo">—</b></div><div class="trip-success-distance"><small>Definitieve afstand</small><b id="tripSuccessDistance">—</b></div><div><small>Datum en tijd</small><b id="tripSuccessDate">—</b></div></div><div class="trip-success-actions"><button class="save" onclick="newTripFromSuccess()">Nieuwe rit registreren</button><button class="linkbtn" onclick="overviewFromSuccess()">Naar overzicht</button></div></div></div></div>
 
 <div class="modal" id="tripEditModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>✏️ Rit corrigeren</h2><button class="close" onclick="closeModal('tripEditModal')">✕</button></div>
   <input id="editTripId" type="hidden"><div id="editTripStops"></div><div class="field"><label>Doel / afspraak</label><input id="editTripPurpose" maxlength="120"></div><div class="field"><label>Klant / project</label><input id="editTripClient" maxlength="120"></div><div class="field"><label>Afwijkende route</label><input id="editTripRoute" maxlength="300" placeholder="Alleen invullen indien van toepassing"></div><div class="field"><label>Toelichting</label><input id="editTripNote" maxlength="250"></div><div class="tax-note">Een correctie wordt vastgelegd in het wijzigingslogboek.</div><button id="editTripSave" class="save" onclick="saveTripEdit()">Correctie opslaan</button>
@@ -3021,7 +3056,7 @@ async function refreshTripOdoProposal(request){
     $('tripOdoStepHint').textContent='Voorstel niet beschikbaar — controleer de teller';
   }finally{clearTimeout(timer)}
 }
-async function openTripPoint(mode){clearTimeout(TRIP_SEARCH_TIMER);TRIP_MODE=mode;++TRIP_PROPOSAL_REQUEST;++TRIP_ADDRESS_REQUEST;++TRIP_ROUTE_PREVIEW_REQUEST;TRIP_GPS=null;$('tripAddressChoices').innerHTML='';$('tripManualAddress').value='';$('tripOdoChecked').checked=false;TRIP_LOCATION=null;TRIP_SEGMENT_TYPE='business';TRIP_ODO_MANUAL=false;let active=DATA.business?.active_trip;$('tripModalTitle').textContent=mode==='start'?'🚗 Ritregistratie starten':mode==='finish'?'🏁 Laatste locatie':'📍 Volgende locatie';$('tripStartFields').style.display=mode==='start'?'block':'none';$('tripFinishFields').style.display=mode==='finish'?'block':'none';$('tripHomeButton').hidden=false;$('tripSchoolButton').hidden=false;$('tripDate').value=localInputNow();$('tripStopNote').value='';if(mode==='start'){$('tripPurpose').value='klantbezoek';$('tripClient').value='';$('tripTripNote').value=''};if(mode==='finish')$('tripDeviatingRoute').value=active?.deviating_route||'';$('tripLocationTitle').textContent='📍 Nog geen locatie vastgelegd';$('tripLocationDetail').textContent='Tik hieronder zodra je op de juiste plek bent.';$('tripGoogleAttrib').style.display='none';$('tripSaveButton').textContent=mode==='start'?'Registratie starten':mode==='finish'?'Ritregistratie afsluiten':'Locatie opslaan';$('tripOdoSuggestion').classList.remove('show');$('tripOdoEditor').hidden=mode!=='start';$('tripOdoStepHint').textContent=mode==='start'?'Laatste stand is vooringesteld':'Berekende stand ophalen…';initOdometerWheel('trip',DATA.current_odometer??0);if(mode!=='start')await refreshTripOdoProposal(TRIP_PROPOSAL_REQUEST);initPhysicalTrip(mode,active);openModal('tripModal');setTimeout(()=>$('physicalTripCard').scrollIntoView({block:'start'}),80)}
+async function openTripPoint(mode){clearTimeout(TRIP_SEARCH_TIMER);TRIP_MODE=mode;++TRIP_PROPOSAL_REQUEST;++TRIP_ADDRESS_REQUEST;++TRIP_ROUTE_PREVIEW_REQUEST;TRIP_GPS=null;$('tripAddressChoices').innerHTML='';$('tripManualAddress').value='';$('tripOdoChecked').checked=false;TRIP_LOCATION=null;TRIP_SEGMENT_TYPE='business';TRIP_ODO_MANUAL=false;let active=DATA.business?.active_trip;$('tripModalTitle').textContent=mode==='start'?'Rit starten':mode==='finish'?'Rit afsluiten':'Tussenstop vastleggen';$('tripStartFields').style.display=mode==='start'?'block':'none';$('tripFinishFields').style.display=mode==='finish'?'block':'none';$('tripHomeButton').hidden=false;$('tripSchoolButton').hidden=false;$('tripDate').value=localInputNow();$('tripStopNote').value='';if(mode==='start'){$('tripPurpose').value='klantbezoek';$('tripClient').value='';$('tripTripNote').value=''};if(mode==='finish')$('tripDeviatingRoute').value=active?.deviating_route||'';$('tripLocationTitle').textContent='📍 Nog geen locatie vastgelegd';$('tripLocationDetail').textContent='Kies hieronder de juiste locatie.';$('tripGoogleAttrib').style.display='none';$('tripSaveButton').textContent=mode==='start'?'Registratie starten':mode==='finish'?'Ritregistratie afsluiten':'Locatie opslaan';$('tripOdoSuggestion').classList.remove('show');$('tripOdoEditor').hidden=mode!=='start';$('tripOdoStepHint').textContent=mode==='start'?'Laatste stand is vooringesteld':'Berekende stand ophalen…';initOdometerWheel('trip',DATA.current_odometer??0);if(mode!=='start')await refreshTripOdoProposal(TRIP_PROPOSAL_REQUEST);initPhysicalTrip(mode,active);openModal('tripModal');setTimeout(()=>$('physicalTripCard').scrollIntoView({block:'start'}),80)}
 let TRIP_SEARCH_TIMER=null,TRIP_ADDRESS_REQUEST=0,TRIP_ROUTE_PREVIEW_REQUEST=0,TRIP_ADDRESSES=[],TRIP_GPS=null;
 async function captureTripLocation(){clearTimeout(TRIP_SEARCH_TIMER);++TRIP_ROUTE_PREVIEW_REQUEST;let request=++TRIP_ADDRESS_REQUEST,title=$('tripLocationTitle'),detail=$('tripLocationDetail');TRIP_LOCATION=null;TRIP_GPS=null;TRIP_ADDRESSES=[];$('tripManualAddress').value='';$('tripAddressChoices').innerHTML='';title.textContent='📍 Locatie bepalen…';detail.textContent='Adressen in de buurt ophalen.';try{
  let loc=await resolveLocation();if(request!==TRIP_ADDRESS_REQUEST)return;TRIP_GPS=loc;
@@ -3109,36 +3144,61 @@ $('tripManualAddress').addEventListener('input',()=>{
 });
 $('tripManualAddress').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();searchTripManualAddress()}});
 // Physical odometer flow: proposals never own the physical input after initialization.
-let PHYSICAL_PENDING=null,PHYSICAL_BUSY=false,PHYSICAL_GENERATION=0,PHYSICAL_START=null,PHYSICAL_TRIP_ID=null;
+let PHYSICAL_PENDING=null,PHYSICAL_BUSY=false,PHYSICAL_GENERATION=0,PHYSICAL_START=null,PHYSICAL_MINIMUM=null,PHYSICAL_TRIP_ID=null;
 let PHYSICAL_SESSION=null;
 function physicalSession(){if(!PHYSICAL_SESSION)PHYSICAL_SESSION=Array.from(crypto.getRandomValues(new Uint8Array(24)),x=>x.toString(16).padStart(2,'0')).join('');return PHYSICAL_SESSION}
 function physicalNumber(raw){let s=String(raw).trim();if(/^[0-9]{1,3}(\.[0-9]{3})+$/.test(s))s=s.replaceAll('.','');if(!/^[0-9]+([.,]0)?$/.test(s))return null;let n=Number(s.replace(',','.'));return Number.isSafeInteger(n)&&n>=0&&n<=999999?n:null}
-function physicalTripChanged(){TRIP_ODO_MANUAL=true;$('physicalTripConfirmed').checked=false;cancelPhysicalCheck();renderPhysicalDistance()}
+function physicalInputValue(value){let n=physicalNumber(value);return n==null?'':n.toLocaleString('nl-NL')}
+function selectPhysicalTripValue(input){setTimeout(()=>{try{input.select?.();input.setSelectionRange?.(0,input.value.length)}catch(e){}},0)}
+function physicalTripChanged(){TRIP_ODO_MANUAL=true;$('physicalTripConfirmed').checked=false;$('physicalConfirmButton').classList.remove('confirmed');cancelPhysicalCheck();renderPhysicalDistance()}
 function physicalTripConsent(){TRIP_ODO_MANUAL=true;cancelPhysicalCheck();renderPhysicalDistance()}
-function renderPhysicalDistance(){let n=physicalNumber($('physicalTripValue').value),km=n!=null&&PHYSICAL_START!=null?n-PHYSICAL_START:null;$('physicalTripDistance').textContent=TRIP_MODE==='start'?'Deze fysieke teller wordt de startstand.':km!=null&&km>=0?'Afstand volgens teller: '+fmt(km,0)+' km':'Vul een geldige tellerstand in.'}
+function physicalDistanceKm(){let n=physicalNumber($('physicalTripValue').value);return n!=null&&PHYSICAL_START!=null?n-PHYSICAL_START:null}
+function renderPhysicalDistance(){
+  let n=physicalNumber($('physicalTripValue').value),km=physicalDistanceKm(),valid=n!=null&&(PHYSICAL_MINIMUM==null||n>=PHYSICAL_MINIMUM);
+  if(TRIP_MODE==='start')$('physicalTripDistance').innerHTML=valid?'Klaar om deze stand fysiek te bevestigen.':'Vul een geldige tellerstand in.';
+  else $('physicalTripDistance').innerHTML=valid&&km>=0?'Definitieve afstand volgens teller:<strong>'+esc(fmt(km,0))+' km</strong>':'Vul een geldige tellerstand in die niet lager is dan de vorige stand.';
+  let confirm=$('physicalConfirmButton');
+  if(!$('physicalTripConfirmed').checked)confirm.textContent=TRIP_MODE==='start'?'✓ Startstand bevestigen':TRIP_MODE==='finish'?'✓ Eindstand bevestigen':'✓ Tussenstand bevestigen';
+  if(TRIP_MODE==='finish')$('tripSaveButton').textContent=valid&&km>=0?'✓ Rit afsluiten — '+fmt(km,0)+' km':'✓ Rit afsluiten';
+}
+function confirmPhysicalTripStep(){
+  let n=physicalNumber($('physicalTripValue').value);
+  if(n==null){toast('Vul de fysieke tellerstand in hele kilometers in.',true);$('physicalTripValue').focus();return}
+  if(PHYSICAL_MINIMUM!=null&&n<PHYSICAL_MINIMUM){toast('De tellerstand mag niet lager zijn dan de vorige bevestigde stand ('+fmt(PHYSICAL_MINIMUM,0)+' km).',true);$('physicalTripValue').focus();return}
+  $('physicalTripValue').value=physicalInputValue(n);$('physicalTripConfirmed').checked=true;TRIP_ODO_MANUAL=true;cancelPhysicalCheck();
+  $('physicalConfirmButton').textContent='✓ Tellerstand bevestigd';$('physicalConfirmButton').classList.add('confirmed');
+  $('tripStepLocation').hidden=false;renderPhysicalDistance();guideTo('tripStepLocation');
+}
 function initPhysicalTrip(mode,active){
   cancelPhysicalCheck();PHYSICAL_TRIP_ID=active?.id??null;
   let sug=DATA.business?.odometer_suggestion||{};
-  PHYSICAL_START=mode==='finish'?active?.start_odometer:active?.last_odometer;
-  $('physicalStartLabel').textContent=mode==='stop'?'Teller vorige stop':'Startteller';
-  $('physicalStart').textContent=PHYSICAL_START!=null?fmt(PHYSICAL_START,0)+' km':'Bij vertrek bevestigen';
+  PHYSICAL_START=mode==='start'?null:mode==='finish'?active?.start_odometer:active?.last_odometer;
+  PHYSICAL_MINIMUM=mode==='start'?null:active?.last_odometer;
+  $('physicalModeKicker').textContent=mode==='start'?'Kilometerstand':mode==='finish'?'Rit afsluiten':'Tussenstop';
+  $('physicalTripHeading').textContent=mode==='start'?'Kilometerstand':mode==='finish'?'Werkelijke eindstand':'Kilometerstand';
+  $('physicalTripInputLabel').textContent=mode==='start'?'Startstand':mode==='finish'?'Eindstand':'Tussenstand';
+  $('physicalTripHelp').textContent=mode==='start'?'Lees de kilometerstand van je auto af.':mode==='finish'?'Controleer de kilometerstand op het dashboard van je auto.':'Lees de kilometerstand van je auto af.';
+  $('physicalStartRow').hidden=mode==='start';
+  $('physicalStartLabel').textContent=mode==='stop'?'Vorige bevestigde stand':'Startstand';
+  $('physicalStart').textContent=PHYSICAL_START!=null?fmt(PHYSICAL_START,0)+' km':'—';
   let gps=mode==='finish'?sug.gps_total_km:sug.tracked_km;
   $('physicalGps').textContent=mode==='start'?'Nog niet gestart':gps!=null&&gps>0?fmt(gps,1)+' km':'Geen volledige meting';
   $('physicalProposal').textContent=mode==='start'?'—':sug.suggested_odometer!=null?fmt(sug.suggested_odometer,0)+' km':'Niet beschikbaar';
-  $('physicalGpsWarning').textContent=mode==='start'?'':sug.gps_incomplete||sug.suggestion_reliable===false?sug.distance_warning||'GPS-route mogelijk onderbroken — controleer de tellerstand.':sug.gps_missing?'GPS ontbreekt of is niet voor de hele rit beschikbaar. Controleer de fysieke teller.':'';
-  $('physicalTripValue').value=mode==='start'?DATA.current_odometer??'':sug.suggested_odometer??'';
-  $('physicalTripConfirmed').checked=false;renderPhysicalDistance();fitPhysicalViewport();
+  $('physicalGpsWarning').textContent=mode==='start'?'':sug.gps_incomplete||sug.suggestion_reliable===false?'GPS-meting is mogelijk onvolledig. De fysieke tellerstand blijft leidend.':sug.gps_missing?'GPS ontbreekt of is niet voor de hele rit beschikbaar. De fysieke tellerstand blijft leidend.':'';
+  let proposed=mode==='start'?DATA.current_odometer:sug.suggested_odometer;
+  $('physicalTripValue').value=proposed!=null?physicalInputValue(proposed):'';
+  $('physicalTripConfirmed').checked=false;$('physicalConfirmButton').classList.remove('confirmed');$('tripStepLocation').hidden=true;$('physicalGpsDetails').open=false;renderPhysicalDistance();fitPhysicalViewport();
 }
 function cancelPhysicalCheck(){PHYSICAL_PENDING=null;++PHYSICAL_GENERATION;if($('distanceModal'))closeModal('distanceModal')}
-function physicalBusy(value){PHYSICAL_BUSY=value;for(let id of ['tripSaveButton','arrivalSave','distanceConfirm'])if($(id))$(id).disabled=value}
+function physicalBusy(value){PHYSICAL_BUSY=value;for(let id of ['tripSaveButton','arrivalSave','distanceConfirm','physicalConfirmButton'])if($(id))$(id).disabled=value}
 function showPhysicalCheck(check){
   $('distanceTitle').textContent=check.significant?'⚠️ Verschil gevonden':'⚠️ GPS controleren';
-  let lines=[];if(check.significant)lines.push('De kilometerteller wijkt af van de GPS-meting.');
-  if(check.gps_incomplete)lines.push('GPS-route mogelijk onderbroken — controleer de tellerstand.');
-  if(check.gps_missing)lines.push('GPS ontbreekt of is niet voor de hele rit beschikbaar.');
-  if(check.gps_insufficient)lines.push('Onvoldoende GPS-samples — controleer de tellerstand.');
+  let lines=[];if(check.significant)lines.push('De fysieke kilometerstand wijkt af van de GPS-meting. Controleer je tellerstand.');
+  if(check.gps_incomplete)lines.push('De GPS-route lijkt onvolledig.');
+  if(check.gps_missing)lines.push('GPS is niet voor de hele rit beschikbaar.');
+  if(check.gps_insufficient)lines.push('Er zijn onvoldoende GPS-metingen voor een volledige controle.');
   $('distanceExplanation').textContent=lines.join('\n');
-  let facts=[['GPS gemeten',check.gps_km==null?'Niet volledig beschikbaar':fmt(check.gps_km,1)+' km'],['Volgens kilometerteller',fmt(check.odometer_km,0)+' km'],['Verschil',check.difference_km==null?'Niet te bepalen':(check.difference_km>0?'+':'')+fmt(check.difference_km,1)+' km'],['Relatief',check.relative_difference==null?'Niet te bepalen':fmt(check.relative_difference*100,1)+'%'],['Startteller',fmt(check.start_odometer,0)+' km'],['Eindteller',fmt(check.end_odometer,0)+' km']];
+  let facts=[['GPS gemeten',check.gps_km==null?'Niet volledig beschikbaar':fmt(check.gps_km,1)+' km'],['Fysieke tellerafstand',fmt(check.odometer_km,0)+' km'],['Verschil',check.difference_km==null?'Niet te bepalen':(check.difference_km>0?'+':'')+fmt(check.difference_km,1)+' km'],['Relatief',check.relative_difference==null?'Niet te bepalen':fmt(check.relative_difference*100,1)+'%'],['Startteller',fmt(check.start_odometer,0)+' km'],['Eindteller',fmt(check.end_odometer,0)+' km']];
   $('distanceFacts').innerHTML=facts.map(([label,value])=>`<div><small>${esc(label)}</small><b>${esc(value)}</b></div>`).join('');
   $('distanceError').textContent='';document.activeElement?.blur();openModal('distanceModal');fitPhysicalViewport();$('distanceConfirm').focus({preventScroll:true});
 }
@@ -3155,21 +3215,34 @@ async function submitPhysical(path,payload,onSaved,token=null){
   }catch(e){$('distanceError').textContent=e.message;toast(e.message,true)}finally{physicalBusy(false)}
 }
 async function confirmPhysicalCheck(){let pending=PHYSICAL_PENDING;if(!pending||PHYSICAL_BUSY)return;await submitPhysical(pending.path,pending.payload,pending.onSaved,pending.token)}
-function fitPhysicalViewport(){let view=window.visualViewport;if(!view)return;for(let id of ['tripModal','assistantModal','distanceModal']){let modal=$(id);if(modal){modal.style.top=view.offsetTop+'px';modal.style.height=view.height+'px';modal.style.bottom='auto'}}}
+function fitPhysicalViewport(){let view=window.visualViewport;if(!view)return;for(let id of ['tripModal','assistantModal','distanceModal','tripSuccessModal']){let modal=$(id);if(modal){modal.style.top=view.offsetTop+'px';modal.style.height=view.height+'px';modal.style.bottom='auto'}}}
 if(typeof window!=='undefined'&&window.visualViewport){window.visualViewport.addEventListener('resize',fitPhysicalViewport);window.visualViewport.addEventListener('scroll',fitPhysicalViewport)}
+function successLocation(stop){return stop?.location_address||stop?.location_label||stop?.manual_label||'—'}
+function showTripSuccess(result){
+  let trip=result?.trip||{},stops=trip.stops||[],start=stops[0]||{},end=stops.at?.(-1)||stops[stops.length-1]||{};
+  $('tripSuccessStartLocation').textContent=successLocation(start);$('tripSuccessEndLocation').textContent=successLocation(end);
+  $('tripSuccessStartOdo').textContent=start.odometer!=null?fmt(start.odometer,0)+' km':'—';$('tripSuccessEndOdo').textContent=end.odometer!=null?fmt(end.odometer,0)+' km':'—';
+  $('tripSuccessDistance').textContent=trip.km!=null?fmt(trip.km,0)+' km':'—';
+  $('tripSuccessDate').textContent=[end.date_label,end.time_label].filter(Boolean).join(' · ')||(end.created_at||'—');
+  openModal('tripSuccessModal');fitPhysicalViewport();
+}
+async function newTripFromSuccess(){closeModal('tripSuccessModal');await reloadData();openTripPoint('start')}
+async function overviewFromSuccess(){closeModal('tripSuccessModal');switchView('business');await reloadData()}
 async function saveTripPoint(){
   if(PHYSICAL_BUSY)return;
-  if(!$('physicalTripConfirmed').checked){toast('Controleer en bevestig de fysieke tellerstand.',true);$('physicalTripValue').focus();return}
-  if(!TRIP_LOCATION){toast('Leg eerst de huidige locatie vast met 📍.',true);return}
+  if(!$('physicalTripConfirmed').checked){toast('Bevestig eerst de fysieke tellerstand met de grote knop.',true);$('physicalTripValue').focus();return}
+  if(!TRIP_LOCATION){toast('Leg eerst de locatie vast.',true);$('tripStepLocation').hidden=false;guideTo('tripStepLocation');return}
   if(TRIP_MODE!=='start')TRIP_SEGMENT_TYPE='business';
   let path=TRIP_MODE==='start'?'api/business/start':TRIP_MODE==='finish'?'api/business/finish':'api/business/stop';
   let payload={physical_confirmed:true,trip_id:PHYSICAL_TRIP_ID,odometer_checked:false,odometer:$('physicalTripValue').value,created_at:$('tripDate').value,latitude:TRIP_LOCATION.latitude,longitude:TRIP_LOCATION.longitude,location_accuracy:TRIP_LOCATION.accuracy??null,location_source:TRIP_LOCATION.source||'',place_id:TRIP_LOCATION.place_id||'',manual_label:TRIP_LOCATION.manual_label||'',note:$('tripStopNote').value,segment_trip_type:'business'};
   if(TRIP_MODE==='start'){payload.purpose=$('tripPurpose').value;payload.client=$('tripClient').value;payload.trip_note=$('tripTripNote').value}
   if(TRIP_MODE==='finish')payload.deviating_route=$('tripDeviatingRoute').value;
-  await submitPhysical(path,payload,async()=>{
+  let mode=TRIP_MODE;
+  await submitPhysical(path,payload,async(result)=>{
     closeModal('tripModal');
-    toast(TRIP_MODE==='start'?'Ritregistratie gestart':TRIP_MODE==='finish'?'Ritregistratie afgesloten':'Zakelijke etappe opgeslagen');
-    switchView('business');reloadData();
+    if(mode==='finish'){showTripSuccess(result);return}
+    toast(mode==='start'?'Ritregistratie gestart':'Zakelijke etappe opgeslagen');
+    switchView('business');await reloadData();
   });
 }
 function esc(s){let d=document.createElement('div');d.textContent=s||'';return d.innerHTML} function escAttr(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}

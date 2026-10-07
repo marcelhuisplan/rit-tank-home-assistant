@@ -43,6 +43,8 @@ const gps={address:'GPSstraat 7, 7461 AA Rijssen',latitude:52.31,longitude:6.52,
     await page.goto('https://rit-tank.test/');
     await page.waitForFunction(()=>typeof DATA!=='undefined');
     await page.evaluate(()=>openTripPoint('start'));
+    await page.locator('#physicalTripValue').fill('10000');
+    await page.locator('#physicalConfirmButton').click();
     const homeBtn=page.locator('#tripHomeButton'),schoolBtn=page.locator('#tripSchoolButton'),gpsBtn=page.locator('#tripCurrentLocationButton');
     await schoolBtn.scrollIntoViewIfNeeded();
     for(const locator of [homeBtn,schoolBtn,gpsBtn])assert.equal(await locator.isVisible(),true);

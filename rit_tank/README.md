@@ -1,4 +1,19 @@
-# Rit & Tank 32.00
+# Rit & Tank 33.00
+
+De ritregistratie is in release 33.00 vereenvoudigd voor iPhone en iPad: de fysieke kilometerteller staat centraal in een groot, rustig invoerveld, gevolgd door grote locatieknoppen. De fysieke teller blijft altijd de definitieve bron voor zakelijke kilometers; GPS blijft uitsluitend aanvullende informatie, controle en waarschuwing.
+
+## Vereenvoudigde mobiele ritregistratie (33.00)
+
+- Start met één groot fysiek tellerinvoerveld. De laatst bekende stand is alleen een voorstel en wordt pas betrouwbaar na de expliciete knop **✓ Startstand bevestigen**.
+- Nederlandse notatie blijft ondersteund: `25.230` en `25230` betekenen beide 25230 km; alleen hele kilometers worden opgeslagen.
+- Na bevestiging verschijnen **🏠 Thuis**, **🏫 Beatrixschool**, **📍 Gebruik huidige locatie** en de bestaande Google Places-adreszoeker.
+- Bij afsluiten staan startstand, grote werkelijke eindstand en de definitieve fysieke afstand centraal. De server berekent uitsluitend `eindstand − startstand` / de som van fysiek bevestigde etappes.
+- GPS-resultaten staan onder **GPS-informatie bekijken**. Bestaande afwijkingscontroles en de sessiegebonden eenmalige tweestapsbevestiging blijven behouden.
+- Een succesvolle ritafsluiting toont **✓ Rit vastgelegd!** met locaties, tellerstanden, definitieve afstand en datum/tijd.
+- Mobiele bediening gebruikt grote aanraakvlakken, numerieke invoer, automatische selectie van de voorgestelde stand, toetsenbordveilige vaste actieknoppen en layouts zonder horizontale overflow.
+- Tussenstops gebruiken iedere fysiek bevestigde tellerstand; dashboard, historie, vergoeding, PDF en CSV blijven gebaseerd op dezelfde opgeslagen etappes zonder dubbele optelling.
+- Bestaande adressen en veiligheidsregels blijven intact, inclusief Thuis, Beatrixschool, release-29-adresprioriteit, release-30-resetcontroles, release-31-GPS/tellercontrole en release-32-snelknoppen.
+- Historische ritten en tellerstanden worden niet automatisch gewijzigd of herberekend.
 
 De snelkeuze **🏫 Beatrixschool** gebruikt exact **Van Broekhuizenstraat 4, 7461 VW Rijssen** en staat naast **🏠 Thuis** bij de gedeelde locatiekeuze voor ritstart, tussenstop en ritafsluiting. Beide vaste adressen gebruiken dezelfde bestaande adresvalidatie en Google Places-fallback. De GPS-knop blijft over de volle breedte eronder staan. Een locatiekeuze slaat niets zelfstandig op; de fysieke kilometerteller, zakelijke-rittenregels, kilometervergoeding en historische gegevens blijven ongewijzigd.
 
@@ -67,12 +82,12 @@ iOS-achtergrondlocaties komen op wisselende momenten binnen; een stopmelding pre
 
 Gebruik je al de lokale app? Lees eerst [`DOCS.md`](DOCS.md) voor de installatie- en update-instructies. Gegevens worden niet automatisch overgezet en de meldingslinks vragen nog aanpassing aan de nieuwe appidentiteit.
 
-Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijzigingen. De volledige suite bevat 279 Python-tests (inclusief 36 release-30-tests) en JavaScript-logicatests; een installatie- en iPhone-test volgen op het doelapparaat. Iedere pull request doorloopt automatisch Python-tests, compile- en importchecks, een productie-Docker-build en runtime packaging/importvalidatie in die image.
+Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijzigingen. De volledige suite bevat de volledige Python-regressiesuite en JavaScript-logicatests; een installatie- en iPhone-test volgen op het doelapparaat. Iedere pull request doorloopt automatisch Python-tests, compile- en importchecks, een productie-Docker-build en runtime packaging/importvalidatie in die image.
 
 ## Releasebeleid
 
-- Huidige release: **32.00**.
+- Huidige release: **33.00**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
-- Volgende release: **33.00**.
+- Volgende release: **34.00**.
 - Dit is een **handmatig** releasebeleid: het versienummer (`APP_VERSION` in `app.py`, `version` in `config.yaml`, de titels in `README.md`/`DOCS.md`) wordt alleen door een expliciete, door de eigenaar aangevraagde wijziging opgehoogd. De applicatie verhoogt dit nummer nooit automatisch tijdens runtime.
