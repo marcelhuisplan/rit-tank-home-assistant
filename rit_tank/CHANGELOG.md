@@ -1,5 +1,10 @@
 # Changelog
 
+## 33.01
+
+- Onderhoudsrelease: Home Assistant add-onversie bijgewerkt zodat de reeds gemergede mobiele Tussenstop-layoutfix van PR #30 als update beschikbaar komt.
+- Geen wijzigingen aan kilometerberekening, GPS, opslag of overige functionaliteit.
+
 ## 33.00
 
 - Grote, rustige fysieke tellerinvoer voor start, tussenstop en afsluiten; expliciete knop vervangt het zichtbare bevestigingsvinkje.
