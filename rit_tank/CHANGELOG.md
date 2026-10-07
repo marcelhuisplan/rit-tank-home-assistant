@@ -1,5 +1,17 @@
 # Changelog
 
+## 33.00
+
+- Grote, rustige fysieke tellerinvoer voor start, tussenstop en afsluiten; expliciete knop vervangt het zichtbare bevestigingsvinkje.
+- Vooringevulde tellerstanden zijn alleen voorstellen. Handmatige fysieke bevestiging blijft vereist; `25.230` en `25230` worden als 25230 hele kilometers verwerkt.
+- Afsluitscherm benadrukt startstand, werkelijke eindstand en definitieve fysieke afstand. GPS staat onder een inklapbaar informatieblok en kan de fysieke stand nooit overschrijven.
+- Bestaande GPS-afwijkingscontrole en sessiegebonden eenmalige tweestapsbevestiging blijven ongewijzigd actief, met eenvoudiger waarschuwingstekst.
+- Thuis, Beatrixschool (`Van Broekhuizenstraat 4, 7461 VW Rijssen`), huidige locatie en Google Places-adreskeuze blijven dezelfde bestaande resolver- en routeketen gebruiken.
+- Na succesvolle afsluiting verschijnt een apart bevestigingsscherm met locaties, tellerstanden, afstand en datum/tijd; dubbele submit blijft client- en serverzijdig beschermd.
+- Tussenstops blijven per fysiek bevestigde tellerstand rekenen; PDF, CSV, historie en kilometervergoeding gebruiken dezelfde opgeslagen segmenten zonder herberekening van historische ritten.
+- Responsive mobiele styling voor iPhone SE, grotere iPhones en iPad, inclusief numeriek toetsenbord, automatische tekstselectie, sticky acties en bescherming tegen horizontale overflow.
+- Nieuwe release-33 server- en JavaScript-regressies voor 25.230 → 25.246 → 25.271, validatie, mobiele invoer, viewport/rotatie, bevestiging en bestaande locatieknoppen.
+
 ## 32.00
 
 - Nieuwe snelkeuze **🏫 Beatrixschool** voor `Van Broekhuizenstraat 4, 7461 VW Rijssen`, naast **🏠 Thuis** in de gedeelde ritlocatiecomponent.
