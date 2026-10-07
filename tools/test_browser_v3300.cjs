@@ -109,6 +109,30 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
       engine+' '+device+' close inside sheet');
     assert.ok(closeMetrics.left>=0&&closeMetrics.right<=closeMetrics.viewportWidth+.5&&closeMetrics.top>=0&&closeMetrics.bottom<=closeMetrics.viewportHeight+.5,
       engine+' '+device+' close inside viewport');
+
+    // Release 33.02 regression: at the very bottom, the Tussenstop close bar stays sticky and clickable.
+    await page.locator('#tripModal .sheet').evaluate(el=>{el.scrollTop=el.scrollHeight});
+    await page.waitForFunction(()=>{
+      const sheet=document.querySelector('#tripModal .sheet');
+      return sheet.scrollTop+sheet.clientHeight>=sheet.scrollHeight-1;
+    },null,{timeout:5000});
+    const stickyClose=await page.locator('#tripModal .close').evaluate(el=>{
+      const r=el.getBoundingClientRect(),sheet=el.closest('.sheet'),head=el.closest('.sheethead');
+      const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+      return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,viewportWidth:innerWidth,viewportHeight:innerHeight,
+        atBottom:sheet.scrollTop+sheet.clientHeight>=sheet.scrollHeight-1,position:getComputedStyle(head).position,
+        hit:hit===el||el.contains(hit)};
+    });
+    assert.equal(stickyClose.position,'sticky',engine+' '+device+' trip close header is sticky');
+    assert.equal(stickyClose.atBottom,true,engine+' '+device+' trip sheet scrolled fully to bottom');
+    assert.ok(stickyClose.left>=0&&stickyClose.right<=stickyClose.viewportWidth+.5&&stickyClose.top>=0&&stickyClose.bottom<=stickyClose.viewportHeight+.5,
+      engine+' '+device+' close remains visible at scroll bottom');
+    assert.equal(stickyClose.hit,true,engine+' '+device+' close remains topmost/clickable at scroll bottom');
+    await page.screenshot({path:path.join(output,engine+'-'+device+'-sticky-close-bottom.png'),fullPage:false});
+    await page.locator('#tripModal .close').click();
+    await page.locator('#tripModal').waitFor({state:'hidden'});
+    await page.evaluate(()=>openTripPoint('stop'));
+    await page.waitForFunction(()=>document.getElementById('physicalTripValue').value.length>0);
     await page.locator('#physicalGpsDetails summary').click();
     await page.locator('#physicalGpsDetails').scrollIntoViewIfNeeded();
     const stopSpacing=await page.evaluate(()=>{

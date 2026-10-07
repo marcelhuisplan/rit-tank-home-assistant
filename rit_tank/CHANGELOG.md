@@ -1,5 +1,11 @@
 # Changelog
 
+## 33.02
+
+- De bovenbalk van **Tussenstop → Kilometerstand** blijft sticky tijdens verticaal scrollen, zodat het sluitkruisje rechtsboven ook helemaal onderaan zichtbaar en aanklikbaar blijft.
+- Mobiele regressiecontrole dekt scrollen tot de bodem op iPhone SE, grote iPhone en iPad Pro 13” in Chromium en WebKit.
+- De grote kilometerinvoer en bestaande knoppen blijven behouden; kilometerberekeningen, GPS en opslag zijn ongewijzigd.
+
 ## 33.01
 
 - Onderhoudsrelease: Home Assistant add-onversie bijgewerkt zodat de reeds gemergede mobiele Tussenstop-layoutfix van PR #30 als update beschikbaar komt.
