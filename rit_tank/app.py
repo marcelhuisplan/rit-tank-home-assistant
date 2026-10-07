@@ -3149,7 +3149,7 @@ let PHYSICAL_SESSION=null;
 function physicalSession(){if(!PHYSICAL_SESSION)PHYSICAL_SESSION=Array.from(crypto.getRandomValues(new Uint8Array(24)),x=>x.toString(16).padStart(2,'0')).join('');return PHYSICAL_SESSION}
 function physicalNumber(raw){let s=String(raw).trim();if(/^[0-9]{1,3}(\.[0-9]{3})+$/.test(s))s=s.replaceAll('.','');if(!/^[0-9]+([.,]0)?$/.test(s))return null;let n=Number(s.replace(',','.'));return Number.isSafeInteger(n)&&n>=0&&n<=999999?n:null}
 function physicalInputValue(value){let n=physicalNumber(value);return n==null?'':n.toLocaleString('nl-NL')}
-function selectPhysicalTripValue(input){setTimeout(()=>{try{input.select?.();input.setSelectionRange?.(0,input.value.length)}catch(e){}},0)}
+function selectPhysicalTripValue(input){let selectAll=()=>{try{input.select?.();input.setSelectionRange?.(0,input.value.length)}catch(e){}};selectAll();setTimeout(selectAll,0);setTimeout(selectAll,12)}
 function physicalTripChanged(){TRIP_ODO_MANUAL=true;$('physicalTripConfirmed').checked=false;$('physicalConfirmButton').classList.remove('confirmed');cancelPhysicalCheck();renderPhysicalDistance()}
 function physicalTripConsent(){TRIP_ODO_MANUAL=true;cancelPhysicalCheck();renderPhysicalDistance()}
 function physicalDistanceKm(){let n=physicalNumber($('physicalTripValue').value);return n!=null&&PHYSICAL_START!=null?n-PHYSICAL_START:null}
