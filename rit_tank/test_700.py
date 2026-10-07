@@ -27,13 +27,13 @@ class Version700Tests(unittest.TestCase):
     def test_app_version_is_33_02(self):
         self.assertEqual(app.APP_VERSION, '33.02')
     
-    def test_config_yaml_version_is_33_01(self):
+    def test_config_yaml_version_is_33_02(self):
         config_path = Path(__file__).with_name('config.yaml')
         if config_path.exists():
             content = config_path.read_text()
             self.assertIn("version: '33.02'", content)
     
-    def test_readme_title_has_33_01(self):
+    def test_readme_title_has_33_02(self):
         readme_path = Path(__file__).with_name('README.md')
         if readme_path.exists():
             content = readme_path.read_text()
