@@ -154,7 +154,8 @@ class Release2400CurrentUiTests(unittest.TestCase):
         for text in (
             'id="tripHomeButton"', '🏠 Thuis', '📍 Gebruik huidige locatie',
             'Verenlandweg 4, 7461 AP Rijssen', 'async function selectTripHome()',
-            "api('api/places/home')", "api('api/business/route-preview'",
+            "selectTripFixedLocation('api/places/home'", 'async function selectTripFixedLocation(',
+            'let place=await api(path)', "api('api/business/route-preview'",
             'manual_label:label', "place_id:location.place_id||''",
         ):
             with self.subTest(text=text):
@@ -168,15 +169,15 @@ class Release2400CurrentUiTests(unittest.TestCase):
                 self.assertNotIn(text, self.html)
 
     def test_home_button_only_selects_destination_until_explicit_save(self):
-        start = self.html.index('async function selectTripHome()')
+        start = self.html.index('async function selectTripFixedLocation(')
         end = self.html.index("$('tripManualAddress').addEventListener", start)
         select_home = self.html[start:end]
-        self.assertIn("api('api/places/home')", select_home)
+        self.assertIn("selectTripFixedLocation('api/places/home'", select_home)
         self.assertIn('await confirmTripAddress', select_home)
         self.assertNotIn('saveTripPoint', select_home)
         self.assertNotIn('closeModal', select_home)
         confirm_start = self.html.index('async function confirmTripAddress(')
-        confirm_end = self.html.index('async function selectTripHome()', confirm_start)
+        confirm_end = self.html.index('async function selectTripFixedLocation(', confirm_start)
         confirm_address = self.html[confirm_start:confirm_end]
         self.assertIn("api('api/business/route-preview'", confirm_address)
         self.assertNotIn('saveTripPoint', confirm_address)
