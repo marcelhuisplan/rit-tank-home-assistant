@@ -1,4 +1,19 @@
-# Rit & Tank 32.00
+# Rit & Tank 33.00
+
+De ritregistratie is in release 33.00 vereenvoudigd voor iPhone en iPad: de fysieke kilometerteller staat centraal in een groot, rustig invoerveld, gevolgd door grote locatieknoppen. De fysieke teller blijft altijd de definitieve bron voor zakelijke kilometers; GPS blijft uitsluitend aanvullende informatie, controle en waarschuwing.
+
+## Vereenvoudigde mobiele ritregistratie (33.00)
+
+- Start met één groot fysiek tellerinvoerveld. De laatst bekende stand is alleen een voorstel en wordt pas betrouwbaar na de expliciete knop **✓ Startstand bevestigen**.
+- Nederlandse notatie blijft ondersteund: `25.230` en `25230` betekenen beide 25230 km; alleen hele kilometers worden opgeslagen.
+- Na bevestiging verschijnen **🏠 Thuis**, **🏫 Beatrixschool**, **📍 Gebruik huidige locatie** en de bestaande Google Places-adreszoeker.
+- Bij afsluiten staan startstand, grote werkelijke eindstand en de definitieve fysieke afstand centraal. De server berekent uitsluitend `eindstand − startstand` / de som van fysiek bevestigde etappes.
+- GPS-resultaten staan onder **GPS-informatie bekijken**. Bestaande afwijkingscontroles en de sessiegebonden eenmalige tweestapsbevestiging blijven behouden.
+- Een succesvolle ritafsluiting toont **✓ Rit vastgelegd!** met locaties, tellerstanden, definitieve afstand en datum/tijd.
+- Mobiele bediening gebruikt grote aanraakvlakken, numerieke invoer, automatische selectie van de voorgestelde stand, toetsenbordveilige vaste actieknoppen en layouts zonder horizontale overflow.
+- Tussenstops gebruiken iedere fysiek bevestigde tellerstand; dashboard, historie, vergoeding, PDF en CSV blijven gebaseerd op dezelfde opgeslagen etappes zonder dubbele optelling.
+- Bestaande adressen en veiligheidsregels blijven intact, inclusief Thuis, Beatrixschool, release-29-adresprioriteit, release-30-resetcontroles, release-31-GPS/tellercontrole en release-32-snelknoppen.
+- Historische ritten en tellerstanden worden niet automatisch gewijzigd of herberekend.
 
 De snelkeuze **🏫 Beatrixschool** gebruikt exact **Van Broekhuizenstraat 4, 7461 VW Rijssen** en staat naast **🏠 Thuis** bij de gedeelde locatiekeuze voor ritstart, tussenstop en ritafsluiting. Beide vaste adressen gebruiken dezelfde bestaande adresvalidatie en Google Places-fallback. De GPS-knop blijft over de volle breedte eronder staan. Een locatiekeuze slaat niets zelfstandig op; de fysieke kilometerteller, zakelijke-rittenregels, kilometervergoeding en historische gegevens blijven ongewijzigd.
 
