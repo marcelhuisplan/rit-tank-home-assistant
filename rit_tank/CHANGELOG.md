@@ -1,5 +1,11 @@
 # Changelog
 
+## 33.03
+
+- De gedeelde sluitknop van Rit starten, Tussenstop en Rit afsluiten is 56 × 56 pixels, fel mintgroen met een groot, dik, donker kruis en een toegankelijke naam.
+- De sticky bovenbalk houdt de knop bereikbaar tijdens scrollen, met vrije ruimte naast de titel.
+- De mobiele regressietest controleert afmetingen, contrast, zichtbaarheid, overlap, aanklikbaarheid en sluiten bovenaan en onderaan op iPhone SE, grote iPhone en iPad Pro 13” in Chromium en WebKit.
+
 ## 33.02
 
 - De bovenbalk van **Tussenstop → Kilometerstand** blijft sticky tijdens verticaal scrollen, zodat het sluitkruisje rechtsboven ook helemaal onderaan zichtbaar en aanklikbaar blijft.
