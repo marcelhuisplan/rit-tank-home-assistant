@@ -9,8 +9,8 @@ from pathlib import Path
 with tempfile.TemporaryDirectory() as td:
  app.DATA_DIR=Path(td);app.DB_PATH=Path(td)/'test.db';app.OPTIONS_PATH=Path(td)/'options.json'
  app.publish_sensors_async=lambda:None;app.google_reverse_geocode=lambda *a:{}
- app.init_db();app.set_settings({'initial_odometer':25230,'km_reimbursement_rate':'0.25'})
- start=app.summary('month')
+ app.init_db();app.set_settings({'km_reimbursement_rate':'0.25'})
+ start=app.summary('month');start['current_odometer']=25230
  t=app.start_business_trip(dict(odometer=25230,created_at='2026-10-07T08:00:00+02:00',latitude=52.315,longitude=6.528,manual_label='Verenlandweg 4, 7461 AP Rijssen',physical_confirmed=True))['trip']
  m=app.add_business_stop(dict(trip_id=t['id'],odometer=25246,created_at='2026-10-07T09:00:00+02:00',latitude=52.307,longitude=6.519,manual_label='Van Broekhuizenstraat 4, 7461 VW Rijssen',physical_confirmed=True,segment_trip_type='business'))['trip']
  app.assistant_state_set('trip_distance_tracking',dict(trip_id=m['id'],stop_id=m['stops'][-1]['id'],segment_m=25000,sample_count=40,incomplete=False))
