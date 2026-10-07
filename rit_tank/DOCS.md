@@ -1,4 +1,4 @@
-# Rit & Tank 33.00
+# Rit & Tank 33.01
 
 De ritregistratie is in release 33.00 vereenvoudigd voor iPhone en iPad: de fysieke kilometerteller staat centraal in een groot, rustig invoerveld, gevolgd door grote locatieknoppen. De fysieke teller blijft altijd de definitieve bron voor zakelijke kilometers; GPS blijft uitsluitend aanvullende informatie, controle en waarschuwing.
 
