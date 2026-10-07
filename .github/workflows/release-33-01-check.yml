@@ -1,4 +1,4 @@
-name: Release 33.01 one-time validation
+name: Release 33.01 final validation
 
 on:
   push:
