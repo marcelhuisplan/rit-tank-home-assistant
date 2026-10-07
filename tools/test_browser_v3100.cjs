@@ -44,7 +44,7 @@ const check={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6,relat
    await page.waitForFunction(()=>typeof DATA!=='undefined'&&DATA?.business?.active_trip);
    await page.evaluate(()=>openTripPoint('finish'));
    await page.locator('#physicalTripValue').fill('64.375');
-   await page.locator('#physicalTripConfirmed').check();
+   await page.locator('#physicalConfirmButton').click();
    await page.evaluate(()=>{void confirmTripAddress('Eindstraat 2, 1234 AC Teststad',{latitude:52.2,longitude:6})});
    for(let i=0;i<100&&!delayedRoute;i++)await page.waitForTimeout(20);
    assert.ok(delayedRoute,'Route lookup must be exercised');
@@ -52,7 +52,7 @@ const check={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6,relat
    await page.waitForFunction(()=>document.getElementById('tripLocationDetail').textContent.includes('30'));
    assert.equal(await page.locator('#physicalTripValue').inputValue(),'64.375');
    assert.equal(await page.locator('#physicalTripConfirmed').isChecked(),true);
-   assert.match(await page.locator('#physicalGpsWarning').textContent(),/onderbroken/);
+   assert.match(await page.locator('#physicalGpsWarning').textContent(),/onvolledig/);
    const overflow=await page.locator('#tripModal .sheet').evaluate(el=>el.scrollWidth>el.clientWidth+1);
    assert.equal(overflow,false,engine+' '+device+' no horizontal scroll');
    await page.locator('#physicalTripCard').scrollIntoViewIfNeeded();
@@ -68,7 +68,7 @@ const check={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6,relat
    await page.waitForFunction(expected=>Math.abs(document.getElementById('tripModal').getBoundingClientRect().height-expected)<=1,height);
    await page.locator('#tripSaveButton').click();await page.locator('#distanceModal').waitFor({state:'visible'});
    assert.match(await page.locator('#distanceFacts').textContent(),/41 km/);
-   assert.match(await page.locator('#distanceExplanation').textContent(),/onderbroken/);
+   assert.match(await page.locator('#distanceExplanation').textContent(),/onvolledig/);
    assert.equal(await page.locator('#distanceModal .sheet').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
    await page.screenshot({path:path.join(output,engine+'-'+device+'-warning.png')});
    await page.locator('#distanceBack').click();assert.equal(sent.length,1);
