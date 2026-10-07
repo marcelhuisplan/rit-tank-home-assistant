@@ -93,34 +93,6 @@ def trip_measurement(backend, trip, end):
             'gps_insufficient': any(p.get('gps_insufficient') for p in parts)}
 
 
-
-def distance_preview(backend, payload):
-    """Read-only server calculation for the physical trip/segment distance shown in the UI."""
-    if not isinstance(payload, dict):
-        raise ValueError('Ongeldige ritgegevens.')
-    end = physical_odometer(payload.get('odometer'))
-    trip = backend.active_business_trip()
-    if not trip or not trip.get('stops'):
-        raise ValueError('Er is geen actieve rit. Deze rit is mogelijk al afgesloten.')
-    if payload.get('trip_id') != trip['id']:
-        raise ValueError('De actieve rit is gewijzigd. Open de rit opnieuw.')
-    values = [float(stop['odometer']) for stop in trip['stops']]
-    if (any(not math.isfinite(value) or value < 0 or not value.is_integer() for value in values)
-            or any(b < a for a, b in zip(values, values[1:]))):
-        raise ValueError('De bestaande tellerreeks is ongeldig. Controleer eerst de opgeslagen rit.')
-    if end < values[-1]:
-        raise ValueError('De eindteller mag niet lager zijn dan de startteller of laatste tussenstop.')
-    start = int(values[0])
-    previous = int(values[-1])
-    return {
-        'start_odometer': start,
-        'previous_odometer': previous,
-        'end_odometer': end,
-        'segment_km': end - previous,
-        'trip_km': end - start,
-    }
-
-
 def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
                                     allow_nan=False).encode()).hexdigest()
