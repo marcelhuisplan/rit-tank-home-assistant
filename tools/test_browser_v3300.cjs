@@ -112,7 +112,10 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
 
     // Release 33.02 regression: at the very bottom, the Tussenstop close bar stays sticky and clickable.
     await page.locator('#tripModal .sheet').evaluate(el=>{el.scrollTop=el.scrollHeight});
-    await page.waitForTimeout(30);
+    await page.waitForFunction(()=>{
+      const sheet=document.querySelector('#tripModal .sheet');
+      return sheet.scrollTop+sheet.clientHeight>=sheet.scrollHeight-1;
+    },null,{timeout:5000});
     const stickyClose=await page.locator('#tripModal .close').evaluate(el=>{
       const r=el.getBoundingClientRect(),sheet=el.closest('.sheet'),head=el.closest('.sheethead');
       const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
