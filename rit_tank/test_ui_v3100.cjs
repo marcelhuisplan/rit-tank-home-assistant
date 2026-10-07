@@ -21,15 +21,15 @@ const run=s=>vm.runInContext(s,ctx);
   for(const s of ['64375','64.375','64375,0','64375.0'])assert.equal(ctx.physicalNumber(s),64375);
   for(const s of ['','NaN','Infinity','-1','64.37.5','64,375','64375.5','1e5'])assert.equal(ctx.physicalNumber(s),null);
   run('initPhysicalTrip(TRIP_MODE,DATA.business.active_trip)');
-  assert.equal($('physicalTripValue').value,64370);assert.equal($('physicalStart').textContent,'64.334 km');
-  assert.match($('physicalGpsWarning').textContent,/onderbroken/);
+  assert.equal($('physicalTripValue').value,'64.370');assert.equal($('physicalStart').textContent,'64.334 km');
+  assert.match($('physicalGpsWarning').textContent,/onvolledig/);
   assert.equal($('tripModal').style.height,'380px');assert.equal($('tripModal').style.top,'15px');
   // Start route lookup before manual input. Resolve it only after physical confirmation.
   const pending=run("confirmTripAddress('Teststraat 1, 1234 AB Stad',{latitude:52,longitude:6})");
   $('physicalTripValue').value='64.375';ctx.physicalTripChanged();$('physicalTripConfirmed').checked=true;ctx.physicalTripConsent();
   routeResolve({distance_m:30000,distance_source:'route',suggested_odometer:64364});await pending;
   assert.equal($('physicalTripValue').value,'64.375');assert.equal($('physicalTripConfirmed').checked,true);
-  assert.match($('physicalGpsWarning').textContent,/onderbroken/);
+  assert.match($('physicalGpsWarning').textContent,/onvolledig/);
   ctx.showTripOdoProposal({active:true,tracked_km:37,suggested_odometer:64371});
   assert.equal($('physicalTripValue').value,'64.375','Background proposals must never own physical input');
   $('physicalTripConfirmed').checked=false;await ctx.saveTripPoint();assert.equal(calls.length,0);
@@ -39,7 +39,7 @@ const run=s=>vm.runInContext(s,ctx);
   await ctx.saveTripPoint();assert.equal(calls.length,1);assert.equal(calls[0].payload.odometer,'64.375');
   assert.equal(calls[0].payload.physical_confirmed,true);assert.equal(calls[0].payload.trip_id,5);
   assert.match($('distanceFacts').innerHTML,/41 km/);assert.match($('distanceFacts').innerHTML,/\+4,6 km/);
-  assert.match($('distanceExplanation').textContent,/onderbroken/);
+  assert.match($('distanceExplanation').textContent,/onvolledig/);
   // Back/cancel and editing invalidate the saved client token; they do not POST.
   ctx.cancelPhysicalCheck();await ctx.confirmPhysicalCheck();assert.equal(calls.length,1);
   await ctx.saveTripPoint();$('physicalTripValue').value='64.376';ctx.physicalTripChanged();await ctx.confirmPhysicalCheck();assert.equal(calls.length,2);
