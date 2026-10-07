@@ -54,6 +54,53 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
       await route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
     });
 
+    // Release 33.03: the shared close button must work in every trip screen at both scroll extremes.
+    for(const mode of ['start','stop','finish']){
+      for(const atBottom of [false,true]){
+        await page.goto('https://rit-tank.test/?case='+(mode==='start'?'start':'finish'));
+        await page.waitForFunction(()=>typeof DATA!=='undefined');
+        await page.evaluate(mode=>openTripPoint(mode),mode);
+        await page.locator('#tripModal').waitFor({state:'visible'});
+        // Allow the existing delayed initial input scroll to finish before choosing an extreme.
+        await page.waitForTimeout(150);
+        await page.locator('#tripModal .sheet').evaluate((el,bottom)=>{el.scrollTop=bottom?el.scrollHeight:0},atBottom);
+        await page.waitForFunction(bottom=>{
+          const el=document.querySelector('#tripModal .sheet');
+          return bottom?el.scrollTop+el.clientHeight>=el.scrollHeight-1:el.scrollTop<=1;
+        },atBottom,{timeout:5000});
+        const close=page.getByRole('button',{name:'Sluiten',exact:true});
+        assert.equal(await close.isVisible(),true);
+        const m=await close.evaluate(el=>{
+          const r=el.getBoundingClientRect(),s=getComputedStyle(el),head=el.closest('.sheethead');
+          const title=head.querySelector('h2').getBoundingClientRect(),sheet=el.closest('.sheet').getBoundingClientRect();
+          const rgb=v=>v.match(/[\d.]+/g).slice(0,3).map(Number);
+          const luminance=v=>rgb(v).map(x=>{x/=255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4}).reduce((sum,x,i)=>sum+x*[.2126,.7152,.0722][i],0);
+          const fg=luminance(s.color),bg=luminance(s.backgroundColor);
+          const hit=(x,y)=>{const target=document.elementFromPoint(x,y);return target===el||el.contains(target)};
+          return {width:r.width,height:r.height,background:s.backgroundColor,color:s.color,
+            contrast:(Math.max(fg,bg)+.05)/(Math.min(fg,bg)+.05),fontSize:parseFloat(s.fontSize),weight:Number(s.fontWeight),opacity:s.opacity,
+            inside:r.left>=Math.max(0,sheet.left)&&r.right<=Math.min(innerWidth,sheet.right)+.5&&r.top>=Math.max(0,sheet.top)&&r.bottom<=Math.min(innerHeight,sheet.bottom)+.5,
+            gap:r.left-title.right,sticky:getComputedStyle(head).position,
+            hit:[[.5,.5],[.25,.25],[.75,.25],[.25,.75],[.75,.75]].every(([x,y])=>hit(r.left+r.width*x,r.top+r.height*y))};
+        });
+        const label=engine+' '+device+' '+mode+' '+(atBottom?'bottom':'top');
+        assert.ok(m.width>=56&&m.height>=56,label+' 56px touch target');
+        assert.equal(m.background,'rgb(80, 238, 199)',label+' bright mint');
+        assert.equal(m.color,'rgb(5, 37, 29)',label+' dark cross');
+        assert.ok(m.contrast>=7,label+' high contrast');
+        assert.ok(m.fontSize>=36&&m.weight>=900,label+' large bold cross');
+        assert.equal(m.opacity,'1',label+' opaque');
+        assert.equal(m.sticky,'sticky',label+' sticky header');
+        assert.equal(m.inside,true,label+' visible within sheet and viewport');
+        assert.ok(m.gap>=12,label+' no title overlap');
+        assert.equal(m.hit,true,label+' unobstructed touch target');
+        await page.screenshot({path:path.join(output,engine+'-'+device+'-'+mode+'-close-'+(atBottom?'bottom':'top')+'.png')});
+        await close.tap();
+        await page.locator('#tripModal').waitFor({state:'hidden'});
+        assert.equal(sent.length,0,label+' close does not save a trip');
+      }
+    }
+
     // Start: proposal is not trusted until the large explicit confirmation button is pressed.
     await page.goto('https://rit-tank.test/?case=start');
     await page.waitForFunction(()=>typeof DATA!=='undefined');
