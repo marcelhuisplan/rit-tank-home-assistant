@@ -1,5 +1,9 @@
 # Changelog
 
+## 33.01
+
+- Onderhoudsrelease: Home Assistant add-onversie verhoogd naar 33.01 zodat de bestaande release-33 hotfix als update wordt aangeboden; geen functionele wijzigingen.
+
 ## 33.00
 
 - Grote, rustige fysieke tellerinvoer voor start, tussenstop en afsluiten; expliciete knop vervangt het zichtbare bevestigingsvinkje.
