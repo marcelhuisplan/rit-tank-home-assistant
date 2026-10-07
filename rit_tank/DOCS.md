@@ -1,4 +1,14 @@
-# Rit & Tank 31.00
+# Rit & Tank 32.00
+
+De snelkeuze **🏫 Beatrixschool** gebruikt exact **Van Broekhuizenstraat 4, 7461 VW Rijssen** en staat naast **🏠 Thuis** bij de gedeelde locatiekeuze voor ritstart, tussenstop en ritafsluiting. Beide vaste adressen gebruiken dezelfde bestaande adresvalidatie en Google Places-fallback. De GPS-knop blijft over de volle breedte eronder staan. Een locatiekeuze slaat niets zelfstandig op; de fysieke kilometerteller, zakelijke-rittenregels, kilometervergoeding en historische gegevens blijven ongewijzigd.
+
+## Beatrixschool-snelkeuze (32.00)
+
+- **🏠 Thuis** en **🏫 Beatrixschool** staan als twee gelijkwaardige knoppen op de eerste rij; **📍 Gebruik huidige locatie** staat op de tweede rij over de volle breedte.
+- Beatrixschool bevestigt canoniek `Van Broekhuizenstraat 4, 7461 VW Rijssen` via dezelfde vaste-locatieketen als Thuis, zonder aparte opslag- of navigatielogica.
+- Een nieuwe vaste keuze maakt een eerdere GPS-/Places-aanvraag ongeldig; vertraagde antwoorden mogen de bewuste keuze niet terug overschrijven.
+- Het bevestigde `manual_label` blijft leidend voor historie, rapportcontrole, PDF en CSV, inclusief de release-29-bescherming tegen adresverwisseling.
+- Er is geen automatische ritopslag, ritclassificatie, wijziging van fysieke kilometerstanden, GPS-afstand of vergoeding.
 
 De fysieke kilometerteller is bij ritafsluiting de definitieve bron voor de geregistreerde afstand. GPS wordt gebruikt als hulpmiddel en afwijkingscontrole.
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 32.00
+
+- Nieuwe snelkeuze **🏫 Beatrixschool** voor `Van Broekhuizenstraat 4, 7461 VW Rijssen`, naast **🏠 Thuis** in de gedeelde ritlocatiecomponent.
+- Mobiele indeling: twee gelijke vaste knoppen op rij één en **📍 Gebruik huidige locatie** over de volle tweede rij, zonder horizontale overflow.
+- Thuis en Beatrixschool delen één vaste-locatie-resolver met bestaande bekende-plekcontrole en Google Places-fallback; geen tweede adressysteem.
+- Vertraagde GPS-, Places- en route-antwoorden kunnen een nieuwere vaste keuze niet overschrijven. Een snelkeuze selecteert alleen en slaat nooit zelfstandig een rit op.
+- Het bevestigde stopadres blijft leidend in historie, rapportcontrole, PDF en CSV; release-29-adresprioriteit blijft intact.
+- Fysieke kilometerteller, zakelijke classificatie, GPS-afstand, kilometervergoeding, historie en productiegegevens blijven functioneel en structureel ongewijzigd.
+- Nieuwe server-, JavaScript- en Chromium/WebKit-regressietests voor start, tussenstop, afsluiten, wisselen van locatie en iPhone/iPad-layout.
+
 ## 31.00
 
 - Fysieke tellerbevestiging bij start, tussenstop en afsluiten; server berekent definitieve afstand uit de tellers. Nederlandse notatie 64.375 = 64375 km.
