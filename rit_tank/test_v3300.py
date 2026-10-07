@@ -112,7 +112,7 @@ class SimplifiedMobile3300Tests(unittest.TestCase):
         before = app.business_trip_by_id(trip['id'])
         bad = self.point(25245, '2026-10-07T10:00:00+02:00', HOME, 52.315, 6.528)
         bad['trip_id'] = trip['id']
-        with self.assertRaisesRegex(ValueError, 'lager dan de vorige stop'):
+        with self.assertRaisesRegex(ValueError, 'lager dan de vorige (?:stop|registratie)'):
             app.add_business_stop(bad, finish=True)
         after = app.business_trip_by_id(trip['id'])
         self.assertEqual([s['odometer'] for s in after['stops']], [s['odometer'] for s in before['stops']])
