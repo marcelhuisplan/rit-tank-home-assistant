@@ -147,6 +147,25 @@ class ReceiptArchiveTests(unittest.TestCase):
         self.assertEqual(app.rows_events(), [])
         self.assertFalse((self.root/'receipt_archive').exists())
 
+    def test_encrypted_backup_carries_new_pdfs(self):
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        folder = self.root / 'receipt_archive'
+        folder.mkdir()
+        (folder / 'persisted.pdf').write_bytes(b'%PDF-1.4\\n%%EOF')
+        password = 'test-password-long-enough'
+        backup = app._encrypted_backup_file(password)
+        encrypted = backup.read_bytes()
+        self.assertEqual(encrypted[:8], b'RITTANK1')
+        salt, nonce = encrypted[8:24], encrypted[24:36]
+        key = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt,
+                         iterations=310000).derive(password.encode('utf-8'))
+        raw = AESGCM(key).decrypt(nonce, encrypted[36:], b'RIT_TANK_BACKUP_V1')
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            self.assertIn('receipt_archive/persisted.pdf', z.namelist())
+            self.assertEqual(z.read('receipt_archive/persisted.pdf'), b'%PDF-1.4\\n%%EOF')
+
     def test_route_not_public_without_ingress_or_session(self):
         for endpoint in ['/api/receipt-archive', '/api/receipt-archive/export.zip',
                          '/api/receipt-archive/1']:
