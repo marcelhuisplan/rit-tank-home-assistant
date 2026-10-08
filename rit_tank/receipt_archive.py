@@ -157,7 +157,8 @@ def recognize_filename_fields(text: str) -> dict[str, str]:
     brands = ('totalenergies', 'shell', 'texaco', 'esso', 'tango', 'tinq',
               'avia', 'argos', 'gulf', 'q8', 'bp', 'ok tankstation')
     for line in lines:
-        compact = re.sub(r'(?<=\d)\s+(?=\d)', '', line)
+        compact = re.sub(r'(?<!\d)(?:\d\s+)+\d(?!\d)',
+                         lambda match: re.sub(r'\s+', '', match.group()), line)
         compact = re.sub(r'\s*([-/\.])\s*', r'\1', compact)
         for match in re.finditer(r'\b(20\d\d)[-/](\d{1,2})[-/](\d{1,2})\b', compact):
             try:
