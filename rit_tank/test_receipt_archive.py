@@ -141,8 +141,9 @@ class ReceiptArchiveTests(unittest.TestCase):
                     'data:image/png;base64,ZmFrZQ=='):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 archive.decode_file({'data_url': url})
-        with self.assertRaises(ValueError):
-            archive.prepare([], app.db().__enter__())
+        with app.db() as con:
+            with self.assertRaises(ValueError):
+                archive.prepare([], con)
         self.assertEqual(app.rows_events(), [])
         self.assertFalse((self.root/'receipt_archive').exists())
 
