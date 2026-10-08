@@ -48,7 +48,7 @@ class ReceiptArchiveTests(unittest.TestCase):
 
     def test_photo_becomes_readable_pdf_with_only_filename_fields(self):
         result = self.prepare()
-        self.assertEqual(result['suggested_filename'], '2026-10-05_Shell_Rijssen_52,34.pdf')
+        self.assertEqual(result['suggested_filename'], '2026-10-05_Shell_Rijssen_52-34.pdf')
         self.assertEqual(result['recognized'], {
             'date': '2026-10-05', 'station': 'Shell', 'place': 'Rijssen', 'total': '52,34'})
         self.assertFalse(any(x in result['recognized'] for x in
@@ -56,6 +56,59 @@ class ReceiptArchiveTests(unittest.TestCase):
         raw = archive.decode_pdf(result['pdf_data_url'])
         self.assertTrue(raw.startswith(b'%PDF-'))
         self.assertGreater(len(raw), 1000)
+
+    def test_tango_maarsbergen_receipt_and_ocr_spacing(self):
+        samples = (
+            'Tango Maarsbergen\nWoudenbergseweg 44\n3953 MH Maarsbergen\n'
+            'Datum 10-09-2019 09:57\nTOTAAL € 63.80\n',
+            'T a n g o Maarsbergen\n3 9 5 3 M H M a a r s b e r g e n\n'
+            'Da tum 1 0 - 0 9 - 2 0 1 9 09:57\nTO TAAL € 6 3 . 8 0\n',
+            'Tango Maarsbergen\n3953 M H Maarsbergen\n'
+            'Datum 10-G9-2019 09:57\nTOTAAL € 63.80\n',
+        )
+        for sample in samples:
+            with self.subTest(sample=sample):
+                fields = archive.recognize_filename_fields(sample)
+                self.assertEqual(fields, {'date': '2019-09-10', 'station': 'Tango',
+                                          'place': 'Maarsbergen', 'total': '63,80'})
+                self.assertEqual(archive.suggested_filename(fields),
+                                 '2019-09-10_Tango_Maarsbergen_63-80.pdf')
+
+    def test_ocr_conflicts_and_illegible_figures_stay_unknown(self):
+        fields = archive.recognize_filename_fields(
+            'Tango\n3953 MH Maarsbergen\n'
+            'Datum 10-09-2019\nDatum 19-09-2019\n'
+            'TOTAAL € 63.80\nTOTAAL € 63.88')
+        self.assertEqual(fields['date'], '')
+        self.assertEqual(fields['total'], '')
+        self.assertEqual(fields['station'], 'Tango')
+        self.assertEqual(fields['place'], 'Maarsbergen')
+        invalid = archive.recognize_filename_fields(
+            'Tango\nDatum 10-49-2019\nTOTAAL € 63.8?\n')
+        self.assertEqual(invalid['date'], '')
+        self.assertEqual(invalid['total'], '')
+
+    def test_ocr_preprocessing_upscales_narrow_scans(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'narrow.png'
+            Image.new('L', (350, 700), 'white').save(path)
+            seen = []
+            def fake_run(command, timeout=15):
+                with Image.open(command[1]) as image:
+                    seen.append((image.size, set(image.getdata()), command[4]))
+                return type('Result', (), {'returncode': 0,
+                                           'stdout': b'Tango\n10-G9-2019\nTOTAAL 63.80'})()
+            with patch.object(archive, '_run', side_effect=fake_run):
+                self.ocr.stop()  # This test needs the real OCR preprocessing.
+                try:
+                    text = archive._ocr(path)
+                finally:
+                    self.ocr.start()
+            self.assertIn('Tango', text)
+            self.assertEqual(len(seen), 1)
+            self.assertGreaterEqual(seen[0][0][0], 1400)
+            self.assertTrue(seen[0][1] <= {0, 255})
+            self.assertEqual(seen[0][2], 'eng')
 
     def test_unknown_ocr_values_are_not_invented(self):
         fields = archive.recognize_filename_fields('30,10 L\n1,899 per liter\nBetaald\n')
@@ -177,7 +230,7 @@ class ReceiptArchiveTests(unittest.TestCase):
         self.assertEqual(post.status, 426)
 
     def test_ui_has_archive_and_no_auto_fuel_scanning(self):
-        self.assertEqual(app.APP_VERSION, '33.06')
+        self.assertEqual(app.APP_VERSION, '33.07')
         self.assertIn('onclick="openReceiptArchive()"', app.APP_HTML)
         self.assertIn('receipt-archive.js', app.APP_HTML)
         self.assertNotIn('receipt_data_url=await readReceiptFile()', app.APP_HTML)

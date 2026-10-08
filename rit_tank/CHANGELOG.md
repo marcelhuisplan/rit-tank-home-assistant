@@ -1,5 +1,9 @@
 # Changelog
 
+## 33.07
+
+- Betere OCR van de bestandsnaam van tankbonnen: vergrote zwart-witvoorbewerking, Tango-bonnen met slashed-zero-datums en OCR-spatiefouten in postcode/plaats, en bedragen met een koppelteken als decimaalscheiding. Bij onduidelijke gegevens blijft de bestandsnaam aanpasbaar; geen wijziging aan opgeslagen bonnen of tank-/ritregistraties.
+
 ## 33.06
 
 - Zelfstandig tankbonnenarchief met iPhone-foto/afbeelding/PDF-upload, scan naar A4-PDF, beperkte herkenning voor controleerbare bestandsnamen, dubbelebonwaarschuwing, zoeken, bekijken, downloaden en ZIP-export. Opslag in blijvende /data; historische foto-bonnen blijven intact en beschikbaar. Geen automatische tankvelden.
