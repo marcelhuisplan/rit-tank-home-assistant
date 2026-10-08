@@ -76,6 +76,67 @@ class HistoricalFuelTests(unittest.TestCase):
         self.assertEqual(after['latest_full_cycle']['liters'], 15)
         self.assertEqual(after['latest_full_cycle']['l100'], 15)
 
+    def test_historical_conflict_requires_explicit_confirmation_and_preserves_current_odometer(self):
+        self.seed()
+        with app.db() as con:
+            cur = con.execute(
+                "INSERT INTO events(created_at,type,odometer) "
+                "VALUES('2026-10-05T11:00:00+02:00','odometer',24763)"
+            )
+            previous_id = cur.lastrowid
+        payload = self.fuel(odometer=24553, created_at='2026-10-05T11:30:00+02:00')
+        current = app.summary()['current_odometer']
+
+        with self.assertRaises(app.FuelKilometerConflict) as pending:
+            app.add_fuel(payload)
+        conflict = pending.exception
+        self.assertEqual(conflict.conflicts[0]['direction'], 'eerdere')
+        self.assertEqual(conflict.conflicts[0]['id'], previous_id)
+        self.assertEqual(conflict.conflicts[0]['odometer'], 24763)
+        self.assertIn('2026-10-05T11:00', conflict.conflicts[0]['created_at'])
+        self.assertEqual(app.summary()['current_odometer'], current)
+        self.assertFalse(any(r.get('kilometer_conflict') for r in app.rows_events()))
+
+        with self.assertRaises(app.FuelKilometerConflict):
+            app.add_fuel({**payload, 'confirm_kilometer_conflict': True,
+                          'conflict_confirmation_key': 'outdated'})
+        saved = app.add_fuel({**payload, 'confirm_kilometer_conflict': True,
+                              'conflict_confirmation_key': conflict.confirmation_key})
+        self.assertTrue(saved['kilometer_conflict'])
+        self.assertEqual(app.summary()['current_odometer'], current)
+        rows = app.rows_events()
+        disputed = next(r for r in rows if r['id'] == saved['id'])
+        self.assertEqual(disputed['kilometer_conflict'], 1)
+        self.assertTrue(disputed['distance_unreliable'])
+        self.assertEqual(disputed['delta_km'], 0)
+        next_row = rows[rows.index(disputed) + 1]
+        self.assertEqual(next_row['delta_km'], 0)
+        self.assertIsNone(app.summary()['latest_full_cycle'])
+        self.assertEqual(next(x for x in app.summary()['recent'] if x['id'] == saved['id'])['kilometer_conflict'], 1)
+        with self.assertRaisesRegex(ValueError, 'bestaat al'):
+            app.add_fuel({**payload, 'confirm_kilometer_conflict': True,
+                          'conflict_confirmation_key': conflict.confirmation_key})
+
+    def test_later_conflict_and_nonhistorical_conflict_remain_guarded(self):
+        self.seed()
+        payload = self.fuel(odometer=24601, created_at='2026-10-05T13:00:00+02:00')
+        with self.assertRaises(app.FuelKilometerConflict) as pending:
+            app.add_fuel(payload)
+        self.assertEqual(pending.exception.conflicts[0]['direction'], 'latere')
+        self.assertEqual(pending.exception.conflicts[0]['odometer'], 24600)
+        with self.assertRaisesRegex(ValueError, 'lager dan de vorige registratie'):
+            app.add_fuel(self.fuel(odometer=24400, created_at='2026-10-07T11:00:00+02:00'))
+
+    def test_invalid_values_cannot_be_bypassed_by_confirmation(self):
+        self.seed()
+        payload = self.fuel()
+        for bad in ({'odometer': float('nan')}, {'liters': float('inf')},
+                    {'price_per_liter': float('nan')}, {'liters': 0},
+                    {'price_per_liter': 11}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                app.add_fuel({**payload, **bad, 'confirm_kilometer_conflict': True,
+                              'conflict_confirmation_key': 'arbitrary'})
+
     def test_current_fuel_entry_still_advances_current_odometer(self):
         self.seed()
         result = app.add_fuel(self.fuel(
