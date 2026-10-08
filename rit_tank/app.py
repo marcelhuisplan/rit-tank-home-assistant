@@ -1241,6 +1241,11 @@ def _encrypted_backup_file(password: str) -> Path:
                 for receipt in RECEIPT_DIR.iterdir():
                     if receipt.is_file():
                         archive.write(receipt, f'receipts/{receipt.name}')
+            persistent_archive = DATA_DIR / 'receipt_archive'
+            if persistent_archive.exists():
+                for receipt_pdf in persistent_archive.glob('*.pdf'):
+                    if receipt_pdf.is_file():
+                        archive.write(receipt_pdf, f'receipt_archive/{receipt_pdf.name}')
             archive.writestr('backup.json', json.dumps({
                 'app': 'Rit & Tank', 'version': APP_VERSION, 'created_at': iso_local(), 'format': 1,
             }, ensure_ascii=False, indent=2))
@@ -2104,7 +2109,7 @@ def business_trips_for_period(period: str) -> list[dict[str, Any]]:
     return trips.business_trips_for_period(period, dependencies=_trips_dependencies())
 
 try:
-    from . import pdf_report, report_validation
+    from . import pdf_report, report_validation, receipt_archive
 except ImportError:
     import pdf_report
     import receipt_archive
