@@ -1,5 +1,11 @@
 # Changelog
 
+## 33.05
+
+- Historische tankbonnen met een chronologisch kilometerconflict tonen de eerdere of latere registratie met datum, tijd en tellerstand en vereisen een expliciete, aan die controle gekoppelde bevestiging.
+- Bevestigde tankbonnen krijgen een blijvende kilometerconflict-markering. De actuele kilometerstand blijft ongewijzigd; onbetrouwbare afstandsdelen en volledige-tankverbruikscycli tellen niet mee.
+- Dubbele tankbonnen, ongeldige invoer, actuele tellerstanden en administratieve startgrenzen blijven strikt gecontroleerd.
+
 ## 33.04
 
 - Rit starten, Tussenstop en Rit afsluiten begrenzen het scrollbare ritvenster opnieuw onder de iPhone-safe-area, zodat de sticky mintgroene sluitknop niet meer onder de bovenrand kan verdwijnen.
