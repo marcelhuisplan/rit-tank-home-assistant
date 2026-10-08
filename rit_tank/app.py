@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.05'
+APP_VERSION = '33.06'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -363,6 +363,7 @@ def init_db() -> None:
             created_at TEXT NOT NULL
         );
         ''')
+        receipt_archive.init_schema(con)
         # V2 database migration. Existing V1 data remains untouched.
         cols = {r['name'] for r in con.execute('PRAGMA table_info(events)')}
         for col, sql_type in (
@@ -1240,6 +1241,11 @@ def _encrypted_backup_file(password: str) -> Path:
                 for receipt in RECEIPT_DIR.iterdir():
                     if receipt.is_file():
                         archive.write(receipt, f'receipts/{receipt.name}')
+            persistent_archive = DATA_DIR / 'receipt_archive'
+            if persistent_archive.exists():
+                for receipt_pdf in persistent_archive.glob('*.pdf'):
+                    if receipt_pdf.is_file():
+                        archive.write(receipt_pdf, f'receipt_archive/{receipt_pdf.name}')
             archive.writestr('backup.json', json.dumps({
                 'app': 'Rit & Tank', 'version': APP_VERSION, 'created_at': iso_local(), 'format': 1,
             }, ensure_ascii=False, indent=2))
@@ -2103,9 +2109,10 @@ def business_trips_for_period(period: str) -> list[dict[str, Any]]:
     return trips.business_trips_for_period(period, dependencies=_trips_dependencies())
 
 try:
-    from . import pdf_report, report_validation
+    from . import pdf_report, report_validation, receipt_archive
 except ImportError:
     import pdf_report
+    import receipt_archive
     import report_validation
 
 _pdf_text = pdf_report._pdf_text
@@ -2541,9 +2548,11 @@ def json_response(handler: BaseHTTPRequestHandler, payload: Any, status: int = 2
     handler.wfile.write(data)
 
 
-def read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
+def read_json(handler: BaseHTTPRequestHandler, max_bytes: int = 12 * 1024 * 1024) -> dict[str, Any]:
     try:
-        length = max(0, min(int(handler.headers.get('Content-Length', '0') or 0), 12 * 1024 * 1024))
+        length = int(handler.headers.get('Content-Length', '0') or 0)
+        if length < 0 or length > max_bytes:
+            raise ValueError('Upload is te groot.')
     except Exception:
         length = 0
     raw = handler.rfile.read(length) if length else b'{}'
@@ -2820,7 +2829,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 <div class="modal" id="pdfModal"><div class="sheet"><div class="pdf-toolbar"><div class="sheethead"><h2>PDF-ritregistratie</h2><button class="linkbtn" onclick="closePdfPreview()">Sluiten ✕</button></div><div class="settings-actions"><button class="linkbtn" id="pdfShare" onclick="sharePdf()" disabled>Delen / andere app</button><button class="linkbtn" id="pdfPrint" onclick="printPdfPreview()" disabled>Afdrukken</button><a class="linkbtn" id="pdfDownload" hidden>Download PDF</a><button class="linkbtn" id="pdfDrive" onclick="archivePdf()" disabled>Google Drive</button></div><p id="pdfStatus" role="status">PDF voorbereiden…</p></div><div id="pdfPages" aria-label="Voorbeeld rittenregistratie"></div></div></div>
 
 <div class="modal" id="fuelModal"><div class="sheet" id="fuelSheet"><div class="grab"></div><div class="sheethead"><h2>⛽ Tankbeurt</h2><button class="close" onclick="closeModal('fuelModal')">✕</button></div>
-  <div class="guide-section" id="fuelStepScan"><label class="scan-card" for="fuelReceipt"><span aria-hidden="true">📷</span><b>Tankbon scannen</b></label><input id="fuelReceipt" type="file" accept="image/*" capture="environment"><p id="receiptScanStatus" role="status"></p></div>
+  <div class="guide-section" id="fuelStepScan"><button type="button" class="scan-card" onclick="openReceiptArchive()">📷 <b>Tankbon scannen</b></button><p>Bon apart bewaren als PDF; vult geen tankgegevens in.</p><button type="button" class="linkbtn" onclick="openReceiptArchive()">🗂️ Bonnenarchief</button></div>
   <input id="fuelOdo" type="hidden">
   <div class="guide-section active" id="fuelStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small>Scroll de cijfers</small></div><div class="odo-wheelbox" id="fuelOdoWheels"></div><div class="odo-live"><b id="fuelOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="fuelOdoLast"></div><button class="guide-next" type="button" onclick="guideTo('fuelStepDate')">Kilometerstand staat goed →</button></div>
   <div class="guide-section guide-date" id="fuelStepDate"><div class="guide-head"><span class="step-badge">2</span><b>Datum & tijd</b><small>Staat standaard op nu</small></div><div class="field" style="margin-top:0"><input id="fuelDate" type="datetime-local"></div><button class="guide-next" type="button" onclick="guideTo('fuelStepLiters')">Verder naar liters →</button></div>
@@ -3420,7 +3429,7 @@ function rememberFuelPrice(){let value=fuelValues().price;if(!Number.isFinite(va
 function initFuelWheels(liters=null,price=null){let last=DATA.latest_fuel||{},L=Math.max(0,Math.min(25000,Math.round(Number(liters??last.liters??40)*100))),P=Math.max(0,Math.min(5999,Math.round(Number(price??preferredFuelPrice())*1000))),upd=(changed=false)=>{updateFuelTotal();if(changed)rememberFuelPrice()};createWheel('literWhole',Array.from({length:251},(_,i)=>i),Math.floor(L/100),upd);createWheel('literDec',Array.from({length:10},(_,i)=>i),Math.floor(L/10)%10,upd);createWheel('literDec2',Array.from({length:10},(_,i)=>i),L%10,upd);createWheel('priceWhole',Array.from({length:6},(_,i)=>i),Math.floor(P/1000),upd);createWheel('priceD1',Array.from({length:10},(_,i)=>i),Math.floor(P/100)%10,upd);createWheel('priceD2',Array.from({length:10},(_,i)=>i),Math.floor(P/10)%10,upd);createWheel('priceD3',Array.from({length:10},(_,i)=>i),P%10,upd);updateFuelTotal()}
 function fuelValues(){let liters=Number(wheelVal('literWhole')||0)+Number(wheelVal('literDec')||0)/10+Number(wheelVal('literDec2')||0)/100,price=Number(wheelVal('priceWhole')||0)+Number(wheelVal('priceD1')||0)/10+Number(wheelVal('priceD2')||0)/100+Number(wheelVal('priceD3')||0)/1000;return{liters:Number(liters.toFixed(2)),price:Number(price.toFixed(3))}}
 function updateFuelTotal(){if(!DATA)return;let v=fuelValues();$('fuelTotal').textContent=`${DATA.settings.currency} ${fmt(v.liters*v.price,2)}`}
-function openFuel(){clearFuelConflictWarning();++RECEIPT_REQUEST;RECEIPT_SCANNING=false;$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];$('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelReceipt').value='';$('receiptScanStatus').textContent='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';$('stations').innerHTML=(DATA.recent_stations||[]).map(s=>`<option value="${escAttr(s)}">`).join('');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');initOdometerWheel('fuel',DATA.current_odometer??0);initFuelWheels();openModal('fuelModal');setTimeout(()=>guideTo('fuelStepScan',0),80)}
+function openFuel(){clearFuelConflictWarning();$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];$('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';$('stations').innerHTML=(DATA.recent_stations||[]).map(s=>`<option value="${escAttr(s)}">`).join('');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');initOdometerWheel('fuel',DATA.current_odometer??0);initFuelWheels();openModal('fuelModal');setTimeout(()=>guideTo('fuelStepScan',0),80)}
 $('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
 function setLocationStatus(msg,kind=''){$('locationStatus').textContent=msg;$('locationStatus').className='location-status '+kind}
 function browserLocation(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Browser-GPS wordt hier niet ondersteund.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser'}),e=>reject(new Error(e.message||'Locatie niet beschikbaar.')),{enableHighAccuracy:true,timeout:9000,maximumAge:30000})})}
@@ -3430,20 +3439,6 @@ async function resolveLocation(){try{return await browserLocation()}catch(first)
 async function findStations(){setLocationStatus('📍 Huidige locatie bepalen...');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';try{let loc=await resolveLocation();FUEL_LOCATION=loc;setLocationStatus(`Locatie gevonden${loc.accuracy?` · ±${Math.round(loc.accuracy)} m`:''}. Tankstations zoeken...`,'ok');let r=await api('api/places/nearby',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:loc.latitude,longitude:loc.longitude})});PLACE_RESULTS=r.places||[];renderPlaceChoices();setLocationStatus(`${PLACE_RESULTS.length} tankstation${PLACE_RESULTS.length===1?'':'s'} gevonden binnen ${r.radius_m} m.`,'ok')}catch(e){setLocationStatus(e.message,'err');toast(e.message,true)}}
 function renderPlaceChoices(){let box=$('stationResults');box.innerHTML='';PLACE_RESULTS.forEach((p,i)=>{let b=document.createElement('button');b.type='button';b.className='station-choice';b.onclick=()=>selectPlace(i);let dist=p.distance_m==null?'':` · ${p.distance_m<1000?p.distance_m+' m':fmt(p.distance_m/1000,1)+' km'}`;b.innerHTML=`<b>${esc(p.name)}${dist}</b><small>${esc(p.address||'')}</small>`;box.appendChild(b)});$('googleAttrib').style.display=PLACE_RESULTS.length?'block':'none'}
 function selectPlace(i){let p=PLACE_RESULTS[i];if(!p)return;FUEL_PLACE=p;$('fuelStation').value=p.name;$('stationResults').innerHTML='';$('googleAttrib').style.display='block';setLocationStatus(`✓ ${p.name} geselecteerd`,'ok');guideTo('fuelStepFinish',350)}
-function readReceiptFile(){return new Promise((resolve,reject)=>{let f=$('fuelReceipt')?.files?.[0];if(!f)return resolve('');if(f.size>7*1024*1024)return reject(new Error('Tankbon is groter dan 7 MB.'));let r=new FileReader();r.onload=()=>resolve(String(r.result||''));r.onerror=()=>reject(new Error('Tankbon kon niet worden gelezen.'));r.readAsDataURL(f)})}
-function receiptScanImage(){return new Promise((resolve,reject)=>{let file=$('fuelReceipt')?.files?.[0];if(!file)return resolve('');let url=URL.createObjectURL(file),img=new Image();img.onload=()=>{try{let scale=Math.min(1,1800/Math.max(img.naturalWidth,img.naturalHeight)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));let ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);URL.revokeObjectURL(url);resolve(canvas.toDataURL('image/jpeg',.88))}catch(e){URL.revokeObjectURL(url);reject(e)}};img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Foto kon niet worden voorbereid.'))};img.src=url})}
-let RECEIPT_REQUEST=0,RECEIPT_SCANNING=false;
-async function scanSelectedReceipt(){let status=$('receiptScanStatus'),file=$('fuelReceipt')?.files?.[0];if(!file)return;let request=++RECEIPT_REQUEST;RECEIPT_SCANNING=true;$('fuelSaveButton').disabled=true;status.textContent='Bon lokaal analyseren…';status.style.color='var(--teal)';try{
- let image=await receiptScanImage(),r=await api('api/receipt/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_data_url:image})});if(request!==RECEIPT_REQUEST)return;let x=r.receipt||{},current=fuelValues(),found=[];
- if(x.liters!=null||x.price_per_liter!=null)initFuelWheels(x.liters??current.liters,x.price_per_liter??current.price);
- if(x.price_per_liter!=null)rememberFuelPrice();
- if(x.station){FUEL_PLACE=null;$('fuelStation').value=x.station}
- if(x.date){let value=$('fuelDate').value,time=value.includes('T')?value.split('T')[1]:'12:00';$('fuelDate').value=`${x.date}T${time}`}
- if(x.liters!=null)found.push(`${fmt(x.liters,2)} L`);if(x.price_per_liter!=null)found.push(`${DATA.settings.currency} ${fmt(x.price_per_liter,3)}/L`);if(x.total!=null)found.push(`bonbedrag ${money(x.total)}`);
- let missing=[];if(x.liters==null)missing.push('liters');if(x.price_per_liter==null)missing.push('literprijs');
- status.textContent=(found.length?'Ingevuld: '+found.join(' · ')+'. ':'')+(missing.length?'Niet herkend: '+missing.join(' en ')+'. Vul deze zelf in.':'Controleer de waarden vóór opslaan.');status.style.color=missing.length?'var(--orange)':'var(--teal)';toast(missing.length?'Controleer de bon: niet alle waarden zijn herkend.':'Liters en literprijs ingevuld');
- }catch(e){if(request===RECEIPT_REQUEST){status.textContent=e.message+' Je kunt alles handmatig invullen.';status.style.color='var(--orange)'}}finally{if(request===RECEIPT_REQUEST){RECEIPT_SCANNING=false;$('fuelSaveButton').disabled=false}}}
-$('fuelReceipt').addEventListener('change',scanSelectedReceipt);
 let FUEL_CONFLICT_PAYLOAD=null;
 function clearFuelConflictWarning(){FUEL_CONFLICT_PAYLOAD=null;let panel=$('fuelConflictWarning');if(panel)panel.hidden=true}
 function showFuelConflictWarning(error,payload){
@@ -3470,7 +3465,6 @@ async function submitFuel(payload){
  }
 }
 async function saveFuel(){
- if(RECEIPT_SCANNING){toast('Wacht tot de bon is gescand.',true);return}
  clearFuelConflictWarning();
  let v=fuelValues(),payload={
   odometer:$('fuelOdo').value,created_at:$('fuelDate').value,liters:v.liters,price_per_liter:v.price,
@@ -3479,8 +3473,7 @@ async function saveFuel(){
   location_accuracy:FUEL_LOCATION?.accuracy??null,location_source:FUEL_LOCATION?.source||'',
   full_tank:$('fuelFull').checked,note:$('fuelNote').value
  };
- try{payload.receipt_data_url=await readReceiptFile();await submitFuel(payload)}
- catch(error){toast(error.message,true)}
+ await submitFuel(payload)
 }
 async function saveFuelConfirmed(){
  if(!FUEL_CONFLICT_PAYLOAD)return;
@@ -3588,6 +3581,7 @@ async function refreshActiveTripLiveStatus(){if(document.hidden||LIVE_TRIP_REFRE
 setInterval(refreshActiveTripLiveStatus,5000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshVisibleDashboard();refreshActiveTripLiveStatus()}});
 </script>
+<script src="receipt-archive.js"></script>
 </body></html>'''
 
 
@@ -3731,6 +3725,15 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if path == '/receipt-archive.js':
+            data = Path(__file__).with_name('receipt_archive.js').read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/javascript; charset=utf-8')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == '/service-worker.js':
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript; charset=utf-8')
@@ -3768,6 +3771,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._auth_status()
         if not self._authorize_api():
             return
+        if path == '/api/receipt-archive':
+            with DB_LOCK, db() as con:
+                return json_response(self, {'receipts': receipt_archive.archive_rows(con)})
+        if path == '/api/receipt-archive/export.zip':
+            return self.export_receipt_archive()
+        archive_id = re.fullmatch(r'/api/receipt-archive/(legacy-\d+|\d+)', path)
+        if archive_id:
+            return self.serve_archive_entry(archive_id.group(1),
+                                            (q.get('download') or ['0'])[0] == '1')
         if path == '/api/summary':
             period = (q.get('period') or ['month'])[0]
             return json_response(self, summary(period))
@@ -3878,8 +3890,10 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 # Never send/log raw database errors, addresses, payloads or secrets.
                 return json_response(self, {'error': 'Administratie wissen mislukt. Herstart de add-on voor herstel.'}, 500)
-        payload = read_json(self)
         try:
+            payload = read_json(self, 27 * 1024 * 1024
+                                if path in ('/api/receipt-archive/prepare', '/api/receipt-archive/save')
+                                else 12 * 1024 * 1024)
             physical_routes = {'/api/business/start': 'start', '/api/trips/start': 'start',
                                '/api/business/stop': 'stop', '/api/trips/location': 'stop',
                                '/api/business/finish': 'finish', '/api/trips/finish': 'finish'}
@@ -3943,6 +3957,21 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {'ok': True})
             if path == '/api/assistant/sync-zones':
                 return json_response(self, sync_all_known_place_zones())
+            if path == '/api/receipt-archive/prepare':
+                with DB_LOCK, db() as con:
+                    return json_response(self, receipt_archive.prepare(payload.get('files'), con))
+            if path == '/api/receipt-archive/save':
+                with DB_LOCK, db() as con:
+                    result = receipt_archive.save(
+                        con, DATA_DIR / 'receipt_archive',
+                        str(payload.get('pdf_data_url') or ''),
+                        str(payload.get('filename') or ''),
+                        payload.get('confirm_duplicate') is True)
+                if result.get('confirmation_required'):
+                    return json_response(self, {
+                        'error': 'Mogelijk dubbele bon. Controleer en bevestig expliciet.',
+                        'code': 'RECEIPT_DUPLICATE', 'duplicates': result['duplicates']}, 409)
+                return json_response(self, result, 201)
             if path == '/api/receipt/scan':
                 return json_response(self, {'receipt': scan_receipt(str(payload.get('image_data_url') or ''))})
             if path == '/api/backup/pdf':
@@ -4049,6 +4078,42 @@ class Handler(BaseHTTPRequestHandler):
             return json_response(self, {'ok': True})
         except Exception:
             return json_response(self, {'error': 'Verwijderen mislukt.'}, 500)
+
+    def serve_archive_entry(self, entry_id: str, download: bool = False) -> None:
+        try:
+            with DB_LOCK, db() as con:
+                path, filename = receipt_archive.entry(
+                    con, DATA_DIR / 'receipt_archive', RECEIPT_DIR, entry_id)
+            data = path.read_bytes()
+        except (FileNotFoundError, OSError):
+            return json_response(self, {'error': 'Tankbon niet gevonden.'}, 404)
+        ctype = {'.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                 '.png': 'image/png', '.webp': 'image/webp',
+                 '.heic': 'image/heic', '.heif': 'image/heif'}.get(path.suffix.lower(),
+                                                               'application/octet-stream')
+        self.send_response(200)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Disposition', ('attachment' if download else 'inline')
+                         + "; filename*=UTF-8''" + quote(filename))
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def export_receipt_archive(self) -> None:
+        try:
+            with DB_LOCK, db() as con:
+                data = receipt_archive.export_zip(con, DATA_DIR / 'receipt_archive', RECEIPT_DIR)
+        except (FileNotFoundError, OSError):
+            return json_response(self, {'error': 'Een archiefbestand ontbreekt. Niets verwijderd.'}, 409)
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/zip')
+        self.send_header('Content-Disposition', 'attachment; filename="tankbonnenarchief.zip"')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(data)
 
     def serve_receipt(self, event_id: int) -> None:
         with DB_LOCK, db() as con:

@@ -14,7 +14,7 @@ const flush=()=>{while(frames.length)frames.shift()();for(const f of timers.valu
 section('function createWheel(', 'function initOdometerWheel(');
 single('initFuelWheels');single('fuelValues');single('updateFuelTotal');
 ctx.LAST_FUEL_PRICE=null;single('preferredFuelPrice');single('rememberFuelPrice');
-section('async function scanSelectedReceipt(', "$('fuelReceipt').addEventListener");
+assert(!script.includes('scanSelectedReceipt('));
 single('savedLocationFallback');single('migrateLocationFallback');single('loadLocationEntities');
 (async()=>{
  ctx.initFuelWheels();flush();
@@ -22,16 +22,10 @@ single('savedLocationFallback');single('migrateLocationFallback');single('loadLo
  ctx.initFuelWheels(32.45,1.9996);flush();oldWheel.select(2);
  assert.equal(ctx.fuelValues().liters,32.45);assert.equal(ctx.fuelValues().price,2);
  ctx.initFuelWheels(41.99,2.009);flush();assert.equal(ctx.fuelValues().liters,41.99);
- get('fuelReceipt').files=[{}];get('fuelDate').value='2026-09-19T12:00';
- ctx.api=async()=>({receipt:{liters:28.75,station:'New station'}});
- await ctx.scanSelectedReceipt();flush();assert.equal(ctx.fuelValues().liters,28.75);assert.equal(ctx.fuelValues().price,2.009);assert.equal(ctx.FUEL_PLACE,null);
- assert(get('receiptScanStatus').textContent.includes('Niet herkend: literprijs'));
- // A later scan wins even if an earlier response arrives last.
- let pending=[];ctx.api=()=>new Promise(resolve=>pending.push(resolve));
- let first=ctx.scanSelectedReceipt();await new Promise(setImmediate);let second=ctx.scanSelectedReceipt();await new Promise(setImmediate);
- pending[1]({receipt:{liters:55.25,price_per_liter:1.889}});await second;flush();
- pending[0]({receipt:{liters:10,price_per_liter:2.999}});await first;flush();
- assert.equal(ctx.fuelValues().liters,55.25);assert.equal(ctx.fuelValues().price,1.889);
+ assert(html.includes('onclick="openReceiptArchive()"'));
+ assert(!script.includes('receipt_data_url=await readReceiptFile()'));
+ assert.equal(ctx.fuelValues().liters,41.99);
+ assert.equal(ctx.fuelValues().price,2.009);
  let saved;ctx.api=async(p,o)=>{saved=JSON.parse(o.body);return {ok:true}};
  await ctx.migrateLocationFallback();assert.equal(saved.location_fallback_entity,'device_tracker.old');
  ctx.DATA.settings.location_fallback_entity='device_tracker.persisted';ctx.api=async()=>{throw Error('HA unavailable')};
@@ -41,7 +35,7 @@ single('savedLocationFallback');single('migrateLocationFallback');single('loadLo
  ctx.PDF_EXPORT={file:{name:'test.pdf'}};let shared;ctx.navigator={share:async x=>{shared=x}};
  single('sharePdf');await ctx.sharePdf();assert.equal(shared.files[0].name,'test.pdf');
  assert(html.indexOf('id="fuelStepScan"')<html.indexOf('id="fuelStepOdo"'));
- // 5.0.8: remember actual selections, but explicit scan values take priority.
+ // Remember physical selections without external OCR changes.
  let remembered={};ctx.localStorage={getItem:k=>remembered[k]??null,setItem:(k,v)=>remembered[k]=v};
  ctx.wheels.priceD3.select(5,true);flush();let chosen=ctx.fuelValues().price;
  ctx.initFuelWheels();flush();assert.equal(ctx.fuelValues().price,chosen);
@@ -67,6 +61,6 @@ single('savedLocationFallback');single('migrateLocationFallback');single('loadLo
  get('tripSaveButton').closest=selector=>selector==='.modal'?modal:sheet;
  get('tripSaveButton').getBoundingClientRect=()=>({top:500});ctx.GUIDE_TIMER=null;
  single('guideTo');ctx.guideTo('tripSaveButton',0);flush();assert.equal(sheet.result,476);
- console.log('PASS: wheel races/rounding, repeated/partial/stale OCR responses, fallback migration/outage/clear, prepared PDF share.');
- console.log('PASS 5.0.8: price memory and OCR priority, scanner placement, single-row liters, default purpose and immediate sheet scrolling.');
+ console.log('PASS: wheel races/rounding, PDF-only archive, no automatic fuel fields, fallback migration/outage/clear.');
+ console.log('PASS: price memory, scanner placement, single-row liters and sheet scrolling.');
 })().catch(e=>{console.error(e);process.exitCode=1});

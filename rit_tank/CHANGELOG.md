@@ -1,5 +1,9 @@
 # Changelog
 
+## 33.06
+
+- Zelfstandig tankbonnenarchief met iPhone-foto/afbeelding/PDF-upload, scan naar A4-PDF, beperkte herkenning voor controleerbare bestandsnamen, dubbelebonwaarschuwing, zoeken, bekijken, downloaden en ZIP-export. Opslag in blijvende /data; historische foto-bonnen blijven intact en beschikbaar. Geen automatische tankvelden.
+
 ## 33.05
 
 - Historische tankbonnen met een chronologisch kilometerconflict tonen de eerdere of latere registratie met datum, tijd en tellerstand en vereisen een expliciete, aan die controle gekoppelde bevestiging.

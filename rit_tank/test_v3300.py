@@ -50,7 +50,7 @@ class SimplifiedMobile3300Tests(unittest.TestCase):
         }
 
     def test_01_release_and_mobile_contract_present(self):
-        self.assertEqual(app.APP_VERSION, '33.05')
+        self.assertEqual(app.APP_VERSION, '33.06')
         html = app.APP_HTML
         for text in [
             'id="physicalTripValue"', 'inputmode="numeric"',
@@ -125,10 +125,10 @@ class SimplifiedMobile3300Tests(unittest.TestCase):
 
     def test_06_version_files_are_consistent(self):
         root = Path(__file__).parent
-        self.assertIn("version: '33.05'", (root / 'config.yaml').read_text(encoding='utf-8'))
-        self.assertTrue((root / 'README.md').read_text(encoding='utf-8').startswith('# Rit & Tank 33.05'))
-        self.assertTrue((root / 'DOCS.md').read_text(encoding='utf-8').startswith('# Rit & Tank 33.05'))
-        self.assertTrue((root / 'CHANGELOG.md').read_text(encoding='utf-8').startswith('# Changelog\n\n## 33.05'))
+        self.assertIn("version: '33.06'", (root / 'config.yaml').read_text(encoding='utf-8'))
+        self.assertTrue((root / 'README.md').read_text(encoding='utf-8').startswith('# Rit & Tank 33.06'))
+        self.assertTrue((root / 'DOCS.md').read_text(encoding='utf-8').startswith('# Rit & Tank 33.06'))
+        self.assertTrue((root / 'CHANGELOG.md').read_text(encoding='utf-8').startswith('# Changelog\n\n## 33.06'))
 
 
 if __name__ == '__main__':
