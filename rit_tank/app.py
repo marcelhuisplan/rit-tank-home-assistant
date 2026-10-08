@@ -2107,7 +2107,7 @@ try:
     from . import pdf_report, report_validation
 except ImportError:
     import pdf_report
-import receipt_archive
+    import receipt_archive
     import report_validation
 
 _pdf_text = pdf_report._pdf_text
@@ -3771,7 +3771,7 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {'receipts': receipt_archive.archive_rows(con)})
         if path == '/api/receipt-archive/export.zip':
             return self.export_receipt_archive()
-        archive_id = re.fullmatch(r'/api/receipt-archive/(legacy-\\d+|\\d+)', path)
+        archive_id = re.fullmatch(r'/api/receipt-archive/(legacy-\d+|\d+)', path)
         if archive_id:
             return self.serve_archive_entry(archive_id.group(1),
                                             (q.get('download') or ['0'])[0] == '1')
