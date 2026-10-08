@@ -33,9 +33,15 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
  for(const [engine,type] of Object.entries({chromium,webkit})){
   const browser=await type.launch({headless:true});
   try{
-   for(const [device,width,height] of [['iphone-se',375,667],['iphone-large',430,932],['ipad-pro-13',1032,1376]]){
+   for(const [device,width,height,safeTop,safeBottom] of [['iphone-se',375,667,20,0],['iphone-15-pro',393,852,59,34],['ipad-pro-13',1032,1376,24,20]]){
     const context=await browser.newContext({viewport:{width,height},isMobile:true,hasTouch:true,deviceScaleFactor:2,serviceWorkers:'block'});
     const page=await context.newPage(),errors=[],sent=[];let current=start;
+    await page.addInitScript(({top,bottom})=>{
+      addEventListener('DOMContentLoaded',()=>{
+        const modal=document.getElementById('tripModal');
+        if(modal){modal.style.setProperty('--trip-safe-top',top+'px');modal.style.setProperty('--trip-safe-bottom',bottom+'px')}
+      },{once:true});
+    },{top:safeTop,bottom:safeBottom});
     page.on('pageerror',e=>errors.push(e.message));
     await page.route('**/*',async route=>{
       const u=new URL(route.request().url());let data={};
@@ -54,7 +60,7 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
       await route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
     });
 
-    // Release 33.03: the shared close button must work in every trip screen at both scroll extremes.
+    // Release 33.04: the shared close button must stay inside the safe viewport in every trip screen at both scroll extremes.
     for(const mode of ['start','stop','finish']){
       for(const atBottom of [false,true]){
         await page.goto('https://rit-tank.test/?case='+(mode==='start'?'start':'finish'));
@@ -72,7 +78,8 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
         assert.equal(await close.isVisible(),true);
         const m=await close.evaluate(el=>{
           const r=el.getBoundingClientRect(),s=getComputedStyle(el),head=el.closest('.sheethead');
-          const title=head.querySelector('h2').getBoundingClientRect(),sheet=el.closest('.sheet').getBoundingClientRect();
+          const title=head.querySelector('h2').getBoundingClientRect(),sheet=el.closest('.sheet').getBoundingClientRect(),modal=el.closest('#tripModal'),ms=getComputedStyle(modal);
+          const safeTop=parseFloat(ms.getPropertyValue('--trip-safe-top'))||0,safeBottom=parseFloat(ms.getPropertyValue('--trip-safe-bottom'))||0;
           const rgb=v=>v.match(/[\d.]+/g).slice(0,3).map(Number);
           const luminance=v=>rgb(v).map(x=>{x/=255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4}).reduce((sum,x,i)=>sum+x*[.2126,.7152,.0722][i],0);
           const fg=luminance(s.color),bg=luminance(s.backgroundColor);
@@ -80,6 +87,8 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
           return {width:r.width,height:r.height,background:s.backgroundColor,color:s.color,
             contrast:(Math.max(fg,bg)+.05)/(Math.min(fg,bg)+.05),fontSize:parseFloat(s.fontSize),weight:Number(s.fontWeight),opacity:s.opacity,
             inside:r.left>=Math.max(0,sheet.left)&&r.right<=Math.min(innerWidth,sheet.right)+.5&&r.top>=Math.max(0,sheet.top)&&r.bottom<=Math.min(innerHeight,sheet.bottom)+.5,
+            safeViewport:r.top>=safeTop-.5&&r.bottom<=innerHeight-safeBottom+.5,
+            sheetSafeTop:sheet.top>=safeTop-.5,sheetHeight:sheet.height,maxSheetHeight:innerHeight-safeTop-12,
             gap:r.left-title.right,sticky:getComputedStyle(head).position,
             hit:[[.5,.5],[.25,.25],[.75,.25],[.25,.75],[.75,.75]].every(([x,y])=>hit(r.left+r.width*x,r.top+r.height*y))};
         });
@@ -92,6 +101,9 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
         assert.equal(m.opacity,'1',label+' opaque');
         assert.equal(m.sticky,'sticky',label+' sticky header');
         assert.equal(m.inside,true,label+' visible within sheet and viewport');
+        assert.equal(m.safeViewport,true,label+' clear of top/bottom safe area');
+        assert.equal(m.sheetSafeTop,true,label+' trip sheet begins below top safe area');
+        assert.ok(m.sheetHeight<=m.maxSheetHeight+1,label+' trip sheet height respects top safe area');
         assert.ok(m.gap>=12,label+' no title overlap');
         assert.equal(m.hit,true,label+' unobstructed touch target');
         await page.screenshot({path:path.join(output,engine+'-'+device+'-'+mode+'-close-'+(atBottom?'bottom':'top')+'.png')});
