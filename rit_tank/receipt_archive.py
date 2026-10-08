@@ -87,9 +87,25 @@ def pdf_details(raw: bytes) -> tuple[int, str]:
 
 
 def _ocr(image: Path) -> str:
-    result = _run(['tesseract', str(image), 'stdout', '-l', 'nld+eng', '--psm', '6'], timeout=25)
+    """Upscale narrow thermal receipts and binarize text for OCR only."""
+    from PIL import Image, ImageOps
+    with Image.open(image) as source:
+        gray = ImageOps.autocontrast(ImageOps.grayscale(source), cutoff=1)
+        scale = min(4, max(1, (1400 + gray.width - 1) // gray.width))
+        if scale > 1:
+            gray = gray.resize((gray.width * scale, gray.height * scale),
+                               Image.Resampling.BICUBIC)
+        mono = gray.point(lambda value: 0 if value < 172 else 255)
+        with tempfile.TemporaryDirectory(prefix='rit_receipt_ocr_') as folder:
+            prepared = Path(folder) / 'ocr.png'
+            mono.save(prepared)
+            result = _run(['tesseract', str(prepared), 'stdout', '-l', 'eng',
+                           '--psm', '6'], timeout=25)
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.decode('utf-8', errors='replace')
+    result = _run(['tesseract', str(image), 'stdout', '-l', 'nld+eng',
+                   '--psm', '6'], timeout=25)
     return result.stdout.decode('utf-8', errors='replace') if result.returncode == 0 else ''
-
 
 def images_to_pdf(images: list[bytes]) -> tuple[bytes, str]:
     from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
@@ -105,16 +121,21 @@ def images_to_pdf(images: list[bytes]) -> tuple[bytes, str]:
             except (UnidentifiedImageError, OSError):
                 raise ValueError('De foto is beschadigd of niet leesbaar.') from None
             image = ImageOps.autocontrast(ImageOps.grayscale(image), cutoff=1)
+            if index == 0:
+                ocr_image = image.copy()
+                try:
+                    ocr_image.thumbnail((1550, 2190), Image.Resampling.LANCZOS)
+                    with tempfile.TemporaryDirectory(prefix='rit_receipt_') as folder:
+                        temp_path = Path(folder) / 'ocr.png'
+                        ocr_image.save(temp_path)
+                        text = _ocr(temp_path)
+                finally:
+                    ocr_image.close()
             image = image.filter(ImageFilter.UnsharpMask(radius=1.1, percent=105, threshold=3))
             image.thumbnail((1550, 2190), Image.Resampling.LANCZOS)
             page = Image.new('RGB', (1654, 2339), 'white')
             page.paste(image.convert('RGB'), ((1654 - image.width)//2, (2339-image.height)//2))
             pages.append(page)
-            if index == 0:
-                with tempfile.TemporaryDirectory(prefix='rit_receipt_') as folder:
-                    temp_path = Path(folder) / 'ocr.png'
-                    image.save(temp_path)
-                    text = _ocr(temp_path)
         output = io.BytesIO()
         pages[0].save(output, format='PDF', save_all=True, append_images=pages[1:],
                       resolution=150.0, title='Tankbon')
@@ -130,38 +151,52 @@ def _unique(values: list[str]) -> str:
 
 
 def recognize_filename_fields(text: str) -> dict[str, str]:
-    """Conservative OCR: no inferred prices, liters or mileage."""
+    """Recognize explicit receipt data only, never infer uncertain digits."""
     lines = [re.sub(r'\s+', ' ', x).strip() for x in text.splitlines() if x.strip()]
     dates, totals, places, stations = [], [], [], []
     brands = ('totalenergies', 'shell', 'texaco', 'esso', 'tango', 'tinq',
               'avia', 'argos', 'gulf', 'q8', 'bp', 'ok tankstation')
     for line in lines:
-        for match in re.finditer(r'\b(20\d\d)[-/](\d{1,2})[-/](\d{1,2})\b', line):
+        compact = re.sub(r'(?<=\d)\s+(?=\d)', '', line)
+        compact = re.sub(r'\s*([-/\.])\s*', r'\1', compact)
+        for match in re.finditer(r'\b(20\d\d)[-/](\d{1,2})[-/](\d{1,2})\b', compact):
             try:
                 dates.append(datetime(*map(int, match.groups())).date().isoformat())
             except ValueError:
                 pass
-        for match in re.finditer(r'\b(\d{1,2})[-/.](\d{1,2})[-/.](20\d\d)\b', line):
+        # Slashed zeros can resemble G, O or @; normalize only inside date tokens.
+        for match in re.finditer(r'(?<!\w)([0-9OG@]{1,2})[-/.]([0-9OG@]{1,2})[-/.](20\d\d)(?!\w)',
+                                 compact, re.I):
             try:
-                d, m, y = map(int, match.groups())
-                dates.append(datetime(y, m, d).date().isoformat())
+                d, m, y = (part.upper().replace('O', '0').replace('G', '0')
+                           .replace('@', '0') for part in match.groups())
+                dates.append(datetime(int(y), int(m), int(d)).date().isoformat())
             except ValueError:
                 pass
-        if re.search(r'\b(?:eindtotaal|totaal|total|te betalen|betaald bedrag)\b', line, re.I):
-            prices = re.findall(r'(?<!\d)(\d{1,4}[.,]\d{2})(?!\d)', line)
+        if re.search(r'\b(?:eindtotaal|t\s*o\s*t\s*a\s*a\s*l|total|te betalen|betaald bedrag)\b',
+                     line, re.I):
+            money = re.sub(r'(?<=\d)\s+(?=\d)', '', line)
+            money = re.sub(r'\s*([.,])\s*', r'\1', money)
+            prices = re.findall(r'(?<!\d)(\d{1,4}[.,]\d{2})(?!\d)', money)
             if len(prices) == 1:
                 totals.append(prices[0].replace('.', ','))
-        explicit = re.search(r'\b(?:plaats|vestiging|locatie)\s*:\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ \-]{2,40})$', line, re.I)
-        postal = re.search(r'\b\d{4}\s?[A-Z]{2}\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ \-]{2,35})$', line)
+        explicit = re.search(r'\b(?:plaats|vestiging|locatie)\s*:\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ \-]{2,40})$',
+                             line, re.I)
+        postal = re.search(r'(?<!\w)(?:\d\s*){4}(?:[A-Z]\s*){2}\s+'
+                           r'([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ \-]{2,35})$', line, re.I)
         if explicit or postal:
-            places.append((explicit or postal).group(1).strip())
+            place = (explicit or postal).group(1).strip()
+            if re.fullmatch(r'(?:[A-Za-zÀ-ÿ]\s+){3,}[A-Za-zÀ-ÿ]', place):
+                place = place.replace(' ', '')
+            places.append(place)
     for line in lines[:8]:
-        match = next((brand for brand in brands if re.search(r'(?<![a-z])'+re.escape(brand)+r'(?![a-z])', line.casefold())), None)
+        match = next((brand for brand in brands
+                      if re.search(r'(?<![a-z])' + r'\s*'.join(map(re.escape, brand))
+                                   + r'(?![a-z])', line.casefold())), None)
         if match:
             stations.append(match.upper() if match in ('bp', 'q8', 'ok tankstation') else match.title())
     return {'date': _unique(dates), 'station': _unique(stations),
             'place': _unique(places), 'total': _unique(totals)}
-
 
 def _part(value: str, fallback: str) -> str:
     value = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode('ascii')
@@ -174,7 +209,7 @@ def suggested_filename(fields: dict[str, str]) -> str:
         fields.get('date') or 'Datum-onbekend',
         _part(fields.get('station', ''), 'Tankstation-onbekend'),
         _part(fields.get('place', ''), 'Plaats-onbekend'),
-        _part(fields.get('total', ''), 'Bedrag-onbekend')
+        _part((fields.get('total') or '').replace(',', '-').replace('.', '-'), 'Bedrag-onbekend')
     ]) + '.pdf'
 
 
