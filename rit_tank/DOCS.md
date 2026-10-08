@@ -1,4 +1,4 @@
-# Rit & Tank 33.05
+# Rit & Tank 33.06
 
 De ritregistratie is in release 33.00 vereenvoudigd voor iPhone en iPad: de fysieke kilometerteller staat centraal in een groot, rustig invoerveld, gevolgd door grote locatieknoppen. De fysieke teller blijft altijd de definitieve bron voor zakelijke kilometers; GPS blijft uitsluitend aanvullende informatie, controle en waarschuwing.
 
@@ -402,3 +402,9 @@ Kies PDF of Ritten CSV, maand/jaar en periode. De controle start automatisch. Co
 `GET /api/business/validate?period=month&year=2026&month=9` levert status, samenvatting en issues. Dezelfde parameters gelden voor PDF en CSV. Bij fouten antwoorden exportendpoints met 422; bij waarschuwingen zonder `allow_warnings=true` met 409. Ook `/api/business/pdf-preview` en de PDF-alias zijn beschermd.
 
 Afstandswaarschuwing: absoluut verschil minimaal 3 km én minimaal 25% van de grootste van ritafstand/tellerverschil. In de huidige opgeslagen ritdata is de etappeafstand afgeleid van de tellerstanden; de helper vergelijkt de aangeleverde rapportafstand zonder extra routeberekening. Ontbrekende onafhankelijke GPS-/routeafstanden worden overgeslagen. Tijden worden alleen vergeleken als beide geldig en onderling vergelijkbaar zijn; >180 km/u is een waarschuwing. Duplicaten vereisen exact dezelfde starttijd, adressen, begin-/eindstand en afstand; er wordt niets verwijderd.
+
+## Los PDF-tankbonnenarchief (33.06)
+
+De bestaande knop **Tankbon scannen** opent het zelfstandige bonnenarchief. Maak een iPhone-foto, selecteer tot vier afbeeldingen voor een meervoudige PDF of upload een bestaande PDF. Foto's worden op een witte A4-pagina geplaatst, gedraaid volgens EXIF en voor leesbaarheid aangescherpt. De server ondersteunt JPEG/PNG/WebP; iOS zet ondersteunde andere afbeeldingen in de browser om naar JPEG. PDF's mogen maximaal 30 pagina's bevatten. De namen volgen indien herkend het patroon `JJJJ-MM-DD_Tankstation_Plaats_Bedrag.pdf`. OCR geeft uitsluitend die vier naamgegevens terug. Ontbrekende of tegenstrijdige waarden blijven gemarkeerd als onbekend en zijn vóór opslaan aan te passen. Bij identieke PDF-inhoud of naam volgt een dubbelebonwaarschuwing met verplichte expliciete bevestiging.
+
+Nieuwe PDF's en index leven onder `/data/receipt_archive` respectievelijk in de bestaande `/data/rit_tank.db`; de oorspronkelijke bonbestanden in `/data/receipts` blijven onaangeroerd. Bestaande bonnen zijn in het archief te bekijken en worden als originele bestanden opgenomen in de ZIP-export onder `bestaande_bonnen/`. Er vindt geen koppeling of automatische overdracht plaats naar kilometerstand, liters, literprijs, datum van tankregistraties of ritten. Voeg voor extra zekerheid een externe ZIP-kopie toe aan de reguliere Home Assistant back-up.
