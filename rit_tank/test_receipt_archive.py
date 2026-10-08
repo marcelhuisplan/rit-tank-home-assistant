@@ -99,7 +99,11 @@ class ReceiptArchiveTests(unittest.TestCase):
                 return type('Result', (), {'returncode': 0,
                                            'stdout': b'Tango\n10-G9-2019\nTOTAAL 63.80'})()
             with patch.object(archive, '_run', side_effect=fake_run):
-                text = archive._ocr(path)
+                self.ocr.stop()  # This test needs the real OCR preprocessing.
+                try:
+                    text = archive._ocr(path)
+                finally:
+                    self.ocr.start()
             self.assertIn('Tango', text)
             self.assertEqual(len(seen), 1)
             self.assertGreaterEqual(seen[0][0][0], 1400)
