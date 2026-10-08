@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.04'
+APP_VERSION = '33.05'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -373,7 +373,8 @@ def init_db() -> None:
             ('location_source', 'TEXT'),
             ('source_kind', 'TEXT'),
             ('business_trip_stop_id', 'INTEGER'),
-            ('receipt_path', 'TEXT')
+            ('receipt_path', 'TEXT'),
+            ('kilometer_conflict', 'INTEGER NOT NULL DEFAULT 0')
         ):
             if col not in cols:
                 con.execute(f'ALTER TABLE events ADD COLUMN {col} {sql_type}')
@@ -994,9 +995,15 @@ def rows_events() -> list[dict[str, Any]]:
     prev = None
     for row in rows:
         odo = float(row['odometer'])
-        row['delta_km'] = max(0.0, odo - prev) if prev is not None else 0.0
+        unreliable = bool(row.get('kilometer_conflict')) or (
+            prev is not None and (
+                bool(prev.get('kilometer_conflict')) or odo < float(prev['odometer'])
+            )
+        )
+        row['distance_unreliable'] = unreliable
+        row['delta_km'] = (odo - float(prev['odometer'])) if prev is not None and not unreliable else 0.0
         row['cost'] = (float(row['liters'] or 0) * float(row['price_per_liter'] or 0)) if row['type'] == 'fuel' else 0.0
-        prev = odo
+        prev = row
     return rows
 
 
@@ -1025,33 +1032,69 @@ def validate_odometer(created_at: str, odometer: float, ignore_id: int | None = 
     return True, ''
 
 
-def validate_fuel_odometer(created_at: str, odometer: float) -> tuple[bool, str]:
-    """Validate a fuel entry at its chronological position, including same-minute events."""
+class FuelKilometerConflict(ValueError):
+    """A historical receipt needs a conscious, snapshot-bound override."""
+
+    def __init__(self, conflicts: list[dict[str, Any]], confirmation_key: str):
+        self.conflicts = conflicts
+        self.confirmation_key = confirmation_key
+        explanation = ' '.join(item['message'] for item in conflicts)
+        super().__init__(explanation + ' Bevestig het kilometerconflict om deze historische tankbon op te slaan.')
+
+
+def _fuel_odometer_hard_error(created_at: str, odometer: float) -> str:
     if not math.isfinite(odometer) or odometer < 0:
-        return False, 'Vul een geldige kilometerstand in.'
+        return 'Vul een geldige kilometerstand in.'
     settings = get_settings()
     started = settings.get('administration_started_at')
     if started and (parse_dt(created_at) < parse_dt(started) or
                     odometer < float(settings['administration_baseline'])):
-        return False, 'Deze registratie ligt vóór het startpunt van de nieuwe administratie.'
+        return 'Deze registratie ligt vóór het startpunt van de nieuwe administratie.'
+    return ''
+
+
+def _fuel_kilometer_conflicts(con: sqlite3.Connection, created_at: str, odometer: float) -> list[dict[str, Any]]:
+    """Compare only reliable immediate chronological neighbors, including same-minute entries."""
+    prev = con.execute(
+        """SELECT id,created_at,type,odometer FROM events
+           WHERE COALESCE(kilometer_conflict,0)=0
+           AND (created_at < ? OR (created_at = ? AND odometer <= ?))
+           ORDER BY created_at DESC, odometer DESC, id DESC LIMIT 1""",
+        (created_at, created_at, odometer),
+    ).fetchone()
+    nxt = con.execute(
+        """SELECT id,created_at,type,odometer FROM events
+           WHERE COALESCE(kilometer_conflict,0)=0
+           AND (created_at > ? OR (created_at = ? AND odometer >= ?))
+           ORDER BY created_at ASC, odometer ASC, id ASC LIMIT 1""",
+        (created_at, created_at, odometer),
+    ).fetchone()
+    conflicts: list[dict[str, Any]] = []
+    for direction, row, invalid in (
+        ('eerdere', prev, prev is not None and odometer < float(prev['odometer'])),
+        ('latere', nxt, nxt is not None and odometer > float(nxt['odometer'])),
+    ):
+        if not invalid:
+            continue
+        km = float(row['odometer'])
+        message = (f'Kilometerstand is lager dan de vorige registratie ({km:.0f} km).'
+                   if direction == 'eerdere'
+                   else f'Kilometerstand is hoger dan een latere registratie ({km:.0f} km).')
+        conflicts.append({
+            'direction': direction, 'id': int(row['id']), 'type': row['type'],
+            'created_at': row['created_at'], 'odometer': km, 'message': message,
+        })
+    return conflicts
+
+
+def validate_fuel_odometer(created_at: str, odometer: float) -> tuple[bool, str]:
+    """Keep normal validation strict; only add_fuel can accept confirmed historical conflicts."""
+    hard_error = _fuel_odometer_hard_error(created_at, odometer)
+    if hard_error:
+        return False, hard_error
     with DB_LOCK, db() as con:
-        prev = con.execute(
-            '''SELECT odometer FROM events
-               WHERE created_at < ? OR (created_at = ? AND odometer <= ?)
-               ORDER BY created_at DESC, odometer DESC, id DESC LIMIT 1''',
-            (created_at, created_at, odometer),
-        ).fetchone()
-        nxt = con.execute(
-            '''SELECT odometer FROM events
-               WHERE created_at > ? OR (created_at = ? AND odometer >= ?)
-               ORDER BY created_at ASC, odometer ASC, id ASC LIMIT 1''',
-            (created_at, created_at, odometer),
-        ).fetchone()
-    if prev and odometer < float(prev['odometer']):
-        return False, f'Kilometerstand is lager dan de vorige registratie ({float(prev["odometer"]):.0f} km).'
-    if nxt and odometer > float(nxt['odometer']):
-        return False, f'Kilometerstand is hoger dan een latere registratie ({float(nxt["odometer"]):.0f} km).'
-    return True, ''
+        conflicts = _fuel_kilometer_conflicts(con, created_at, odometer)
+    return (False, conflicts[0]['message']) if conflicts else (True, '')
 
 
 def add_odometer(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1077,17 +1120,13 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
     odo = to_float(payload.get('odometer'))
     liters = to_float(payload.get('liters'))
     price = to_float(payload.get('price_per_liter'))
-    if odo is None or odo < 0:
+    if odo is None or not math.isfinite(odo) or odo < 0:
         raise ValueError('Vul een geldige kilometerstand in.')
-    if liters is None or liters <= 0 or liters > 250:
+    if liters is None or not math.isfinite(liters) or liters <= 0 or liters > 250:
         raise ValueError('Vul een geldig aantal liters in.')
-    if price is None or price <= 0 or price > 10:
+    if price is None or not math.isfinite(price) or price <= 0 or price > 10:
         raise ValueError('Vul een geldige prijs per liter in.')
-    dt = parse_dt(payload.get('created_at'))
-    created = iso_local(dt)
-    ok, msg = validate_fuel_odometer(created, odo)
-    if not ok:
-        raise ValueError(msg)
+    created = iso_local(parse_dt(payload.get('created_at')))
     station = str(payload.get('station') or '').strip()[:100]
     place_id = str(payload.get('place_id') or '').strip()[:255]
     lat = to_float(payload.get('latitude'))
@@ -1100,32 +1139,56 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
         lon = None
     note = str(payload.get('note') or '').strip()[:200]
     full_tank = 1 if bool(payload.get('full_tank', True)) else 0
+
     with DB_LOCK, db() as con:
+        hard_error = _fuel_odometer_hard_error(created, odo)
+        if hard_error:
+            raise ValueError(hard_error)
         duplicate = con.execute(
-            '''SELECT id FROM events
+            """SELECT id FROM events
                WHERE type='fuel' AND created_at=? AND odometer=? AND liters=? AND price_per_liter=?
-               LIMIT 1''',
+               LIMIT 1""",
             (created, odo, liters, price),
         ).fetchone()
         if duplicate:
             raise ValueError('Deze tankbeurt bestaat al.')
-        cur = con.execute('''
+
+        conflicts = _fuel_kilometer_conflicts(con, created, odo)
+        latest = con.execute('SELECT created_at FROM events ORDER BY created_at DESC LIMIT 1').fetchone()
+        historical = bool(latest and created < str(latest['created_at']))
+        if conflicts:
+            if not historical:
+                raise ValueError(conflicts[0]['message'])
+            snapshot = json.dumps([created, odo, conflicts], ensure_ascii=False, sort_keys=True)
+            key = hashlib.sha256(snapshot.encode('utf-8')).hexdigest()
+            confirmed = payload.get('confirm_kilometer_conflict') is True
+            supplied_key = str(payload.get('conflict_confirmation_key') or '')
+            if not confirmed or not hmac.compare_digest(supplied_key, key):
+                raise FuelKilometerConflict(conflicts, key)
+
+        cur = con.execute("""
             INSERT INTO events(
                 created_at,type,odometer,liters,price_per_liter,station,full_tank,note,
-                place_id,latitude,longitude,location_accuracy,location_source
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ''', (created, 'fuel', odo, liters, price, station, full_tank, note,
-              place_id or None, lat, lon, accuracy, location_source or None))
+                place_id,latitude,longitude,location_accuracy,location_source,kilometer_conflict
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (created, 'fuel', odo, liters, price, station, full_tank, note,
+              place_id or None, lat, lon, accuracy, location_source or None, int(bool(conflicts))))
         rid = int(cur.lastrowid)
         receipt_name = save_receipt_data(str(payload.get('receipt_data_url') or ''), rid)
         if receipt_name:
             con.execute('UPDATE events SET receipt_path=? WHERE id=?', (receipt_name, rid))
-        audit('create', 'fuel', rid, {'odometer': odo, 'liters': liters, 'price_per_liter': price, 'station': station or place_id}, con=con)
+        audit('create', 'fuel', rid, {
+            'odometer': odo, 'liters': liters, 'price_per_liter': price,
+            'station': station or place_id, 'kilometer_conflict': bool(conflicts),
+            'conflicts': conflicts,
+        }, con=con)
         if receipt_name:
             audit('receipt', 'fuel', rid, {'file': receipt_name}, con=con)
         con.commit()
     publish_sensors_async()
-    return {'ok': True, 'id': rid, 'cost': round(liters * price, 2), 'receipt': bool(receipt_name)}
+    return {'ok': True, 'id': rid, 'cost': round(liters * price, 2),
+            'receipt': bool(receipt_name), 'kilometer_conflict': bool(conflicts)}
+
 
 RECEIPT_DIR = DATA_DIR / 'receipts'
 
@@ -2146,8 +2209,10 @@ def stats_for_period(period: str, rows: list[dict[str, Any]] | None = None) -> d
     liters = sum(float(r.get('liters') or 0) for r in fuels)
     cost = sum(float(r.get('cost') or 0) for r in fuels)
     avg_price = cost / liters if liters > 0 else None
-    l100 = liters / km * 100 if km > 0 and liters > 0 else None
-    cost100 = cost / km * 100 if km > 0 and cost > 0 else None
+    # Do not derive consumption from a period containing an untrusted odometer leg.
+    unreliable = any(r.get('distance_unreliable') for r in selected)
+    l100 = liters / km * 100 if km > 0 and liters > 0 and not unreliable else None
+    cost100 = cost / km * 100 if km > 0 and cost > 0 and not unreliable else None
     return {
         'period': period,
         'label': period_label(period, start),
@@ -2179,6 +2244,10 @@ def full_tank_cycles(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     cycles: list[dict[str, Any]] = []
     previous_full_idx = None
     for idx, row in enumerate(fuel_rows):
+        if row.get('kilometer_conflict'):
+            # A disputed receipt cannot contribute fuel or span a consumption cycle.
+            previous_full_idx = None
+            continue
         if not int(row.get('full_tank') or 0):
             continue
         if previous_full_idx is not None:
@@ -2261,7 +2330,8 @@ def chart_for_period(period: str, rows: list[dict[str, Any]]) -> list[dict[str, 
     return buckets
 
 def current_odometer(rows: list[dict[str, Any]]) -> float | None:
-    return float(rows[-1]['odometer']) if rows else None
+    return next((float(r['odometer']) for r in reversed(rows)
+                 if not r.get('kilometer_conflict')), None)
 
 
 def recent_stations(rows: list[dict[str, Any]]) -> list[str]:
@@ -2387,7 +2457,7 @@ def summary(period: str = 'month') -> dict[str, Any]:
     cycles = full_tank_cycles(rows)
     full_avg = full_tank_period_average(period, rows)
     odo = current_odometer(rows)
-    latest_full = next((r for r in reversed(rows) if r['type'] == 'fuel' and int(r.get('full_tank') or 0)), None)
+    latest_full = next((r for r in reversed(rows) if r['type'] == 'fuel' and int(r.get('full_tank') or 0) and not r.get('kilometer_conflict')), None)
     standalone = standalone_config()
     since_full_km = None
     if odo is not None and latest_full is not None:
@@ -2757,7 +2827,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <div class="guide-section" id="fuelStepLiters"><div class="guide-head"><span class="step-badge">3</span><b>Liters</b><small>Liters met 2 decimalen</small></div><div class="wheelbox liters"><div class="wheel" id="literWhole"></div><div class="wheel-sep">,</div><div class="wheel" id="literDec"></div><div class="wheel" id="literDec2"></div></div><button class="guide-next" type="button" onclick="guideTo('fuelStepPrice')">Verder naar prijs →</button></div>
   <div class="guide-section" id="fuelStepPrice"><div class="guide-head"><span class="step-badge">4</span><b>Prijs per liter</b><small>3 decimalen</small></div><div class="wheelbox price"><div class="wheel" id="priceWhole"></div><div class="wheel-sep">,</div><div class="wheel" id="priceD1"></div><div class="wheel" id="priceD2"></div><div class="wheel" id="priceD3"></div></div><div class="live-total">Totaal: <b id="fuelTotal">€ 0,00</b></div><button class="guide-next" type="button" onclick="guideTo('fuelStepLocation')">Verder naar tankstation →</button></div>
   <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">5</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div><button class="guide-next" type="button" onclick="guideTo('fuelStepFinish')">Verder →</button></div>
-  <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">6</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" placeholder="Bijv. snelweg, vakantie..."></div><button class="save" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button></div>
+  <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">6</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" placeholder="Bijv. snelweg, vakantie..."></div><button class="save" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button><div id="fuelConflictWarning" hidden role="alert" style="margin-top:14px;padding:14px;border:2px solid #b97517;border-radius:12px;background:#fff4db;color:#37260b"><strong>⚠️ Kilometerconflict — historische tankbon</strong><p>De ingevoerde kilometerstand botst met de volgende registratie(s):</p><ul id="fuelConflictDetails" style="padding-left:22px"></ul><p>Je kunt deze tankbon bewust opslaan. Hij wordt gemarkeerd als kilometerconflict; onbetrouwbare afstanden en verbruikscycli worden niet meegerekend. De actuele tellerstand verandert niet.</p><button class="save" type="button" onclick="saveFuelConfirmed()">Ja, ondanks kilometerconflict opslaan</button><button class="linkbtn" type="button" onclick="clearFuelConflictWarning()">Terug naar tankbon</button></div></div>
 </div></div>
 
 <div class="modal" id="kmModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>🛣️ Kilometerstand</h2><button class="close" onclick="closeModal('kmModal')">✕</button></div><input id="kmOdo" type="hidden"><div class="guide-section active" id="kmStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Nieuwe kilometerstand</b><small>Laatste stand is vooringesteld</small></div><div class="odo-wheelbox" id="kmOdoWheels"></div><div class="odo-live"><b id="kmOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="kmOdoLast"></div><button class="guide-next" type="button" onclick="guideTo('kmStepRest')">Verder →</button></div><div class="guide-section" id="kmStepRest"><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="kmDate" type="datetime-local"></div><div class="field"><label>Notitie (optioneel)</label><input id="kmNote" maxlength="200" placeholder="Bijv. thuiskomst, zakelijke rit..."></div><button class="save" onclick="saveKm()">Kilometerstand opslaan</button></div></div></div>
@@ -2907,7 +2977,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 let DATA=null, PERIOD='month', METRIC='km', VIEW='auto', FUEL_LOCATION=null, FUEL_PLACE=null, PLACE_RESULTS=[], TRIP_LOCATION=null, TRIP_MODE='start', TRIP_SEGMENT_TYPE='business', TRIP_ODO_MANUAL=false, KNOWN_EDIT_LOCATION=null, ASSISTANT_ITEM=null, ASSISTANT_TYPE='';
 let DEFERRED_INSTALL_PROMPT=null, LAUNCH_ACTION_DONE=false, PWA_WORKER_READY=false;
 const $=id=>document.getElementById(id);
-function api(path,opts={}){return fetch(path,{cache:'no-store',credentials:'same-origin',...opts}).then(async r=>{let d=await r.json().catch(()=>({error:'Onbekende fout'}));if(r.status===401){setTimeout(()=>location.reload(),150);throw new Error('Je sessie is verlopen. Log opnieuw in.')}if(!r.ok)throw new Error(d.error||'Fout');return d})}
+function api(path,opts={}){return fetch(path,{cache:'no-store',credentials:'same-origin',...opts}).then(async r=>{let d=await r.json().catch(()=>({error:'Onbekende fout'}));if(r.status===401){setTimeout(()=>location.reload(),150);throw new Error('Je sessie is verlopen. Log opnieuw in.')}if(!r.ok){let e=new Error(d.error||'Fout');e.code=d.code;e.conflicts=d.conflicts;e.confirmation_key=d.confirmation_key;throw e}return d})}
 function isStandalone(){return window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true}
 function isIos(){return /iphone|ipad|ipod/i.test(navigator.userAgent)}
 function updateOnlineState(){let banner=$('offlineBanner');if(banner)banner.classList.toggle('show',!navigator.onLine)}
@@ -2928,7 +2998,7 @@ async function reloadData(){try{DATA=await api(`api/summary?period=${PERIOD}`);a
 function render(){let s=DATA.settings,p=DATA.period,f=DATA.period_full_tank;$('vehicleName').textContent=s.vehicle_name;$('fuelType').textContent=s.fuel_type;$('odometer').textContent=DATA.current_odometer==null?'—':fmt(DATA.current_odometer,0);$('heroConsumption').textContent=DATA.latest_full_cycle?.l100!=null?fmt(DATA.latest_full_cycle.l100,2):'—';$('sinceFull').textContent=DATA.since_full_km==null?'Nog geen volle-tank startpunt':`${fmt(DATA.since_full_km,0)} km sinds laatste volle tank`;$('periodLabel').textContent=p.label;$('fuelCount').textContent=`${p.fuel_count} tankbeurt${p.fuel_count===1?'':'en'}`;$('kpiKm').textContent=`${fmt(p.km,1)} km`;$('kpiLiters').textContent=`${fmt(p.liters,2)} L`;$('kpiL100').textContent=f?.l100==null?'—':fmt(f.l100,2);$('kpiCost').textContent=money(p.cost);$('kpiPrice').textContent=p.avg_price==null?'—':`${s.currency} ${fmt(p.avg_price,3)}`;$('kpiCost100').textContent=f?.cost100==null?'—':money(f.cost100);if(f){$('fullAvgVal').textContent=`${fmt(f.l100,2)} L/100 km`;$('fullAvgInfo').innerHTML=`${f.cycles} complete cyclus${f.cycles===1?'':'sen'}<br>${fmt(f.km,0)} km · ${fmt(f.liters,1)} L`}else{$('fullAvgVal').textContent='—';$('fullAvgInfo').textContent='Nog geen complete volle-tank cyclus in deze periode'};renderChart();renderStations();renderHistory();renderBusiness();$('eventCount').textContent=`${DATA.total_events} totaal`;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.period===PERIOD));document.querySelectorAll('.seg button').forEach(b=>b.classList.toggle('active',b.dataset.metric===METRIC));switchView(VIEW,false)}
 function renderChart(){let c=$('chart');c.innerHTML='';let vals=DATA.chart.map(x=>Number(x[METRIC]??0)||0),max=Math.max(...vals,1);DATA.chart.forEach(x=>{let w=document.createElement('div');w.className='bar-wrap';let value=Number(x[METRIC]??0)||0,pct=value<=0?1:Math.max(3,value/max*88);let label=METRIC==='cost'?`${DATA.settings.currency}${fmt(value,0)}`:METRIC==='liters'?`${fmt(value,1)}L`:METRIC==='l100'?`${fmt(value,1)}`:`${fmt(value,0)}`;w.innerHTML=`<div class="bar-val">${value?label:''}</div><div class="bar ${METRIC==='l100'?'orange':''}" style="height:${pct}%"></div><div class="bar-label">${x.label}</div>`;c.appendChild(w)})}
 function renderStations(){let box=$('stationStats'),arr=DATA.station_stats||[];$('stationCount').textContent=arr.length?`${arr.length} locatie${arr.length===1?'':'s'}`:'';box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">In deze periode zijn nog geen tanklocaties opgeslagen.</div>';return}arr.forEach(x=>{let r=document.createElement('div');r.className='station-row';let map=x.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(x.google_maps_uri)}">📍</a>`:'';r.innerHTML=`<div class="station-icon">⛽</div><div><strong>${esc(x.name)}</strong><small>${x.count}× getankt · ${fmt(x.liters,1)} L · ${money(x.cost)}<br>gem. ${x.avg_price==null?'—':DATA.settings.currency+' '+fmt(x.avg_price,3)}/L${x.address?'<br>'+esc(x.address):''}</small></div>${map}`;box.appendChild(r)})}
-function renderHistory(){let h=$('history');h.innerHTML='';if(!DATA.recent.length){h.innerHTML='<div class="empty">Nog geen registraties. Voeg je eerste kilometerstand of tankbeurt toe.</div>';return}DATA.recent.forEach(e=>{let d=document.createElement('div');d.className='event';let fuel=e.type==='fuel',station=e.station_display||e.station||'',desc=fuel?`${fmt(e.liters,2)} L · ${DATA.settings.currency} ${fmt(e.price_per_liter,3)}/L${station?' · '+esc(station):''}`:`+${fmt(e.delta_km,1)} km`,map=e.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(e.google_maps_uri)}">📍</a>`:'',receipt=e.receipt_path?`<a class="receipt-link" target="_blank" href="api/receipt/${e.id}">📷</a>`:'';d.innerHTML=`<div class="event-icon">${fuel?'⛽':'🛣️'}</div><div><strong>${fuel?'Tankbeurt':'Kilometerstand'} · ${fmt(e.odometer,0)} km</strong><small>${e.date_label} ${e.time_label} · ${desc}${e.station_address?'<br>'+esc(e.station_address):''}${e.note?'<br>'+esc(e.note):''}</small></div><div class="right">${fuel?`<b>${money(e.cost)}</b>`:`<b>${fmt(e.delta_km,1)} km</b>`}<div class="event-actions">${map}${receipt}<button class="trash" onclick="removeEvent(${e.id})">🗑️</button></div></div>`;h.appendChild(d)})}
+function renderHistory(){let h=$('history');h.innerHTML='';if(!DATA.recent.length){h.innerHTML='<div class="empty">Nog geen registraties. Voeg je eerste kilometerstand of tankbeurt toe.</div>';return}DATA.recent.forEach(e=>{let d=document.createElement('div');d.className='event';let fuel=e.type==='fuel',station=e.station_display||e.station||'',desc=fuel?`${fmt(e.liters,2)} L · ${DATA.settings.currency} ${fmt(e.price_per_liter,3)}/L${station?' · '+esc(station):''}`:`+${fmt(e.delta_km,1)} km`,map=e.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(e.google_maps_uri)}">📍</a>`:'',receipt=e.receipt_path?`<a class="receipt-link" target="_blank" href="api/receipt/${e.id}">📷</a>`:'';d.innerHTML=`<div class="event-icon">${fuel?'⛽':'🛣️'}</div><div><strong>${fuel?'Tankbeurt':'Kilometerstand'} · ${fmt(e.odometer,0)} km</strong><small>${e.date_label} ${e.time_label} · ${desc}${e.kilometer_conflict?'<br>⚠️ Kilometerconflict — afstand/verbruik uitgesloten':''}${e.station_address?'<br>'+esc(e.station_address):''}${e.note?'<br>'+esc(e.note):''}</small></div><div class="right">${fuel?`<b>${money(e.cost)}</b>`:`<b>${fmt(e.delta_km,1)} km</b>`}<div class="event-actions">${map}${receipt}<button class="trash" onclick="removeEvent(${e.id})">🗑️</button></div></div>`;h.appendChild(d)})}
 function switchView(view,remember=true){VIEW=view==='business'?'business':'auto';document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${VIEW}`));document.querySelectorAll('.view-tab').forEach(b=>b.classList.toggle('active',b.dataset.view===VIEW));if(remember)localStorage.setItem('rit_tank_view',VIEW)}
 document.querySelectorAll('.view-tab').forEach(b=>b.onclick=()=>{switchView(b.dataset.view);window.scrollTo({top:0,behavior:'smooth'})});VIEW=localStorage.getItem('rit_tank_view')||'auto';
 function smartTripAction(){if(!DATA)return;let active=DATA.business?.active_trip;if(active){switchView('business');$('bizHero').scrollIntoView({block:'start',behavior:'smooth'})}else openTripPoint('start')}
@@ -3350,7 +3420,7 @@ function rememberFuelPrice(){let value=fuelValues().price;if(!Number.isFinite(va
 function initFuelWheels(liters=null,price=null){let last=DATA.latest_fuel||{},L=Math.max(0,Math.min(25000,Math.round(Number(liters??last.liters??40)*100))),P=Math.max(0,Math.min(5999,Math.round(Number(price??preferredFuelPrice())*1000))),upd=(changed=false)=>{updateFuelTotal();if(changed)rememberFuelPrice()};createWheel('literWhole',Array.from({length:251},(_,i)=>i),Math.floor(L/100),upd);createWheel('literDec',Array.from({length:10},(_,i)=>i),Math.floor(L/10)%10,upd);createWheel('literDec2',Array.from({length:10},(_,i)=>i),L%10,upd);createWheel('priceWhole',Array.from({length:6},(_,i)=>i),Math.floor(P/1000),upd);createWheel('priceD1',Array.from({length:10},(_,i)=>i),Math.floor(P/100)%10,upd);createWheel('priceD2',Array.from({length:10},(_,i)=>i),Math.floor(P/10)%10,upd);createWheel('priceD3',Array.from({length:10},(_,i)=>i),P%10,upd);updateFuelTotal()}
 function fuelValues(){let liters=Number(wheelVal('literWhole')||0)+Number(wheelVal('literDec')||0)/10+Number(wheelVal('literDec2')||0)/100,price=Number(wheelVal('priceWhole')||0)+Number(wheelVal('priceD1')||0)/10+Number(wheelVal('priceD2')||0)/100+Number(wheelVal('priceD3')||0)/1000;return{liters:Number(liters.toFixed(2)),price:Number(price.toFixed(3))}}
 function updateFuelTotal(){if(!DATA)return;let v=fuelValues();$('fuelTotal').textContent=`${DATA.settings.currency} ${fmt(v.liters*v.price,2)}`}
-function openFuel(){++RECEIPT_REQUEST;RECEIPT_SCANNING=false;$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];$('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelReceipt').value='';$('receiptScanStatus').textContent='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';$('stations').innerHTML=(DATA.recent_stations||[]).map(s=>`<option value="${escAttr(s)}">`).join('');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');initOdometerWheel('fuel',DATA.current_odometer??0);initFuelWheels();openModal('fuelModal');setTimeout(()=>guideTo('fuelStepScan',0),80)}
+function openFuel(){clearFuelConflictWarning();++RECEIPT_REQUEST;RECEIPT_SCANNING=false;$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];$('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelReceipt').value='';$('receiptScanStatus').textContent='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';$('stations').innerHTML=(DATA.recent_stations||[]).map(s=>`<option value="${escAttr(s)}">`).join('');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');initOdometerWheel('fuel',DATA.current_odometer??0);initFuelWheels();openModal('fuelModal');setTimeout(()=>guideTo('fuelStepScan',0),80)}
 $('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
 function setLocationStatus(msg,kind=''){$('locationStatus').textContent=msg;$('locationStatus').className='location-status '+kind}
 function browserLocation(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Browser-GPS wordt hier niet ondersteund.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser'}),e=>reject(new Error(e.message||'Locatie niet beschikbaar.')),{enableHighAccuracy:true,timeout:9000,maximumAge:30000})})}
@@ -3374,7 +3444,51 @@ async function scanSelectedReceipt(){let status=$('receiptScanStatus'),file=$('f
  status.textContent=(found.length?'Ingevuld: '+found.join(' · ')+'. ':'')+(missing.length?'Niet herkend: '+missing.join(' en ')+'. Vul deze zelf in.':'Controleer de waarden vóór opslaan.');status.style.color=missing.length?'var(--orange)':'var(--teal)';toast(missing.length?'Controleer de bon: niet alle waarden zijn herkend.':'Liters en literprijs ingevuld');
  }catch(e){if(request===RECEIPT_REQUEST){status.textContent=e.message+' Je kunt alles handmatig invullen.';status.style.color='var(--orange)'}}finally{if(request===RECEIPT_REQUEST){RECEIPT_SCANNING=false;$('fuelSaveButton').disabled=false}}}
 $('fuelReceipt').addEventListener('change',scanSelectedReceipt);
-async function saveFuel(){if(RECEIPT_SCANNING){toast('Wacht tot de bon is gescand.',true);return}let v=fuelValues(),payload={odometer:$('fuelOdo').value,created_at:$('fuelDate').value,liters:v.liters,price_per_liter:v.price,station:FUEL_PLACE?'':$('fuelStation').value,place_id:FUEL_PLACE?.place_id||'',latitude:FUEL_LOCATION?.latitude??null,longitude:FUEL_LOCATION?.longitude??null,location_accuracy:FUEL_LOCATION?.accuracy??null,location_source:FUEL_LOCATION?.source||'',full_tank:$('fuelFull').checked,note:$('fuelNote').value};try{payload.receipt_data_url=await readReceiptFile();let r=await api('api/fuel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('fuelModal');toast(`Tankbeurt opgeslagen · ${money(r.cost)}${r.receipt?' · bon bewaard':''}`);reloadData()}catch(e){toast(e.message,true)}}
+let FUEL_CONFLICT_PAYLOAD=null;
+function clearFuelConflictWarning(){FUEL_CONFLICT_PAYLOAD=null;let panel=$('fuelConflictWarning');if(panel)panel.hidden=true}
+function showFuelConflictWarning(error,payload){
+ let conflicts=error.conflicts||[],panel=$('fuelConflictWarning');
+ $('fuelConflictDetails').innerHTML=conflicts.map(c=>{
+   let date=new Date(c.created_at),when=Number.isNaN(date.getTime())?String(c.created_at):date.toLocaleString('nl-NL',{dateStyle:'medium',timeStyle:'short'});
+   let label=c.type==='fuel'?'tankbeurt':'kilometerregistratie';
+   return `<li><b>${esc(c.direction==='eerdere'?'Eerdere':'Latere')} ${label}</b> op ${esc(when)}: <b>${fmt(c.odometer,0)} km</b> (${esc(c.message)})</li>`;
+ }).join('');
+ FUEL_CONFLICT_PAYLOAD={...payload,conflict_confirmation_key:error.confirmation_key};
+ panel.hidden=false;guideTo('fuelStepFinish',0);
+}
+async function submitFuel(payload){
+ try{
+  let result=await api('api/fuel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  clearFuelConflictWarning();closeModal('fuelModal');
+  toast(`Tankbeurt opgeslagen · ${money(result.cost)}${result.kilometer_conflict?' · ⚠️ kilometerconflict':''}${result.receipt?' · bon bewaard':''}`);
+  reloadData();
+ }catch(error){
+  if(error.code==='FUEL_KILOMETER_CONFLICT'&&Array.isArray(error.conflicts)&&error.conflicts.length&&error.confirmation_key){
+   showFuelConflictWarning(error,payload);return;
+  }
+  toast(error.message,true);
+ }
+}
+async function saveFuel(){
+ if(RECEIPT_SCANNING){toast('Wacht tot de bon is gescand.',true);return}
+ clearFuelConflictWarning();
+ let v=fuelValues(),payload={
+  odometer:$('fuelOdo').value,created_at:$('fuelDate').value,liters:v.liters,price_per_liter:v.price,
+  station:FUEL_PLACE?'':$('fuelStation').value,place_id:FUEL_PLACE?.place_id||'',
+  latitude:FUEL_LOCATION?.latitude??null,longitude:FUEL_LOCATION?.longitude??null,
+  location_accuracy:FUEL_LOCATION?.accuracy??null,location_source:FUEL_LOCATION?.source||'',
+  full_tank:$('fuelFull').checked,note:$('fuelNote').value
+ };
+ try{payload.receipt_data_url=await readReceiptFile();await submitFuel(payload)}
+ catch(error){toast(error.message,true)}
+}
+async function saveFuelConfirmed(){
+ if(!FUEL_CONFLICT_PAYLOAD)return;
+ let payload={...FUEL_CONFLICT_PAYLOAD,confirm_kilometer_conflict:true};
+ clearFuelConflictWarning();
+ await submitFuel(payload);
+}
+
 function openKm(){$('kmDate').value=localInputNow();$('kmNote').value='';initOdometerWheel('km',DATA.current_odometer??0);openModal('kmModal');setTimeout(()=>guideTo('kmStepOdo',0),80)}
 async function saveKm(){let payload={odometer:$('kmOdo').value,created_at:$('kmDate').value,note:$('kmNote').value};try{await api('api/odometer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('kmModal');toast('Kilometerstand opgeslagen');reloadData()}catch(e){toast(e.message,true)}}
 function placeIcon(cat){return {home:'🏠',school:'🏫',work:'🏢',client:'🤝',family:'👨‍👩‍👧',private:'❤️',other:'📍'}[cat]||'📍'}
@@ -3880,6 +3994,11 @@ class Handler(BaseHTTPRequestHandler):
                 'code': e.code,
                 'blocking_arrival_id': e.blocking_arrival_id,
                 'blocking_departure_at': e.blocking_departure_at,
+            }, 409)
+        except FuelKilometerConflict as e:
+            return json_response(self, {
+                'error': str(e), 'code': 'FUEL_KILOMETER_CONFLICT',
+                'conflicts': e.conflicts, 'confirmation_key': e.confirmation_key,
             }, 409)
         except ValueError as e:
             return json_response(self, {'error': str(e)}, 400)
