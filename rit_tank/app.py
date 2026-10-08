@@ -990,7 +990,7 @@ def location_from_entity(entity_id: str) -> dict[str, Any]:
 
 def rows_events() -> list[dict[str, Any]]:
     with DB_LOCK, db() as con:
-        rows = [dict(r) for r in con.execute('SELECT * FROM events ORDER BY created_at ASC, id ASC')]
+        rows = [dict(r) for r in con.execute('SELECT * FROM events ORDER BY created_at ASC, odometer ASC, id ASC')]
     prev = None
     for row in rows:
         odo = float(row['odometer'])
@@ -1018,6 +1018,35 @@ def validate_odometer(created_at: str, odometer: float, ignore_id: int | None = 
     with DB_LOCK, db() as con:
         prev = con.execute(f'SELECT odometer FROM events WHERE created_at <= ?{extra} ORDER BY created_at DESC, id DESC LIMIT 1', params_prev).fetchone()
         nxt = con.execute(f'SELECT odometer FROM events WHERE created_at > ?{extra} ORDER BY created_at ASC, id ASC LIMIT 1', params_next).fetchone()
+    if prev and odometer < float(prev['odometer']):
+        return False, f'Kilometerstand is lager dan de vorige registratie ({float(prev["odometer"]):.0f} km).'
+    if nxt and odometer > float(nxt['odometer']):
+        return False, f'Kilometerstand is hoger dan een latere registratie ({float(nxt["odometer"]):.0f} km).'
+    return True, ''
+
+
+def validate_fuel_odometer(created_at: str, odometer: float) -> tuple[bool, str]:
+    """Validate a fuel entry at its chronological position, including same-minute events."""
+    if not math.isfinite(odometer) or odometer < 0:
+        return False, 'Vul een geldige kilometerstand in.'
+    settings = get_settings()
+    started = settings.get('administration_started_at')
+    if started and (parse_dt(created_at) < parse_dt(started) or
+                    odometer < float(settings['administration_baseline'])):
+        return False, 'Deze registratie ligt vóór het startpunt van de nieuwe administratie.'
+    with DB_LOCK, db() as con:
+        prev = con.execute(
+            '''SELECT odometer FROM events
+               WHERE created_at < ? OR (created_at = ? AND odometer <= ?)
+               ORDER BY created_at DESC, odometer DESC, id DESC LIMIT 1''',
+            (created_at, created_at, odometer),
+        ).fetchone()
+        nxt = con.execute(
+            '''SELECT odometer FROM events
+               WHERE created_at > ? OR (created_at = ? AND odometer >= ?)
+               ORDER BY created_at ASC, odometer ASC, id ASC LIMIT 1''',
+            (created_at, created_at, odometer),
+        ).fetchone()
     if prev and odometer < float(prev['odometer']):
         return False, f'Kilometerstand is lager dan de vorige registratie ({float(prev["odometer"]):.0f} km).'
     if nxt and odometer > float(nxt['odometer']):
@@ -1056,7 +1085,7 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError('Vul een geldige prijs per liter in.')
     dt = parse_dt(payload.get('created_at'))
     created = iso_local(dt)
-    ok, msg = validate_odometer(created, odo)
+    ok, msg = validate_fuel_odometer(created, odo)
     if not ok:
         raise ValueError(msg)
     station = str(payload.get('station') or '').strip()[:100]
@@ -1072,6 +1101,14 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
     note = str(payload.get('note') or '').strip()[:200]
     full_tank = 1 if bool(payload.get('full_tank', True)) else 0
     with DB_LOCK, db() as con:
+        duplicate = con.execute(
+            '''SELECT id FROM events
+               WHERE type='fuel' AND created_at=? AND odometer=? AND liters=? AND price_per_liter=?
+               LIMIT 1''',
+            (created, odo, liters, price),
+        ).fetchone()
+        if duplicate:
+            raise ValueError('Deze tankbeurt bestaat al.')
         cur = con.execute('''
             INSERT INTO events(
                 created_at,type,odometer,liters,price_per_liter,station,full_tank,note,
