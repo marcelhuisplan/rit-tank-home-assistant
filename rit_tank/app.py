@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.07'
+APP_VERSION = '33.08'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -79,6 +79,9 @@ DEFAULT_OPTIONS = {
     'google_drive_folder_id': '',
     'google_drive_service_account_json': '',
     'google_drive_oauth_json': '',
+    'google_calendar_oauth_json': '',
+    'google_calendar_client_id': '',
+    'google_calendar_client_secret': '',
     'backup_encryption_password': '',
     'backup_hour': 3,
     'backup_retention_days': 30,
@@ -2109,11 +2112,19 @@ def business_trips_for_period(period: str) -> list[dict[str, Any]]:
     return trips.business_trips_for_period(period, dependencies=_trips_dependencies())
 
 try:
-    from . import pdf_report, report_validation, receipt_archive
+    from . import pdf_report, report_validation, receipt_archive, day_planning
 except ImportError:
     import pdf_report
     import receipt_archive
     import report_validation
+    import day_planning
+
+def day_calendar_service():
+    options = load_options()
+    oauth = str(options.get('google_calendar_oauth_json') or options.get('google_drive_oauth_json') or '')
+    # Existing authorized-user tokens remain supported; browser OAuth takes priority.
+    return day_planning.calendar_service(oauth, DATA_DIR / 'google_calendar_oauth.json')
+
 
 _pdf_text = pdf_report._pdf_text
 _pdf_escape = pdf_report._pdf_escape
@@ -2777,6 +2788,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   </section>
 
   <div class="dashboard-actions">
+    <button class="trip-primary" style="margin-bottom:10px" onclick="openDayPlanning()">📅 Dagplanning importeren</button>
     <button class="trip-primary" style="margin-bottom:10px" onclick="openPdfSelector()">📄 PDF-ritregistratie</button>
     <button class="trip-primary" onclick="smartTripAction()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m9 6 9 6-9 6V6Z"/></svg><span id="tripPrimaryLabel">Rit starten</span></button>
     <div class="action-row"><button class="action-secondary" onclick="openFuel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 21V4h10v17M3 21h14M7 7h6v5H7zM15 8h2l2 2v7a2 2 0 0 0 4 0v-5l-2-2"/></svg><span>Tankbeurt</span></button><button class="action-secondary" onclick="openKm()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19a8 8 0 1 1 16 0H4Z"/><path d="m12 17 4-5M7 16l-1-1m11-1 1-1m-6-2V9"/></svg><span>KM bijwerken</span></button></div>
@@ -3582,6 +3594,7 @@ setInterval(refreshActiveTripLiveStatus,5000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshVisibleDashboard();refreshActiveTripLiveStatus()}});
 </script>
 <script src="receipt-archive.js"></script>
+<script src="day_planning.js"></script>
 </body></html>'''
 
 
@@ -3590,7 +3603,11 @@ class Handler(BaseHTTPRequestHandler):
     server_version = f'RitTank/{APP_VERSION}'
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        print(f"[{self.log_date_time_string()}] {self.client_address[0]} {fmt % args}")
+        message = fmt % args
+        if '/api/day-planning/oauth/callback' in message:
+            # BaseHTTPRequestHandler otherwise logs the sensitive OAuth code/state query.
+            message = 'GET /api/day-planning/oauth/callback [query verborgen]'
+        print(f"[{self.log_date_time_string()}] {self.client_address[0]} {message}")
 
     def _path(self) -> tuple[str, dict[str, list[str]]]:
         u = urlparse(self.path)
@@ -3725,6 +3742,15 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if path == '/day_planning.js':
+            data = Path(__file__).with_name('day_planning.js').read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/javascript; charset=utf-8')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == '/receipt-archive.js':
             data = Path(__file__).with_name('receipt_archive.js').read_bytes()
             self.send_response(200)
@@ -3769,8 +3795,41 @@ class Handler(BaseHTTPRequestHandler):
             return json_response(self, {'ok': True, 'version': APP_VERSION, 'pwa': True})
         if path == '/api/auth/status':
             return self._auth_status()
+        if path == '/api/day-planning/oauth/callback':
+            # A Google top-level redirect does not carry a standalone SameSite=Strict session.
+            # The 10-minute one-time state + PKCE verifier authorize this callback.
+            try:
+                day_planning.finish_calendar_oauth(
+                    (q.get('state') or [''])[0], (q.get('code') or [''])[0],
+                    (q.get('error') or [''])[0], load_options(),
+                    DATA_DIR / 'google_calendar_oauth.json')
+                outcome = 'verbonden'
+            except ValueError:
+                outcome = 'mislukt'
+            self.send_response(303)
+            self.send_header('Location', '../../../?calendar=' + outcome)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Referrer-Policy', 'no-referrer')
+            self.end_headers()
+            return
         if not self._authorize_api():
             return
+        if path == '/api/day-planning/oauth/status':
+            options = load_options()
+            configured = bool(options.get('google_calendar_client_id') and
+                              options.get('google_calendar_client_secret'))
+            try:
+                calendars = day_planning.available_calendars(day_calendar_service())
+                return json_response(self, {'connected': True, 'configured': configured,
+                                            'calendars': calendars})
+            except ValueError:
+                return json_response(self, {'connected': False, 'configured': configured,
+                                            'calendars': []})
+        if path == '/api/day-planning/calendars':
+            try:
+                return json_response(self, {'calendars': day_planning.available_calendars(day_calendar_service())})
+            except ValueError as exc:
+                return json_response(self, {'error': str(exc)}, 400)
         if path == '/api/receipt-archive':
             with DB_LOCK, db() as con:
                 return json_response(self, {'receipts': receipt_archive.archive_rows(con)})
@@ -3893,7 +3952,14 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = read_json(self, 27 * 1024 * 1024
                                 if path in ('/api/receipt-archive/prepare', '/api/receipt-archive/save')
+                                else 18 * 1024 * 1024 if path == '/api/day-planning/preview'
                                 else 12 * 1024 * 1024)
+            if path == '/api/day-planning/oauth/start':
+                url = day_planning.begin_calendar_oauth(
+                    load_options(), str(payload.get('redirect_uri') or ''),
+                    str(payload.get('app_url') or ''),
+                    str(self.headers.get('Origin') or ''))
+                return json_response(self, {'url': url})
             physical_routes = {'/api/business/start': 'start', '/api/trips/start': 'start',
                                '/api/business/stop': 'stop', '/api/trips/location': 'stop',
                                '/api/business/finish': 'finish', '/api/trips/finish': 'finish'}
@@ -3957,6 +4023,18 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {'ok': True})
             if path == '/api/assistant/sync-zones':
                 return json_response(self, sync_all_known_place_zones())
+            if path in ('/api/day-planning/preview', '/api/day-planning/check', '/api/day-planning/import'):
+                # Bound to the same authenticated browser/ingress session as the preview.
+                binding = hashlib.sha256((self.headers.get('Cookie', '') + '|' +
+                           self.headers.get('X-Ingress-Path', '')).encode()).hexdigest()
+                if path == '/api/day-planning/preview':
+                    return json_response(self, day_planning.preview_image(
+                        str(payload.get('image_data_url') or ''), binding))
+                day, addresses, calendar_id = day_planning.validate_submission(payload, binding)
+                service = day_calendar_service()
+                if path == '/api/day-planning/check':
+                    return json_response(self, day_planning.duplicate_check(service, calendar_id, day, addresses))
+                return json_response(self, day_planning.import_events(service, calendar_id, day, addresses), 201)
             if path == '/api/receipt-archive/prepare':
                 with DB_LOCK, db() as con:
                     return json_response(self, receipt_archive.prepare(payload.get('files'), con))

@@ -1,4 +1,4 @@
-# Rit & Tank 33.07
+# Rit & Tank 33.08
 
 De ritregistratie is in release 33.00 vereenvoudigd voor iPhone en iPad: de fysieke kilometerteller staat centraal in een groot, rustig invoerveld, gevolgd door grote locatieknoppen. De fysieke teller blijft altijd de definitieve bron voor zakelijke kilometers; GPS blijft uitsluitend aanvullende informatie, controle en waarschuwing.
 
@@ -408,3 +408,23 @@ Afstandswaarschuwing: absoluut verschil minimaal 3 km én minimaal 25% van de gr
 De bestaande knop **Tankbon scannen** opent het zelfstandige bonnenarchief. Maak een iPhone-foto, selecteer tot vier afbeeldingen voor een meervoudige PDF of upload een bestaande PDF. Foto's worden op een witte A4-pagina geplaatst, gedraaid volgens EXIF en voor leesbaarheid aangescherpt. De server ondersteunt JPEG/PNG/WebP; iOS zet ondersteunde andere afbeeldingen in de browser om naar JPEG. PDF's mogen maximaal 30 pagina's bevatten. De namen volgen indien herkend het patroon `JJJJ-MM-DD_Tankstation_Plaats_Bedrag.pdf`. OCR geeft uitsluitend die vier naamgegevens terug. Ontbrekende of tegenstrijdige waarden blijven gemarkeerd als onbekend en zijn vóór opslaan aan te passen. Bij identieke PDF-inhoud of naam volgt een dubbelebonwaarschuwing met verplichte expliciete bevestiging.
 
 Nieuwe PDF's en index leven onder `/data/receipt_archive` respectievelijk in de bestaande `/data/rit_tank.db`; de oorspronkelijke bonbestanden in `/data/receipts` blijven onaangeroerd. Bestaande bonnen zijn in het archief te bekijken en worden als originele bestanden opgenomen in de ZIP-export onder `bestaande_bonnen/`. Er vindt geen koppeling of automatische overdracht plaats naar kilometerstand, liters, literprijs, datum van tankregistraties of ritten. Voeg voor extra zekerheid een externe ZIP-kopie toe aan de reguliere Home Assistant back-up.
+
+
+## Dagplanning naar Google Agenda (33.08)
+
+De knop **Dagplanning importeren** staat op het dashboard. Upload een screenshot met de expliciete datum en bezoeksnummers. De OCR herkent (waar mogelijk) de adressen en behoudt de originele bezoekvolgorde: ochtend gevolgd door middag, zonder route-optimalisatie. Controleer de datum, pas onduidelijke of afgekorte adressen aan, verwijder bezoeken of verplaats ze met omhoog/omlaag. Er is een extra controle en handmatige aanvulling vereist voor onzeker herkende adressen. De screenshot wordt niet opgeslagen.
+
+Selecteer een schrijfbare doelagenda en vink de expliciete bevestiging aan. De app voert eerst een doublurecontrole uit bij Google en vraagt bij bestaande dagafspraken op dezelfde locatie en datum een extra bevestiging. Elk nieuw bezoek wordt één aparte hele-dag-afspraak zonder tijden, met titel **01 · Bezoek 1 van N**, enzovoort en het gecontroleerde adres in het locatieveld. Bestaande afspraken worden niet gewijzigd. Stabiele Google event-ID's en een Google-voorcontrole voorkomen duplicaten bij herhaald verzenden.
+
+### Google Agenda koppelen op iPhone/iPad
+
+Geen computer, Python-script of handmatig JSON-token nodig. Maak via de browser op iPhone/iPad eenmalig in Google Cloud Console (https://console.cloud.google.com/apis/credentials) een OAuth-client van het type Webapplicatie (niet Desktop). Activeer Google Calendar API, configureer het toestemmingsscherm en voeg jezelf zo nodig als testgebruiker toe.
+
+1. Open Rit & Tank via een vaste beveiligde HTTPS-URL. Open Dagplanning importeren. Bij de knop Google Agenda koppelen staat de exacte callback-URL. Registreer die URI in Google Cloud onder Authorized redirect URIs. Google vereist een exacte overeenkomst, ook met Home Assistant Ingress-paden. Een veranderlijk Ingress-pad is daarom onhandig; gebruik bij voorkeur een stabiele HTTPS-URL voor de zelfstandige app.
+2. Vul in Home Assistant → Add-ons → Rit & Tank → Configuratie uitsluitend google_calendar_client_id en google_calendar_client_secret vanuit Google Cloud in en herstart de add-on. Geen authorized-user-JSON of refresh-token plakken. De oudere google_calendar_oauth_json-optie blijft voor bestaande installaties ondersteund.
+3. Tik op Google Agenda koppelen, kies het Google-account en geef de beperkte rechten calendar.events en calendar.calendarlist.readonly. De autorisatie gaat via browserredirect, een eenmalige state en PKCE. Daarna staat in de app Google Agenda verbonden en kun je de doelagenda kiezen.
+4. Controleer eerst alle bezoekadressen en volgorde en bevestig daarna expliciet de import. De bestaande doublurecheck en stabiele Google event-ID's blijven behouden.
+
+De OAuth-code wordt nooit gelogd. Tokens worden uitsluitend door de add-on onder /data/google_calendar_oauth.json met bestandsrechten 0600 opgeslagen, niet in browseropslag. Bij een verlopen koppeling kun je opnieuw autoriseren. Google kan testapps na 7 dagen een refresh-token laten verlopen; pas zo nodig de publicatiestatus van het OAuth-toestemmingsscherm aan.
+
+Het originele screenshot van 9 oktober 2026 met persoonsgegevens wordt niet gepubliceerd; regressietests gebruiken geanonimiseerde OCR-tekst. Ritten, tellerstanden en tankbeurten blijven onaangeroerd.

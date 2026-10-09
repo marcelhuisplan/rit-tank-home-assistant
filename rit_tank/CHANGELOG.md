@@ -1,5 +1,9 @@
 # Changelog
 
+## 33.08
+
+- Dagplanning uit een iPhone/iPad-screenshot met datum, 5 bezoeken in de oorspronkelijke ochtend-/middagvolgorde, controle- en correctieoverzicht en import als afzonderlijke Google Agenda-afspraken voor de hele dag. Afgekorte adressen vereisen handmatige correctie. Gescheiden OAuth-autorisatie, doelagendakeuze, doublurecontrole en idempotente Google event-ID's. Geen wijzigingen aan ritten, tellerstanden, tankbeurten of bestaande agenda-items.
+
 ## 33.07
 
 - Betere OCR van de bestandsnaam van tankbonnen: vergrote zwart-witvoorbewerking, Tango-bonnen met slashed-zero-datums en OCR-spatiefouten in postcode/plaats, en bedragen met een koppelteken als decimaalscheiding. Bij onduidelijke gegevens blijft de bestandsnaam aanpasbaar; geen wijziging aan opgeslagen bonnen of tank-/ritregistraties.
