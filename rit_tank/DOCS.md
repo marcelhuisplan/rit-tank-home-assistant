@@ -408,3 +408,36 @@ Afstandswaarschuwing: absoluut verschil minimaal 3 km én minimaal 25% van de gr
 De bestaande knop **Tankbon scannen** opent het zelfstandige bonnenarchief. Maak een iPhone-foto, selecteer tot vier afbeeldingen voor een meervoudige PDF of upload een bestaande PDF. Foto's worden op een witte A4-pagina geplaatst, gedraaid volgens EXIF en voor leesbaarheid aangescherpt. De server ondersteunt JPEG/PNG/WebP; iOS zet ondersteunde andere afbeeldingen in de browser om naar JPEG. PDF's mogen maximaal 30 pagina's bevatten. De namen volgen indien herkend het patroon `JJJJ-MM-DD_Tankstation_Plaats_Bedrag.pdf`. OCR geeft uitsluitend die vier naamgegevens terug. Ontbrekende of tegenstrijdige waarden blijven gemarkeerd als onbekend en zijn vóór opslaan aan te passen. Bij identieke PDF-inhoud of naam volgt een dubbelebonwaarschuwing met verplichte expliciete bevestiging.
 
 Nieuwe PDF's en index leven onder `/data/receipt_archive` respectievelijk in de bestaande `/data/rit_tank.db`; de oorspronkelijke bonbestanden in `/data/receipts` blijven onaangeroerd. Bestaande bonnen zijn in het archief te bekijken en worden als originele bestanden opgenomen in de ZIP-export onder `bestaande_bonnen/`. Er vindt geen koppeling of automatische overdracht plaats naar kilometerstand, liters, literprijs, datum van tankregistraties of ritten. Voeg voor extra zekerheid een externe ZIP-kopie toe aan de reguliere Home Assistant back-up.
+
+
+## Dagplanning naar Google Agenda (33.08)
+
+De knop **Dagplanning importeren** staat op het dashboard. Upload een screenshot met de expliciete datum en bezoeksnummers. De OCR herkent (waar mogelijk) de adressen en behoudt de originele bezoekvolgorde: ochtend gevolgd door middag, zonder route-optimalisatie. Controleer de datum, pas onduidelijke of afgekorte adressen aan, verwijder bezoeken of verplaats ze met omhoog/omlaag. Er is een extra controle en handmatige aanvulling vereist voor onzeker herkende adressen. De screenshot wordt niet opgeslagen.
+
+Selecteer een schrijfbare doelagenda en vink de expliciete bevestiging aan. De app voert eerst een doublurecontrole uit bij Google en vraagt bij bestaande dagafspraken op dezelfde locatie en datum een extra bevestiging. Elk nieuw bezoek wordt één aparte hele-dag-afspraak zonder tijden, met titel **01 · Bezoek 1 van N**, enzovoort en het gecontroleerde adres in het locatieveld. Bestaande afspraken worden niet gewijzigd. Stabiele Google event-ID's en een Google-voorcontrole voorkomen duplicaten bij herhaald verzenden.
+
+### Google Agenda eenmalig veilig koppelen
+
+De bestaande Google Drive-koppeling is alleen bruikbaar als haar OAuth-token al expliciet Calendar-rechten heeft. Anders is er een aparte beperkte autorisatie nodig in de add-onoptie `google_calendar_oauth_json` (een afgeschermd wachtwoordveld). Dit is een *authorized user* OAuth-JSON met refresh-token, géén service-account-JSON.
+
+1. Activeer **Google Calendar API** in je Google Cloud-project, configureer het OAuth-toestemmingsscherm en maak een OAuth-client van het type **Desktop-app**. Download het client-secret-bestand op je eigen computer als `client_secret.json`. Bij een testapp moet je eigen account als testgebruiker zijn toegevoegd; voor langdurige toegang kan publicatie van het toestemmingsscherm nodig zijn.
+2. Voer op je eigen computer `python -m pip install google-auth-oauthlib` uit. Bewaar het volgende script naast `client_secret.json` en voer het uit. Meld je met je Google-account aan, kies de beperkte Calendar-machtigingen en bewaar de JSON uitsluitend lokaal.
+
+    ~~~python
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    scopes = [
+        'https://www.googleapis.com/auth/calendar.events',
+        'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+    ]
+    flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', scopes)
+    creds = flow.run_local_server(port=0, access_type='offline', prompt='consent')
+    with open('calendar_credentials.json', 'w', encoding='utf-8') as handle:
+        handle.write(creds.to_json())
+    print('Google Agenda-autorisatie gereed')
+    ~~~
+
+3. Kopieer de volledige inhoud van `calendar_credentials.json` naar **Home Assistant → Add-ons → Rit & Tank → Configuratie → google_calendar_oauth_json**. Sla op en herstart de add-on. Deel deze JSON nooit in GitHub, chat, screenshots of logs.
+4. Open **Dagplanning importeren**, selecteer een agenda en controleer de voorgestelde afspraken. Als de autorisatie wordt ingetrokken of vervalt, genereer een nieuw refresh-token op je eigen computer.
+
+De Calendar-aanroepen worden veilig door de add-onserver uitgevoerd; ook via Home Assistant Ingress is geen Google-redirect nodig. Het originele screenshot van 9 oktober 2026 met persoonsgegevens wordt niet in de openbare repository opgenomen; de regressietest gebruikt geanonimiseerde OCR-tekst met dezelfde vijfbezoekstructuur. Ritten, kilometerstanden, tankbeurten en bestaande agenda-afspraken blijven onaangeroerd.
