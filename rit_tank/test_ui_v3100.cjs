@@ -1,7 +1,7 @@
 // Actual release-31 UI functions, with delayed responses and a small offline DOM.
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync(__dirname+'/app.py','utf8'),nodes=new Map(),calls=[];
-const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',innerHTML:'',checked:false,hidden:false,disabled:false,style:{},children:[],focus(){},scrollIntoView(){},classList:{add(){},remove(){},toggle(){}}});return nodes.get(id)};
+const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',innerHTML:'',checked:false,hidden:false,disabled:false,style:{},children:[],focus(){},scrollIntoView(){},addEventListener(){},classList:{add(){},remove(){},toggle(){}}});return nodes.get(id)};
 let routeResolve,reply,done=0,toasts=[];
 const ctx=vm.createContext({$,console,crypto:require('node:crypto').webcrypto,Uint8Array,structuredClone,
   window:{visualViewport:{height:380,offsetTop:15,addEventListener(){}}},document:{activeElement:{blur(){}}},

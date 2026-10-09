@@ -2748,7 +2748,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 .physical-distance strong{display:block;color:var(--teal);font-size:clamp(30px,9vw,46px);line-height:1.05;margin-top:4px}
 .physical-primary,.trip-save-sticky{width:100%;min-height:60px;border:0;border-radius:18px;padding:14px 16px;font-size:17px;font-weight:950;line-height:1.2;touch-action:manipulation}
 .physical-primary{margin-top:18px;background:linear-gradient(135deg,#65efc6,#2bcdb1);color:#05251d;box-shadow:0 12px 28px rgba(43,205,177,.16);position:sticky;bottom:calc(8px + env(safe-area-inset-bottom));z-index:4}
-.physical-primary.confirmed{background:#183f35;color:#a8f6df;border:1px solid #2d806b;box-shadow:none}
+#physicalTripCard:focus-within .physical-primary{position:static}.physical-primary.confirmed{background:#183f35;color:#a8f6df;border:1px solid #2d806b;box-shadow:none}
 .trip-save-sticky{margin-top:18px;margin-bottom:8px;background:linear-gradient(135deg,#65efc6,#2bcdb1);color:#05251d;position:static;box-shadow:0 10px 26px rgba(0,0,0,.32)}
 .gps-details{margin-top:18px;border-top:1px solid rgba(255,255,255,.08);padding-top:12px}.gps-details summary{cursor:pointer;color:#9bc9bc;font-weight:850;min-height:44px;display:flex;align-items:center;touch-action:manipulation}.gps-details .physical-facts{margin:8px 0}.gps-details .physical-warning{margin-bottom:0}
 #tripStepLocation{padding:16px;border-radius:22px;border-color:rgba(88,223,177,.18);background:#0f1718}
