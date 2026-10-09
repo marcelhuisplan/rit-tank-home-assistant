@@ -19,6 +19,10 @@ function mountDayPlanning() {
     #dayPlanningModal .day-review {display:flex;gap:10px;align-items:flex-start;min-height:44px;padding-top:10px}
     #dayPlanningModal .day-review input {width:23px;height:23px}
     #dayPlanningModal .sheethead .close {flex-shrink:0}
+    #dayPlanningModal .day-connect {display:grid;gap:8px;margin:14px 0;padding:13px;border:1px solid #2d6557;border-radius:14px}
+    #dayPlanningModal .day-connect button {min-height:56px;border-radius:15px;font-size:17px;font-weight:900}
+    #dayPlanningModal #dayConnection {margin:0;overflow-wrap:anywhere}
+    #dayPlanningModal #dayCallbackUrl {display:block;font-size:12px;user-select:text;overflow-wrap:anywhere;color:#9cc4b7}
   `;
   document.head.appendChild(css);
   const modal = document.createElement('div');
@@ -30,6 +34,12 @@ function mountDayPlanning() {
     <div class="sheet">
       <div class="sheethead"><h2>📅 Dagplanning importeren</h2><button class="close" type="button" aria-label="Sluiten" onclick="closeModal('dayPlanningModal')">✕</button></div>
       <p>Upload een screenshot met de dagplanning. Je behoudt precies de gecontroleerde bezoekvolgorde. Er worden uitsluitend Google Agenda-afspraken voor de hele dag gemaakt.</p>
+      <div class="day-connect">
+        <button class="save" type="button" id="dayConnectButton" onclick="startDayCalendarOAuth()">Google Agenda koppelen</button>
+        <p id="dayConnection" role="status" aria-live="polite">Verbinding controleren…</p>
+        <small>Eenmalig: registreer deze exacte HTTPS-callback in een Google Cloud OAuth-webapp en configureer het client-ID en clientgeheim in de Home Assistant add-on:</small>
+        <code id="dayCallbackUrl"></code>
+      </div>
       <div class="field"><label for="dayScreenshot">Screenshot (PNG, JPEG of WebP)</label><input class="day-file" id="dayScreenshot" type="file" accept="image/png,image/jpeg,image/webp"></div>
       <p id="dayStatus" role="status" aria-live="polite"></p>
       <section id="dayPreview" hidden>
@@ -46,6 +56,7 @@ function mountDayPlanning() {
       </section>
     </div>`;
   document.body.appendChild(modal);
+  document.getElementById('dayCallbackUrl').textContent = new URL('api/day-planning/oauth/callback', location.href).href;
   document.getElementById('dayScreenshot').addEventListener('change', e => previewDayPlanning(e.target.files[0]));
   document.getElementById('dayCalendar').addEventListener('change', () => { document.getElementById('dayConfirm').checked = false; });
   document.getElementById('dayDate').addEventListener('change', () => { document.getElementById('dayConfirm').checked = false; });
@@ -63,13 +74,39 @@ async function openDayPlanning() {
   await loadDayCalendars();
 }
 
+async function startDayCalendarOAuth() {
+  const button = document.getElementById('dayConnectButton');
+  const status = document.getElementById('dayConnection');
+  button.disabled = true;
+  status.textContent = 'Google-toestemmingsscherm openen…';
+  try {
+    const result = await api('api/day-planning/oauth/start', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        app_url:location.href,
+        redirect_uri:new URL('api/day-planning/oauth/callback', location.href).href
+      })
+    });
+    location.assign(result.url);
+  } catch (error) {
+    status.textContent = error.message;
+    button.disabled = false;
+  }
+}
+
 async function loadDayCalendars() {
   const picker = document.getElementById('dayCalendar');
   const message = document.getElementById('dayAuth');
+  const connection = document.getElementById('dayConnection');
   picker.replaceChildren();
   message.textContent = 'Google Agenda-autorisatie controleren…';
   try {
-    const result = await api('api/day-planning/calendars');
+    const result = await api('api/day-planning/oauth/status');
+    connection.textContent = result.connected ? '✓ Google Agenda verbonden' :
+      (result.configured ? 'Niet verbonden. Tik op Google Agenda koppelen.' :
+       'Niet verbonden. Configureer eerst de OAuth-client in Home Assistant.');
+    if (new URLSearchParams(location.search).get('calendar') === 'mislukt')
+      connection.textContent = 'Google-koppeling mislukt of geannuleerd. Controleer de instellingen.';
     for (const calendar of result.calendars) {
       const opt = document.createElement('option');
       opt.value = calendar.id;
@@ -80,7 +117,8 @@ async function loadDayCalendars() {
     picker.disabled = !result.calendars.length;
   } catch (error) {
     picker.disabled = true;
-    message.textContent = error.message + ' Configureer een afzonderlijke Google Agenda OAuth-token in de Home Assistant add-on.';
+    connection.textContent = 'Niet verbonden';
+    message.textContent = error.message;
   }
 }
 
