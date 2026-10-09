@@ -116,8 +116,20 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
         el.style.setProperty('--trip-safe-top',top+'px');
         el.style.setProperty('--trip-safe-bottom',bottom+'px');
       },{top:safeTop,bottom:safeBottom});
-      await fuel.locator('.sheet').evaluate((el,bottom)=>{el.scrollTop=bottom?el.scrollHeight:0},atBottom);
-      await page.waitForTimeout(60);
+      // openFuel schedules a guideTo() smooth scroll after 80 ms.
+      // Wait until that scheduled navigation has started, then override it
+      // with an instant scroll of the actual scroll container (#fuelSheet).
+      await page.waitForTimeout(180);
+      await fuel.locator('.sheet').evaluate((el,bottom)=>{
+        el.scrollTo({top:bottom?el.scrollHeight:0,behavior:'instant'});
+      },atBottom);
+      await page.waitForFunction(bottom=>{
+        const sheet=document.querySelector('#fuelModal .sheet');
+        return bottom
+          ? sheet.scrollHeight>sheet.clientHeight && sheet.scrollTop>0 &&
+            sheet.scrollTop+sheet.clientHeight>=sheet.scrollHeight-1
+          : sheet.scrollTop<=1;
+      },atBottom,{timeout:5000});
       const m=await close.evaluate(el=>{
         const r=el.getBoundingClientRect(),sheet=el.closest('.sheet').getBoundingClientRect(),
           title=el.closest('.sheethead').querySelector('h2').getBoundingClientRect(),
