@@ -192,20 +192,129 @@ def validate_submission(payload: dict, binding: str) -> tuple[str, list[str], st
     return day, addresses, calendar_id
 
 
-def calendar_service(oauth_json: str):
-    if not oauth_json:
-        raise ValueError('Google Agenda is niet gekoppeld. Configureer een afzonderlijke OAuth-token in de add-on.')
+
+# OAuth Authorization Code + PKCE: all token exchange happens in the add-on.
+# No credentials are sent to JS or stored in localStorage, cookies or logs.
+import os
+from datetime import datetime, timezone
+from urllib.parse import urlencode, urljoin, urlparse
+from urllib.request import Request, urlopen
+
+CALENDAR_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+CALENDAR_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
+OAUTH_PENDING: dict[str, tuple[float, str, str, str]] = {}
+OAUTH_LOCK = threading.RLock()
+
+
+def begin_calendar_oauth(options: dict, redirect_uri: str, app_url: str, origin: str) -> str:
+    client_id = str(options.get('google_calendar_client_id') or '').strip()
+    client_secret = str(options.get('google_calendar_client_secret') or '').strip()
+    if not client_id or not client_secret:
+        raise ValueError('Configureer eerst Google Agenda OAuth-client-ID en clientgeheim in de add-on.')
+    callback, app, page = urlparse(redirect_uri), urlparse(app_url), urlparse(origin)
+    if (not origin or page.scheme != 'https' or app.scheme != 'https' or
+            callback.scheme != 'https' or not app.netloc or
+            app.netloc != page.netloc or callback.netloc != app.netloc or
+            callback.username or callback.password or callback.query or callback.fragment or
+            len(redirect_uri) > 1200 or len(app_url) > 1200 or
+            not callback.path.endswith('/api/day-planning/oauth/callback') or
+            urljoin(app_url, 'api/day-planning/oauth/callback') != redirect_uri):
+        raise ValueError('Open de app via een vaste HTTPS-URL voordat je Google Agenda koppelt.')
+    state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
+    with OAUTH_LOCK:
+        now = time.monotonic()
+        for key, row in list(OAUTH_PENDING.items()):
+            if row[0] <= now:
+                OAUTH_PENDING.pop(key, None)
+        if len(OAUTH_PENDING) >= 32:
+            raise ValueError('Te veel gelijktijdige koppelpogingen.')
+        OAUTH_PENDING[state] = (now + 600, verifier, redirect_uri, client_id)
+    args = {'client_id': client_id, 'redirect_uri': redirect_uri,
+            'response_type': 'code', 'scope': ' '.join(SCOPES),
+            'access_type': 'offline', 'prompt': 'consent', 'include_granted_scopes': 'false',
+            'state': state, 'code_challenge': challenge, 'code_challenge_method': 'S256'}
+    return CALENDAR_AUTH_URL + '?' + urlencode(args)
+
+
+def store_calendar_oauth(info: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix='.google_calendar_', dir=str(path.parent))
     try:
-        info = json.loads(oauth_json)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as output:
+            json.dump(info, output, separators=(',', ':'))
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def finish_calendar_oauth(state: str, code: str, error: str, options: dict, path: Path) -> None:
+    with OAUTH_LOCK:
+        pending = OAUTH_PENDING.pop(state, None)
+    if not pending or pending[0] <= time.monotonic() or error or not code or len(code) > 4096:
+        raise ValueError('Google-autorisatie geannuleerd of verlopen.')
+    _, verifier, redirect_uri, client_id = pending
+    if client_id != str(options.get('google_calendar_client_id') or '').strip():
+        raise ValueError('Google-client tussentijds veranderd.')
+    client_secret = str(options.get('google_calendar_client_secret') or '').strip()
+    if not client_secret:
+        raise ValueError('Google-clientgeheim ontbreekt.')
+    request = Request(CALENDAR_TOKEN_URL, data=urlencode({
+        'code': code, 'client_id': client_id, 'client_secret': client_secret,
+        'redirect_uri': redirect_uri, 'grant_type': 'authorization_code',
+        'code_verifier': verifier}).encode('utf-8'),
+        headers={'Content-Type': 'application/x-www-form-urlencoded'})
+    try:
+        with urlopen(request, timeout=15) as response:
+            result = json.loads(response.read(16385))
+        if (not isinstance(result, dict) or not result.get('refresh_token') or
+                not result.get('access_token') or
+                not set(SCOPES).issubset(set(str(result.get('scope') or '').split()))):
+            raise ValueError('Onvolledige Google Calendar-machtigingen.')
+        from datetime import timedelta as _timedelta
+        expiry = datetime.now(timezone.utc) + _timedelta(seconds=max(1, min(86400, int(result.get('expires_in') or 3600))))
+        store_calendar_oauth({
+            'token': result['access_token'], 'refresh_token': result['refresh_token'],
+            'token_uri': CALENDAR_TOKEN_URL, 'client_id': client_id,
+            'client_secret': client_secret, 'scopes': list(SCOPES),
+            'expiry': expiry.isoformat()}, path)
+    except Exception:
+        raise ValueError('Google Agenda koppelen mislukt; controleer de OAuth-instellingen.') from None
+
+
+def calendar_service(oauth_json: str, token_path: Path | None = None):
+    if token_path is not None and token_path.exists():
+        try:
+            info = json.loads(token_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError, TypeError):
+            raise ValueError('Opgeslagen Google Agenda-autorisatie beschadigd.') from None
+    elif oauth_json:
+        try:
+            info = json.loads(oauth_json)
+        except (ValueError, TypeError):
+            raise ValueError('Google Agenda-autorisatie ongeldig.') from None
+    else:
+        raise ValueError('Google Agenda is niet gekoppeld. Gebruik de knop Google Agenda koppelen.')
+    try:
         scopes = set(info.get('scopes') or [])
         if not set(SCOPES).issubset(scopes) or not all(info.get(key) for key in ('refresh_token', 'client_id', 'client_secret')):
             raise ValueError('Ontbrekende Calendar-rechten of refresh-token.')
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
         credentials = Credentials.from_authorized_user_info(info, scopes=SCOPES)
+        if not credentials.valid:
+            from google.auth.transport.requests import Request
+            credentials.refresh(Request())
+            if token_path is not None and token_path.exists():
+                store_calendar_oauth(json.loads(credentials.to_json()), token_path)
         return build('calendar', 'v3', credentials=credentials, cache_discovery=False)
-    except (ValueError, TypeError, KeyError) as exc:
-        raise ValueError('Google Agenda-autorisatie ongeldig of zonder juiste rechten.') from exc
+    except Exception:
+        raise ValueError('Google Agenda-autorisatie ongeldig, verlopen of zonder juiste rechten.') from None
 
 
 def available_calendars(service) -> list[dict]:
