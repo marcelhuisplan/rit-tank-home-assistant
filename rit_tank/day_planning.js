@@ -117,7 +117,7 @@ async function previewDayPlanning(file) {
       + (result.date_uncertain ? ' Datum niet betrouwbaar herkend; vul deze zelf in. ' : '');
     renderDayRows();
     preview.hidden = false;
-    status.textContent = `${{DAY_ROWS.length} bezoeken gevonden. Controleer ieder adres, zeker de afgekorte regels.`;
+    status.textContent = `${DAY_ROWS.length} bezoeken gevonden. Controleer ieder adres, zeker de afgekorte regels.`;
   } catch (error) {
     status.textContent = error.message;
   } finally {
@@ -132,7 +132,7 @@ function renderDayRows() {
     const outer = document.createElement('div');
     outer.className = 'day-row';
     const heading = document.createElement('b');
-    heading.textContent = `${{String(i + 1).padStart(2, '0')} · ${{row.section === 'middag' ? 'Middag' : 'Ochtend'}`;
+    heading.textContent = `${String(i + 1).padStart(2, '0')} · ${row.section === 'middag' ? 'Middag' : 'Ochtend'}`;
     outer.appendChild(heading);
     if (row.uncertain) {
       const warning = document.createElement('p');
@@ -144,7 +144,7 @@ function renderDayRows() {
     field.className = 'field';
     const label = document.createElement('label');
     label.textContent = 'Volledig adres';
-    label.htmlFor = `dayAddress${{row.source_id}`;
+    label.htmlFor = `dayAddress${row.source_id}`;
     const input = document.createElement('input');
     input.id = label.htmlFor;
     input.type = 'text';
@@ -224,14 +224,14 @@ async function submitDayPlanning() {
     const check = await api('api/day-planning/check', {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
     });
-    if (check.duplicates.length && !confirm(`${{check.duplicates.length} bezoek(en) staan op dit adres en deze datum al in de agenda (regels: ${{check.duplicates.join(', ')}). Deze worden overgeslagen. Doorgaan met de overige afspraken?`)) {
+    if (check.duplicates.length && !confirm(`${check.duplicates.length} bezoek(en) staan op dit adres en deze datum al in de agenda (regels: ${check.duplicates.join(', ')}). Deze worden overgeslagen. Doorgaan met de overige afspraken?`)) {
       resultLabel.textContent = 'Import geannuleerd; niets aangemaakt.';
       return;
     }
     const result = await api('api/day-planning/import', {
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
     });
-    resultLabel.textContent = `${{result.created} nieuwe dagafspraken; ${{result.skipped} overgeslagen als dubbel. Er zijn geen bestaande afspraken gewijzigd.`;
+    resultLabel.textContent = `${result.created} nieuwe dagafspraken; ${result.skipped} overgeslagen als dubbel. Er zijn geen bestaande afspraken gewijzigd.`;
     document.getElementById('dayConfirm').checked = false;
     DAY_DRAFT = null;
   } catch (error) {
