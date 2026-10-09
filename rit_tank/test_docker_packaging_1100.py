@@ -16,7 +16,6 @@ REQUIRED_RUNTIME_MODULES = [
     'assistant.py',
     'odometer_control.py',
     'receipt_archive.py',
-    'day_planning.py',
 ]
 
 

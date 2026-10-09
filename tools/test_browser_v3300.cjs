@@ -60,13 +60,22 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
       await route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
     });
 
-    // Release 33.08: real Chromium/WebKit touch and scroll regression for the
-    // standalone receipt archive, without changing the receipt workflow.
+    // Release 33.09: iPhone/iPad tankbon close-controls at both scroll extremes.
     await page.goto('https://rit-tank.test/?case=start');
     await page.waitForFunction(()=>typeof DATA!=='undefined');
     await page.addScriptTag({content:fs.readFileSync(path.join(root,'rit_tank/receipt_archive.js'),'utf8')});
     for(const atBottom of [false,true]){
       await page.evaluate(()=>openReceiptArchive());
+      await page.evaluate(({top,bottom})=>{
+        const modal=document.getElementById('receiptArchiveModal');
+        modal.style.setProperty('--trip-safe-top',top+'px');
+        modal.style.setProperty('--trip-safe-bottom',bottom+'px');
+        const list=document.getElementById('archiveList');
+        for(let n=0;n<32;n++){
+          const row=document.createElement('div');row.className='known-row';
+          row.textContent='Bestaande bon '+n;list.appendChild(row);
+        }
+      },{top:safeTop,bottom:safeBottom});
       const archive=page.locator('#receiptArchiveModal'),close=archive.locator('.sheethead .close');
       await archive.waitFor({state:'visible'});
       await archive.locator('.sheet').evaluate((el,bottom)=>{el.scrollTop=bottom?el.scrollHeight:0},atBottom);
@@ -89,12 +98,64 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
       assert.equal(metrics.sticky,'sticky',tag+' sticky title bar');
       assert.equal(metrics.hit,true,tag+' center is touchable');
       assert.equal(metrics.withinSheet,true,tag+' button within sheet');
-      assert.ok(metrics.left>=0&&metrics.right<=width+.5&&metrics.top>=0&&metrics.bottom<=height+.5,tag+' button fully on screen');
+      assert.ok(metrics.left>=0&&metrics.right<=width+.5&&metrics.top>=safeTop-.5&&metrics.bottom<=height-safeBottom+.5,tag+' button fully inside safe area');
       assert.ok(metrics.gap>=10,tag+' heading does not overlap button');
       if(atBottom)assert.equal(metrics.atBottom,true,tag+' scrolled to end');
       await page.screenshot({path:path.join(output,engine+'-'+device+'-receipt-close-'+(atBottom?'bottom':'top')+'.png')});
       await close.tap();
       await archive.waitFor({state:'hidden'});
+    }
+
+    // Release 33.09: Tankbeurt has the identical sticky touch-safe control.
+    for(const atBottom of [false,true]){
+      await page.evaluate(()=>openFuel());
+      const fuel=page.locator('#fuelModal'),close=fuel.locator('.sheethead .close');
+      await fuel.waitFor({state:'visible'});
+      await page.evaluate(({top,bottom})=>{
+        const el=document.getElementById('fuelModal');
+        el.style.setProperty('--trip-safe-top',top+'px');
+        el.style.setProperty('--trip-safe-bottom',bottom+'px');
+      },{top:safeTop,bottom:safeBottom});
+      // openFuel schedules a guideTo() smooth scroll after 80 ms.
+      // Wait until that scheduled navigation has started, then override it
+      // with an instant scroll of the actual scroll container (#fuelSheet).
+      await page.waitForTimeout(180);
+      await fuel.locator('.sheet').evaluate((el,bottom)=>{
+        el.scrollTo({top:bottom?el.scrollHeight:0,behavior:'instant'});
+      },atBottom);
+      await page.waitForFunction(bottom=>{
+        const sheet=document.querySelector('#fuelModal .sheet');
+        return bottom
+          ? sheet.scrollHeight>sheet.clientHeight && sheet.scrollTop>0 &&
+            sheet.scrollTop+sheet.clientHeight>=sheet.scrollHeight-1
+          : sheet.scrollTop<=1;
+      },atBottom,{timeout:5000});
+      const m=await close.evaluate(el=>{
+        const r=el.getBoundingClientRect(),sheet=el.closest('.sheet').getBoundingClientRect(),
+          title=el.closest('.sheethead').querySelector('h2').getBoundingClientRect(),
+          style=getComputedStyle(el),header=getComputedStyle(el.closest('.sheethead')),
+          container=el.closest('.sheet');
+        const hit=(x,y)=>{const p=document.elementFromPoint(x,y);return p===el||el.contains(p)};
+        return {width:r.width,height:r.height,left:r.left,right:r.right,top:r.top,bottom:r.bottom,
+          bg:style.backgroundColor,fg:style.color,sticky:header.position,
+          hit:[[.25,.25],[.5,.5],[.75,.75]].every(([x,y])=>hit(r.left+r.width*x,r.top+r.height*y)),
+          inSheet:r.left>=sheet.left-.5&&r.right<=sheet.right+.5,gap:r.left-title.right,
+          atBottom:container.scrollTop+container.clientHeight>=container.scrollHeight-1};
+      });
+      const tag=engine+' '+device+' fuel '+(atBottom?'bottom':'top');
+      assert.ok(m.width>=56&&m.height>=56,tag+' 56px close');
+      assert.equal(m.bg,'rgb(80, 238, 199)',tag+' mint');
+      assert.equal(m.fg,'rgb(5, 37, 29)',tag+' dark cross');
+      assert.equal(m.sticky,'sticky',tag+' sticky');
+      assert.equal(m.hit,true,tag+' tappable');
+      assert.equal(m.inSheet,true,tag+' within sheet');
+      assert.ok(m.gap>=10,tag+' no title overlap');
+      assert.ok(m.left>=0&&m.right<=width+.5&&m.top>=safeTop-.5&&m.bottom<=height-safeBottom+.5,tag+' safe viewport');
+      if(atBottom)assert.equal(m.atBottom,true,tag+' scroll complete');
+      await page.screenshot({path:path.join(output,engine+'-'+device+'-fuel-close-'+(atBottom?'bottom':'top')+'.png')});
+      await close.tap();
+      await fuel.waitFor({state:'hidden'});
+      assert.equal(sent.length,0,tag+' close did not store data');
     }
 
     // Release 33.04: the shared close button must stay inside the safe viewport in every trip screen at both scroll extremes.

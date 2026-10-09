@@ -1,8 +1,10 @@
 # Changelog
 
-## 33.08
+## 33.09
 
-- Dagplanning uit een iPhone/iPad-screenshot met datum, 5 bezoeken in de oorspronkelijke ochtend-/middagvolgorde, controle- en correctieoverzicht en import als afzonderlijke Google Agenda-afspraken voor de hele dag. Afgekorte adressen vereisen handmatige correctie. Gescheiden OAuth-autorisatie, doelagendakeuze, doublurecontrole en idempotente Google event-ID's. Geen wijzigingen aan ritten, tellerstanden, tankbeurten of bestaande agenda-items.
+- Herstel van alle 33.07-functies: dagplanningimport, Google Agenda-OAuth, instellingen, routes en hun extra modules uit 33.08 zijn teruggedraaid. De bestaande Google Drive-integratie is behouden.
+- De sluitknoppen van Tankbeurt en Tankbonnenarchief delen exact de mintgroene 56 × 56 px knop, sticky titelbalk en iPhone-safe-area van Tussenstop vastleggen.
+- Geen databasemigratie en geen wijziging of verwijdering van ritten, kilometerstanden, tankbonnen, PDF-archief of /data-bestanden. Oude Google Calendar-OAuth-tokenbestanden, indien aanwezig, blijven ongemoeid en worden niet meer gebruikt.
 
 ## 33.07
 
