@@ -211,6 +211,81 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
       }
     }
 
+    // Release 33.10: simulate the shrinking/moving iOS visual viewport while
+    // typing. Verify the actual input rect, not just the sheet height.
+    for(const mode of ['start','stop','finish']){
+      await page.goto('https://rit-tank.test/?case='+(mode==='start'?'start':'finish'));
+      await page.waitForFunction(m=>typeof DATA!=='undefined'&&(m==='start'||DATA?.business?.active_trip),mode);
+      await page.evaluate(m=>openTripPoint(m),mode);
+      await page.locator('#tripModal').waitFor({state:'visible'});
+      await page.waitForTimeout(150); // Let the pre-existing opening scroll complete.
+      const field=page.locator('#physicalTripValue');
+      await field.click();
+      for(const keyboardHeight of [360,320]){
+        await page.setViewportSize({width,height:keyboardHeight});
+        // Safari can reset the nested sheet scroll during a viewport pan.
+        await page.evaluate(()=>{
+          document.querySelector('#tripModal .sheet').scrollTop=0;
+          window.visualViewport.dispatchEvent(new Event('scroll'));
+        });
+        await page.waitForFunction(()=>{
+          const el=document.getElementById('physicalTripValue'),sheet=el.closest('.sheet'),
+            head=sheet.querySelector('.sheethead'),view=window.visualViewport;
+          const r=el.getBoundingClientRect(),s=sheet.getBoundingClientRect(),
+            top=Math.max(s.top,head.getBoundingClientRect().bottom,view.offsetTop)+8,
+            bottom=Math.min(s.bottom,view.offsetTop+view.height)-8,
+            hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+          return document.activeElement===el&&r.top>=top-.5&&r.bottom<=bottom+.5&&
+            (hit===el||el.contains(hit));
+        },null,{timeout:5000});
+        if(keyboardHeight===360){
+          await field.fill('');
+          await field.pressSequentially('25234',{delay:12});
+        }else{
+          await field.press('Backspace');
+          await field.pressSequentially('5',{delay:12});
+        }
+        assert.equal(await field.inputValue(),keyboardHeight===360?'25234':'25235',
+          engine+' '+device+' '+mode+' typed odometer is correct');
+        const typingVisible=await field.evaluate(el=>{
+          const r=el.getBoundingClientRect(),sheet=el.closest('.sheet'),
+            head=sheet.querySelector('.sheethead'),s=sheet.getBoundingClientRect(),
+            view=window.visualViewport,hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+          return r.top>=Math.max(s.top,head.getBoundingClientRect().bottom,view.offsetTop)+7&&
+            r.bottom<=Math.min(s.bottom,view.offsetTop+view.height)-7&&
+            (hit===el||el.contains(hit));
+        });
+        assert.equal(typingVisible,true,engine+' '+device+' '+mode+' input stays fully visible while typing '+keyboardHeight);
+        assert.equal(await page.locator('#tripModal .sheet').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
+        await page.screenshot({path:path.join(output,engine+'-'+device+'-'+mode+'-typing-'+keyboardHeight+'.png')});
+      }
+      await page.setViewportSize({width,height});
+      assert.equal(await field.inputValue(),'25235',engine+' '+device+' '+mode+' odometer survives keyboard dismissal');
+      await page.locator('#tripModal .close').tap();
+      await page.locator('#tripModal').waitFor({state:'hidden'});
+      assert.equal(sent.length,0,engine+' '+device+' '+mode+' typing did not save trip');
+    }
+
+    // Tankbeurt enters kilometres by six wheels (no keyboard). The displayed
+    // value must survive opening and closing a keyboard for another fuel field.
+    await page.goto('https://rit-tank.test/?case=start');
+    await page.waitForFunction(()=>typeof DATA!=='undefined');
+    await page.evaluate(()=>openFuel());
+    await page.locator('#fuelModal').waitFor({state:'visible'});
+    await page.waitForTimeout(180);
+    assert.equal(await page.locator('#fuelOdoDisplay').textContent(),'25.230');
+    await page.locator('#fuelOdoD5').evaluate(el=>{el.scrollTop=50});
+    await page.waitForFunction(()=>document.getElementById('fuelOdo').value==='25231');
+    assert.equal(await page.locator('#fuelOdoDisplay').textContent(),'25.231');
+    await page.locator('#fuelStation').focus();
+    await page.setViewportSize({width,height:360});
+    await page.waitForFunction(()=>document.getElementById('fuelModal').getBoundingClientRect().height<=361);
+    assert.equal(await page.locator('#fuelOdoDisplay').textContent(),'25.231');
+    await page.setViewportSize({width,height});
+    await page.locator('#fuelModal .close').tap();
+    await page.locator('#fuelModal').waitFor({state:'hidden'});
+    assert.equal(sent.length,0,engine+' '+device+' fuel wheel keyboard check did not save data');
+
     // Start: proposal is not trusted until the large explicit confirmation button is pressed.
     await page.goto('https://rit-tank.test/?case=start');
     await page.waitForFunction(()=>typeof DATA!=='undefined');

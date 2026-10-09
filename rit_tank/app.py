@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.09'
+APP_VERSION = '33.10'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -3172,7 +3172,7 @@ async function refreshTripOdoProposal(request){
     $('tripOdoStepHint').textContent='Voorstel niet beschikbaar — controleer de teller';
   }finally{clearTimeout(timer)}
 }
-async function openTripPoint(mode){clearTimeout(TRIP_SEARCH_TIMER);TRIP_MODE=mode;++TRIP_PROPOSAL_REQUEST;++TRIP_ADDRESS_REQUEST;++TRIP_ROUTE_PREVIEW_REQUEST;TRIP_GPS=null;$('tripAddressChoices').innerHTML='';$('tripManualAddress').value='';$('tripOdoChecked').checked=false;TRIP_LOCATION=null;TRIP_SEGMENT_TYPE='business';TRIP_ODO_MANUAL=false;let active=DATA.business?.active_trip;$('tripModalTitle').textContent=mode==='start'?'Rit starten':mode==='finish'?'Rit afsluiten':'Tussenstop vastleggen';$('tripStartFields').style.display=mode==='start'?'block':'none';$('tripFinishFields').style.display=mode==='finish'?'block':'none';$('tripHomeButton').hidden=false;$('tripSchoolButton').hidden=false;$('tripDate').value=localInputNow();$('tripStopNote').value='';if(mode==='start'){$('tripPurpose').value='klantbezoek';$('tripClient').value='';$('tripTripNote').value=''};if(mode==='finish')$('tripDeviatingRoute').value=active?.deviating_route||'';$('tripLocationTitle').textContent='📍 Nog geen locatie vastgelegd';$('tripLocationDetail').textContent='Kies hieronder de juiste locatie.';$('tripGoogleAttrib').style.display='none';$('tripSaveButton').textContent=mode==='start'?'Registratie starten':mode==='finish'?'Ritregistratie afsluiten':'Locatie opslaan';$('tripOdoSuggestion').classList.remove('show');$('tripOdoEditor').hidden=mode!=='start';$('tripOdoStepHint').textContent=mode==='start'?'Laatste stand is vooringesteld':'Berekende stand ophalen…';initOdometerWheel('trip',DATA.current_odometer??0);if(mode!=='start')await refreshTripOdoProposal(TRIP_PROPOSAL_REQUEST);initPhysicalTrip(mode,active);openModal('tripModal');setTimeout(()=>$('physicalTripCard').scrollIntoView({block:'start'}),80)}
+async function openTripPoint(mode){clearTimeout(TRIP_SEARCH_TIMER);TRIP_MODE=mode;++TRIP_PROPOSAL_REQUEST;++TRIP_ADDRESS_REQUEST;++TRIP_ROUTE_PREVIEW_REQUEST;TRIP_GPS=null;$('tripAddressChoices').innerHTML='';$('tripManualAddress').value='';$('tripOdoChecked').checked=false;TRIP_LOCATION=null;TRIP_SEGMENT_TYPE='business';TRIP_ODO_MANUAL=false;let active=DATA.business?.active_trip;$('tripModalTitle').textContent=mode==='start'?'Rit starten':mode==='finish'?'Rit afsluiten':'Tussenstop vastleggen';$('tripStartFields').style.display=mode==='start'?'block':'none';$('tripFinishFields').style.display=mode==='finish'?'block':'none';$('tripHomeButton').hidden=false;$('tripSchoolButton').hidden=false;$('tripDate').value=localInputNow();$('tripStopNote').value='';if(mode==='start'){$('tripPurpose').value='klantbezoek';$('tripClient').value='';$('tripTripNote').value=''};if(mode==='finish')$('tripDeviatingRoute').value=active?.deviating_route||'';$('tripLocationTitle').textContent='📍 Nog geen locatie vastgelegd';$('tripLocationDetail').textContent='Kies hieronder de juiste locatie.';$('tripGoogleAttrib').style.display='none';$('tripSaveButton').textContent=mode==='start'?'Registratie starten':mode==='finish'?'Ritregistratie afsluiten':'Locatie opslaan';$('tripOdoSuggestion').classList.remove('show');$('tripOdoEditor').hidden=mode!=='start';$('tripOdoStepHint').textContent=mode==='start'?'Laatste stand is vooringesteld':'Berekende stand ophalen…';initOdometerWheel('trip',DATA.current_odometer??0);if(mode!=='start')await refreshTripOdoProposal(TRIP_PROPOSAL_REQUEST);initPhysicalTrip(mode,active);openModal('tripModal');setTimeout(()=>{if(document.activeElement!==$('physicalTripValue'))$('physicalTripCard').scrollIntoView({block:'start'})},80)}
 let TRIP_SEARCH_TIMER=null,TRIP_ADDRESS_REQUEST=0,TRIP_ROUTE_PREVIEW_REQUEST=0,TRIP_ADDRESSES=[],TRIP_GPS=null;
 async function captureTripLocation(){clearTimeout(TRIP_SEARCH_TIMER);++TRIP_ROUTE_PREVIEW_REQUEST;let request=++TRIP_ADDRESS_REQUEST,title=$('tripLocationTitle'),detail=$('tripLocationDetail');TRIP_LOCATION=null;TRIP_GPS=null;TRIP_ADDRESSES=[];$('tripManualAddress').value='';$('tripAddressChoices').innerHTML='';title.textContent='📍 Locatie bepalen…';detail.textContent='Adressen in de buurt ophalen.';try{
  let loc=await resolveLocation();if(request!==TRIP_ADDRESS_REQUEST)return;TRIP_GPS=loc;
@@ -3331,8 +3331,41 @@ async function submitPhysical(path,payload,onSaved,token=null){
   }catch(e){$('distanceError').textContent=e.message;toast(e.message,true)}finally{physicalBusy(false)}
 }
 async function confirmPhysicalCheck(){let pending=PHYSICAL_PENDING;if(!pending||PHYSICAL_BUSY)return;await submitPhysical(pending.path,pending.payload,pending.onSaved,pending.token)}
-function fitPhysicalViewport(){let view=window.visualViewport;if(!view)return;for(let id of ['tripModal','assistantModal','distanceModal','tripSuccessModal']){let modal=$(id);if(modal){modal.style.top=view.offsetTop+'px';modal.style.height=view.height+'px';modal.style.bottom='auto'}}}
-if(typeof window!=='undefined'&&window.visualViewport){window.visualViewport.addEventListener('resize',fitPhysicalViewport);window.visualViewport.addEventListener('scroll',fitPhysicalViewport)}
+// Keep the focused odometer above the iOS keyboard in the sheet's own scrollport.
+// visualViewport moves independently of the layout viewport in Safari and installed PWAs.
+let PHYSICAL_INPUT_FRAME=0;
+function revealFocusedOdometer(){
+  const input=$('physicalTripValue'),modal=$('tripModal');
+  if(document.activeElement!==input||!modal.classList.contains('show'))return;
+  const sheet=modal.querySelector('.sheet'),header=sheet.querySelector('.sheethead');
+  const field=input.getBoundingClientRect(),panel=sheet.getBoundingClientRect(),view=window.visualViewport;
+  const top=Math.max(panel.top,header.getBoundingClientRect().bottom,view?view.offsetTop:0)+10;
+  let bottom=Math.min(panel.bottom,view?view.offsetTop+view.height:window.innerHeight)-10;
+  const action=$('physicalConfirmButton'),button=action.getBoundingClientRect();
+  if(getComputedStyle(action).position==='sticky'&&button.top<bottom&&button.bottom>top)bottom=Math.min(bottom,button.top-8);
+  if(bottom<=top)return;
+  if(field.bottom>bottom)sheet.scrollTop+=field.bottom-bottom;
+  else if(field.top<top)sheet.scrollTop-=top-field.top;
+}
+function schedulePhysicalInputReveal(){
+  if(document.activeElement!==$('physicalTripValue')||!$('tripModal').classList.contains('show'))return;
+  if(PHYSICAL_INPUT_FRAME)cancelAnimationFrame(PHYSICAL_INPUT_FRAME);
+  PHYSICAL_INPUT_FRAME=requestAnimationFrame(()=>{PHYSICAL_INPUT_FRAME=0;revealFocusedOdometer()});
+}
+$('physicalTripValue').addEventListener('focus',schedulePhysicalInputReveal);
+$('physicalTripValue').addEventListener('input',schedulePhysicalInputReveal);
+function fitPhysicalViewport(){
+  let view=window.visualViewport;
+  if(view)for(let id of ['tripModal','fuelModal','assistantModal','distanceModal','tripSuccessModal']){
+    let modal=$(id);
+    if(modal){modal.style.top=view.offsetTop+'px';modal.style.height=view.height+'px';modal.style.bottom='auto'}
+  }
+  schedulePhysicalInputReveal();
+}
+if(typeof window!=='undefined'){
+  if(window.visualViewport){window.visualViewport.addEventListener('resize',fitPhysicalViewport);window.visualViewport.addEventListener('scroll',fitPhysicalViewport)}
+  if(typeof window.addEventListener==='function')window.addEventListener('resize',fitPhysicalViewport);
+}
 function successLocation(stop){return stop?.location_address||stop?.location_label||stop?.manual_label||'—'}
 function showTripSuccess(result){
   let trip=result?.trip||{},stops=trip.stops||[],start=stops[0]||{},end=stops.at?.(-1)||stops[stops.length-1]||{};
@@ -3429,7 +3462,7 @@ function rememberFuelPrice(){let value=fuelValues().price;if(!Number.isFinite(va
 function initFuelWheels(liters=null,price=null){let last=DATA.latest_fuel||{},L=Math.max(0,Math.min(25000,Math.round(Number(liters??last.liters??40)*100))),P=Math.max(0,Math.min(5999,Math.round(Number(price??preferredFuelPrice())*1000))),upd=(changed=false)=>{updateFuelTotal();if(changed)rememberFuelPrice()};createWheel('literWhole',Array.from({length:251},(_,i)=>i),Math.floor(L/100),upd);createWheel('literDec',Array.from({length:10},(_,i)=>i),Math.floor(L/10)%10,upd);createWheel('literDec2',Array.from({length:10},(_,i)=>i),L%10,upd);createWheel('priceWhole',Array.from({length:6},(_,i)=>i),Math.floor(P/1000),upd);createWheel('priceD1',Array.from({length:10},(_,i)=>i),Math.floor(P/100)%10,upd);createWheel('priceD2',Array.from({length:10},(_,i)=>i),Math.floor(P/10)%10,upd);createWheel('priceD3',Array.from({length:10},(_,i)=>i),P%10,upd);updateFuelTotal()}
 function fuelValues(){let liters=Number(wheelVal('literWhole')||0)+Number(wheelVal('literDec')||0)/10+Number(wheelVal('literDec2')||0)/100,price=Number(wheelVal('priceWhole')||0)+Number(wheelVal('priceD1')||0)/10+Number(wheelVal('priceD2')||0)/100+Number(wheelVal('priceD3')||0)/1000;return{liters:Number(liters.toFixed(2)),price:Number(price.toFixed(3))}}
 function updateFuelTotal(){if(!DATA)return;let v=fuelValues();$('fuelTotal').textContent=`${DATA.settings.currency} ${fmt(v.liters*v.price,2)}`}
-function openFuel(){clearFuelConflictWarning();$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];$('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';$('stations').innerHTML=(DATA.recent_stations||[]).map(s=>`<option value="${escAttr(s)}">`).join('');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');initOdometerWheel('fuel',DATA.current_odometer??0);initFuelWheels();openModal('fuelModal');setTimeout(()=>guideTo('fuelStepScan',0),80)}
+function openFuel(){clearFuelConflictWarning();$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];$('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';$('stations').innerHTML=(DATA.recent_stations||[]).map(s=>`<option value="${escAttr(s)}">`).join('');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');initOdometerWheel('fuel',DATA.current_odometer??0);initFuelWheels();openModal('fuelModal');fitPhysicalViewport();setTimeout(()=>guideTo('fuelStepScan',0),80)}
 $('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
 function setLocationStatus(msg,kind=''){$('locationStatus').textContent=msg;$('locationStatus').className='location-status '+kind}
 function browserLocation(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Browser-GPS wordt hier niet ondersteund.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser'}),e=>reject(new Error(e.message||'Locatie niet beschikbaar.')),{enableHighAccuracy:true,timeout:9000,maximumAge:30000})})}
