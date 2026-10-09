@@ -60,6 +60,43 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
       await route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
     });
 
+    // Release 33.08: real Chromium/WebKit touch and scroll regression for the
+    // standalone receipt archive, without changing the receipt workflow.
+    await page.goto('https://rit-tank.test/?case=start');
+    await page.waitForFunction(()=>typeof DATA!=='undefined');
+    await page.addScriptTag({content:fs.readFileSync(path.join(root,'rit_tank/receipt_archive.js'),'utf8')});
+    for(const atBottom of [false,true]){
+      await page.evaluate(()=>openReceiptArchive());
+      const archive=page.locator('#receiptArchiveModal'),close=archive.locator('.sheethead .close');
+      await archive.waitFor({state:'visible'});
+      await archive.locator('.sheet').evaluate((el,bottom)=>{el.scrollTop=bottom?el.scrollHeight:0},atBottom);
+      await page.waitForTimeout(60);
+      const metrics=await close.evaluate(el=>{
+        const r=el.getBoundingClientRect(),head=el.closest('.sheethead'),
+          sheet=el.closest('.sheet'),style=getComputedStyle(el),h=head.querySelector('h2').getBoundingClientRect();
+        const point=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+        return {width:r.width,height:r.height,left:r.left,right:r.right,top:r.top,bottom:r.bottom,
+          background:style.backgroundColor,color:style.color,
+          sticky:getComputedStyle(head).position,hit:point===el||el.contains(point),
+          gap:r.left-h.right,withinSheet:r.left>=sheet.getBoundingClientRect().left-.5&&
+          r.right<=sheet.getBoundingClientRect().right+.5,
+          atBottom:sheet.scrollTop+sheet.clientHeight>=sheet.scrollHeight-1};
+      });
+      const tag=engine+' '+device+' receipt archive '+(atBottom?'bottom':'top');
+      assert.ok(metrics.width>=56&&metrics.height>=56,tag+' large close button');
+      assert.equal(metrics.background,'rgb(80, 238, 199)',tag+' mint background');
+      assert.equal(metrics.color,'rgb(5, 37, 29)',tag+' dark cross');
+      assert.equal(metrics.sticky,'sticky',tag+' sticky title bar');
+      assert.equal(metrics.hit,true,tag+' center is touchable');
+      assert.equal(metrics.withinSheet,true,tag+' button within sheet');
+      assert.ok(metrics.left>=0&&metrics.right<=width+.5&&metrics.top>=0&&metrics.bottom<=height+.5,tag+' button fully on screen');
+      assert.ok(metrics.gap>=10,tag+' heading does not overlap button');
+      if(atBottom)assert.equal(metrics.atBottom,true,tag+' scrolled to end');
+      await page.screenshot({path:path.join(output,engine+'-'+device+'-receipt-close-'+(atBottom?'bottom':'top')+'.png')});
+      await close.tap();
+      await archive.waitFor({state:'hidden'});
+    }
+
     // Release 33.04: the shared close button must stay inside the safe viewport in every trip screen at both scroll extremes.
     for(const mode of ['start','stop','finish']){
       for(const atBottom of [false,true]){
