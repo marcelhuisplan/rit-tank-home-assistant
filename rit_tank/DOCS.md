@@ -416,28 +416,15 @@ De knop **Dagplanning importeren** staat op het dashboard. Upload een screenshot
 
 Selecteer een schrijfbare doelagenda en vink de expliciete bevestiging aan. De app voert eerst een doublurecontrole uit bij Google en vraagt bij bestaande dagafspraken op dezelfde locatie en datum een extra bevestiging. Elk nieuw bezoek wordt één aparte hele-dag-afspraak zonder tijden, met titel **01 · Bezoek 1 van N**, enzovoort en het gecontroleerde adres in het locatieveld. Bestaande afspraken worden niet gewijzigd. Stabiele Google event-ID's en een Google-voorcontrole voorkomen duplicaten bij herhaald verzenden.
 
-### Google Agenda eenmalig veilig koppelen
+### Google Agenda koppelen op iPhone/iPad
 
-De bestaande Google Drive-koppeling is alleen bruikbaar als haar OAuth-token al expliciet Calendar-rechten heeft. Anders is er een aparte beperkte autorisatie nodig in de add-onoptie `google_calendar_oauth_json` (een afgeschermd wachtwoordveld). Dit is een *authorized user* OAuth-JSON met refresh-token, géén service-account-JSON.
+Geen computer, Python-script of handmatig JSON-token nodig. Maak via de browser op iPhone/iPad eenmalig in Google Cloud Console (https://console.cloud.google.com/apis/credentials) een OAuth-client van het type Webapplicatie (niet Desktop). Activeer Google Calendar API, configureer het toestemmingsscherm en voeg jezelf zo nodig als testgebruiker toe.
 
-1. Activeer **Google Calendar API** in je Google Cloud-project, configureer het OAuth-toestemmingsscherm en maak een OAuth-client van het type **Desktop-app**. Download het client-secret-bestand op je eigen computer als `client_secret.json`. Bij een testapp moet je eigen account als testgebruiker zijn toegevoegd; voor langdurige toegang kan publicatie van het toestemmingsscherm nodig zijn.
-2. Voer op je eigen computer `python -m pip install google-auth-oauthlib` uit. Bewaar het volgende script naast `client_secret.json` en voer het uit. Meld je met je Google-account aan, kies de beperkte Calendar-machtigingen en bewaar de JSON uitsluitend lokaal.
+1. Open Rit & Tank via een vaste beveiligde HTTPS-URL. Open Dagplanning importeren. Bij de knop Google Agenda koppelen staat de exacte callback-URL. Registreer die URI in Google Cloud onder Authorized redirect URIs. Google vereist een exacte overeenkomst, ook met Home Assistant Ingress-paden. Een veranderlijk Ingress-pad is daarom onhandig; gebruik bij voorkeur een stabiele HTTPS-URL voor de zelfstandige app.
+2. Vul in Home Assistant → Add-ons → Rit & Tank → Configuratie uitsluitend google_calendar_client_id en google_calendar_client_secret vanuit Google Cloud in en herstart de add-on. Geen authorized-user-JSON of refresh-token plakken. De oudere google_calendar_oauth_json-optie blijft voor bestaande installaties ondersteund.
+3. Tik op Google Agenda koppelen, kies het Google-account en geef de beperkte rechten calendar.events en calendar.calendarlist.readonly. De autorisatie gaat via browserredirect, een eenmalige state en PKCE. Daarna staat in de app Google Agenda verbonden en kun je de doelagenda kiezen.
+4. Controleer eerst alle bezoekadressen en volgorde en bevestig daarna expliciet de import. De bestaande doublurecheck en stabiele Google event-ID's blijven behouden.
 
-    ~~~python
-    from google_auth_oauthlib.flow import InstalledAppFlow
+De OAuth-code wordt nooit gelogd. Tokens worden uitsluitend door de add-on onder /data/google_calendar_oauth.json met bestandsrechten 0600 opgeslagen, niet in browseropslag. Bij een verlopen koppeling kun je opnieuw autoriseren. Google kan testapps na 7 dagen een refresh-token laten verlopen; pas zo nodig de publicatiestatus van het OAuth-toestemmingsscherm aan.
 
-    scopes = [
-        'https://www.googleapis.com/auth/calendar.events',
-        'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
-    ]
-    flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', scopes)
-    creds = flow.run_local_server(port=0, access_type='offline', prompt='consent')
-    with open('calendar_credentials.json', 'w', encoding='utf-8') as handle:
-        handle.write(creds.to_json())
-    print('Google Agenda-autorisatie gereed')
-    ~~~
-
-3. Kopieer de volledige inhoud van `calendar_credentials.json` naar **Home Assistant → Add-ons → Rit & Tank → Configuratie → google_calendar_oauth_json**. Sla op en herstart de add-on. Deel deze JSON nooit in GitHub, chat, screenshots of logs.
-4. Open **Dagplanning importeren**, selecteer een agenda en controleer de voorgestelde afspraken. Als de autorisatie wordt ingetrokken of vervalt, genereer een nieuw refresh-token op je eigen computer.
-
-De Calendar-aanroepen worden veilig door de add-onserver uitgevoerd; ook via Home Assistant Ingress is geen Google-redirect nodig. Het originele screenshot van 9 oktober 2026 met persoonsgegevens wordt niet in de openbare repository opgenomen; de regressietest gebruikt geanonimiseerde OCR-tekst met dezelfde vijfbezoekstructuur. Ritten, kilometerstanden, tankbeurten en bestaande agenda-afspraken blijven onaangeroerd.
+Het originele screenshot van 9 oktober 2026 met persoonsgegevens wordt niet gepubliceerd; regressietests gebruiken geanonimiseerde OCR-tekst. Ritten, tellerstanden en tankbeurten blijven onaangeroerd.
