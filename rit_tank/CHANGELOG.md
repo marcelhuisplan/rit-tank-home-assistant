@@ -1,5 +1,11 @@
 # Changelog
 
+## 33.10
+
+- iOS Safari/PWA: gerichte visualViewport- en binnenscrollcorrectie houdt de actieve fysieke kilometerinvoer zichtbaar tijdens openen, typen en sluiten van het toetsenbord op kleinere iPhones.
+- Mobiele Chromium/WebKit-regressietests voor start, tussenstop en afsluiten controleren zichtbaarheid en ingevoerde cijfers; Tankbeurt-cijferwielen en hun waarde blijven behouden.
+- Geen wijzigingen aan kilometerberekeningen, opgeslagen ritten/tankbonnen of mintgroene sluitknoppen.
+
 ## 33.09
 
 - Herstel van alle 33.07-functies: dagplanningimport, Google Agenda-OAuth, instellingen, routes en hun extra modules uit 33.08 zijn teruggedraaid. De bestaande Google Drive-integratie is behouden.
