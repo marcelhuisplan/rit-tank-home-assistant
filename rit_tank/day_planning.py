@@ -282,7 +282,7 @@ def finish_calendar_oauth(state: str, code: str, error: str, options: dict, path
             'token': result['access_token'], 'refresh_token': result['refresh_token'],
             'token_uri': CALENDAR_TOKEN_URL, 'client_id': client_id,
             'client_secret': client_secret, 'scopes': list(SCOPES),
-            'expiry': expiry.isoformat()}, path)
+            'expiry': expiry.strftime('%Y-%m-%dT%H:%M:%SZ')}, path)
     except Exception:
         raise ValueError('Google Agenda koppelen mislukt; controleer de OAuth-instellingen.') from None
 
