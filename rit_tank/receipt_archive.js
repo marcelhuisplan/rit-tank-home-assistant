@@ -7,11 +7,6 @@ let ARCHIVE_BUSY = false;
 function mountReceiptArchive() {
   const style = document.createElement('style');
   style.textContent = `
-    #receiptArchiveModal .sheet { max-height:calc(100dvh - env(safe-area-inset-top) - 12px); padding-bottom:calc(20px + env(safe-area-inset-bottom)); scroll-padding-bottom:calc(24px + env(safe-area-inset-bottom)); }
-    #receiptArchiveModal .sheethead { position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:12px; min-width:0; background:#14191e; padding:4px env(safe-area-inset-right) 8px env(safe-area-inset-left); }
-    #receiptArchiveModal .sheethead h2 { flex:1; min-width:0; overflow-wrap:anywhere; }
-    #receiptArchiveModal .close { flex:0 0 56px; width:56px; height:56px; min-width:56px; min-height:56px; display:grid; place-items:center; padding:0; background:#50eec7; color:#05251d; border:2px solid #50eec7; border-radius:16px; font-size:36px; font-weight:900; line-height:1; opacity:1; touch-action:manipulation; }
-    #receiptArchiveModal .close:focus-visible {outline:3px solid #fff; outline-offset:3px}
     #receiptArchiveModal .archive-upload { display:grid; gap:10px; margin:15px 0; }
     #receiptArchiveModal .scan-card { cursor:pointer; text-align:center; min-height:60px; }
     #receiptArchiveModal .archive-files { position:absolute; width:1px; height:1px; opacity:0; overflow:hidden; }
@@ -30,7 +25,7 @@ function mountReceiptArchive() {
   modal.setAttribute('aria-modal', 'true');
   modal.innerHTML = `
     <div class="sheet">
-      <div class="sheethead"><h2>🗂️ Tankbonnenarchief</h2><button class="close" aria-label="Sluiten" type="button" onclick="closeModal('receiptArchiveModal')">✕</button></div>
+      <div class="sheethead"><h2>🗂️ Tankbonnenarchief</h2><button type="button" class="close" aria-label="Sluiten" onclick="closeModal('receiptArchiveModal')"><span aria-hidden="true">✕</span></button></div>
       <p>Bewaar bonnen als PDF. Herkenning wordt alleen voor de bestandsnaam gebruikt; tankgegevens blijven onaangeroerd.</p>
       <div class="archive-upload">
         <label class="scan-card" for="archiveCamera">📷 <b>Foto maken met iPhone</b></label>
