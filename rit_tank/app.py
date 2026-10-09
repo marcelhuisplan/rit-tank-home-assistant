@@ -79,6 +79,7 @@ DEFAULT_OPTIONS = {
     'google_drive_folder_id': '',
     'google_drive_service_account_json': '',
     'google_drive_oauth_json': '',
+    'google_calendar_oauth_json': '',
     'backup_encryption_password': '',
     'backup_hour': 3,
     'backup_retention_days': 30,
