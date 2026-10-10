@@ -74,16 +74,36 @@ const {html,start,finish}=JSON.parse(fixture.stdout),receiptJs=fs.readFileSync(p
       },null,{timeout:5000});
       if(height===320){await input.press('Backspace');await input.pressSequentially('5',{delay:12})}
       assert.equal(await input.inputValue(),'25235','keyboard must not replace typed digits');
-      // The button remains reachable by scrolling inside the modal.
-      await button.evaluate(el=>{
-       const v=window.visualViewport,screenBottom=v.offsetTop+v.height-10,box=el.getBoundingClientRect();
-       if(box.bottom>screenBottom)el.closest('.sheet').scrollTop+=box.bottom-screenBottom;
-      });
-      const reachable=await button.evaluate(el=>{
-       const box=el.getBoundingClientRect(),v=window.visualViewport;
-       return box.top>=v.offsetTop-1&&box.bottom<=v.offsetTop+v.height+1;
-      });
-      assert.equal(reachable,true,'confirmation remains reachable above keyboard');
+      // Simulate multiple ordinary scroll gestures: WebKit's overflow scrolling
+      // can update the visual position on the next frame, not synchronously
+      // with a single scrollTop assignment. The input and button need not
+      // both fit in a very short keyboard viewport at the same time.
+      let buttonState;
+      for(let gesture=0;gesture<12;gesture++){
+       buttonState=await button.evaluate(el=>{
+        const sheet=el.closest('.sheet'),v=window.visualViewport,
+         r=el.getBoundingClientRect(),s=sheet.getBoundingClientRect(),
+         header=sheet.querySelector('.sheethead').getBoundingClientRect(),
+         top=Math.max(v.offsetTop+8,s.top+8,header.bottom+4),
+         bottom=Math.min(v.offsetTop+v.height-8,s.bottom-8),
+         maxScroll=Math.max(0,sheet.scrollHeight-sheet.clientHeight),
+         reachable=r.top>=top-1&&r.bottom<=bottom+1;
+        if(!reachable){
+         const delta=r.bottom>bottom?Math.min(120,r.bottom-bottom+6):
+          r.top<top?-Math.min(120,top-r.top+6):0;
+         if(delta)sheet.scrollTop=Math.max(0,Math.min(maxScroll,sheet.scrollTop+delta));
+        }
+        return {reachable,scrollTop:sheet.scrollTop,maxScroll,
+         scrollHeight:sheet.scrollHeight,clientHeight:sheet.clientHeight,
+         buttonTop:r.top,buttonBottom:r.bottom,visibleTop:top,visibleBottom:bottom,
+         viewportTop:v.offsetTop,viewportBottom:v.offsetTop+v.height,
+         sheetTop:s.top,sheetBottom:s.bottom};
+       });
+       if(buttonState.reachable)break;
+       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));
+      }
+      assert.equal(buttonState.reachable,true,
+       'confirmation must be reachable by normal sheet scrolling: '+JSON.stringify(buttonState));
       assert.equal(await input.inputValue(),'25235');
       // A later keyboard pan must restore focus visibility even after manual button scroll.
       await page.evaluate(()=>window.__keyboard(window.visualViewport.height,window.visualViewport.offsetTop));
