@@ -230,3 +230,141 @@ async function saveArchiveReceipt() {
     document.getElementById('archiveSave').disabled = false;
   }
 }
+
+
+/* Release 33.11: add a receipt later, without submitting any fuel values. */
+let FUEL_RECEIPT_TARGET = null;
+let FUEL_RECEIPT_PDF = null;
+let FUEL_RECEIPT_BUSY = false;
+let FUEL_RECEIPT_DUPLICATE = false;
+
+function mountFuelReceiptLink() {
+  if (document.getElementById('fuelReceiptModal')) return;
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.id = 'fuelReceiptModal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.innerHTML = `
+    <div class="sheet">
+      <div class="sheethead"><h2>📎 Bon toevoegen</h2><button type="button" class="close" aria-label="Sluiten" onclick="closeModal('fuelReceiptModal')"><span aria-hidden="true">✕</span></button></div>
+      <p id="fuelReceiptTarget"></p>
+      <p id="fuelReceiptExisting" role="alert" hidden>⚠️ Er is al een bon gekoppeld. Alleen de koppeling kan worden vervangen; de oude bon blijft bewaard.</p>
+      <div class="field"><label for="fuelReceiptExistingSelect">PDF uit bonnenarchief kiezen</label><select id="fuelReceiptExistingSelect"><option value="">Kies een bestaande PDF…</option></select></div>
+      <p>Of voeg een nieuwe bon toe:</p>
+      <div class="archive-upload">
+        <label class="scan-card" for="fuelReceiptCamera">📷 Foto maken</label><input id="fuelReceiptCamera" type="file" accept="image/*" capture="environment" hidden>
+        <label class="scan-card" for="fuelReceiptFile">📁 Foto/PDF uploaden</label><input id="fuelReceiptFile" type="file" accept="image/*,.heic,.heif,application/pdf" hidden>
+      </div>
+      <div id="fuelReceiptNew" hidden><div class="field"><label for="fuelReceiptName">Naam van de PDF</label><input id="fuelReceiptName" maxlength="200"></div></div>
+      <p id="fuelReceiptStatus" role="status" aria-live="polite"></p>
+      <button type="button" id="fuelReceiptSave" class="save" onclick="saveFuelReceiptLink()">Bon koppelen</button>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('fuelReceiptCamera').addEventListener('change', e => prepareFuelReceiptLink(e.target.files));
+  document.getElementById('fuelReceiptFile').addEventListener('change', e => prepareFuelReceiptLink(e.target.files));
+  document.getElementById('fuelReceiptExistingSelect').addEventListener('change', () => {
+    FUEL_RECEIPT_PDF = null;
+    FUEL_RECEIPT_DUPLICATE = false;
+    document.getElementById('fuelReceiptNew').hidden = true;
+    document.getElementById('fuelReceiptStatus').textContent = '';
+  });
+}
+
+async function openFuelReceiptLink(id) {
+  const fuel = DATA?.recent?.find(x => x.id === id && x.type === 'fuel');
+  if (!fuel) { toast('Tankbeurt niet gevonden. Vernieuw het overzicht.', true); return; }
+  mountFuelReceiptLink();
+  FUEL_RECEIPT_TARGET = id;
+  FUEL_RECEIPT_PDF = null;
+  FUEL_RECEIPT_DUPLICATE = false;
+  document.getElementById('fuelReceiptTarget').textContent =
+    fuel.date_label + ' · ' + fmt(fuel.odometer, 0) + ' km · ' + fmt(fuel.liters, 2) + ' L';
+  document.getElementById('fuelReceiptExisting').hidden = !(fuel.receipt_path || fuel.receipt_archive_id);
+  document.getElementById('fuelReceiptNew').hidden = true;
+  document.getElementById('fuelReceiptStatus').textContent = 'PDF-archief laden…';
+  document.getElementById('fuelReceiptSave').disabled = false;
+  document.getElementById('fuelReceiptFile').value = '';
+  document.getElementById('fuelReceiptCamera').value = '';
+  const select = document.getElementById('fuelReceiptExistingSelect');
+  select.replaceChildren(new Option('Kies een bestaande PDF…', ''));
+  openModal('fuelReceiptModal');
+  try {
+    const rows = (await api('api/receipt-archive')).receipts || [];
+    if (FUEL_RECEIPT_TARGET !== id || !document.getElementById('fuelReceiptModal').classList.contains('show')) return;
+    for (const row of rows.filter(x => !x.legacy)) {
+      select.add(new Option(row.filename + ' · ' + row.created_at.slice(0, 10), String(row.id)));
+    }
+    document.getElementById('fuelReceiptStatus').textContent =
+      rows.some(x => !x.legacy) ? 'Kies een PDF of upload een bon.' : 'Nog geen PDF in het archief; maak een foto of upload een PDF.';
+  } catch (e) {
+    document.getElementById('fuelReceiptStatus').textContent = e.message;
+  }
+}
+
+async function prepareFuelReceiptLink(files) {
+  if (FUEL_RECEIPT_BUSY || !files?.length) return;
+  const file = files[0], status = document.getElementById('fuelReceiptStatus');
+  FUEL_RECEIPT_BUSY = true;
+  FUEL_RECEIPT_PDF = null;
+  document.getElementById('fuelReceiptNew').hidden = true;
+  status.textContent = 'Bon omzetten naar PDF…';
+  try {
+    if (file.size > 12 * 1024 * 1024) throw new Error('Bestand groter dan 12 MB.');
+    const pdf = file.type === 'application/pdf' || /\\.pdf$/i.test(file.name);
+    const data = pdf ? await fileDataUrl(file) : await imageAsJpeg(file);
+    const prepared = await api('api/receipt-archive/prepare', {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({files:[{data_url:data}]})
+    });
+    FUEL_RECEIPT_PDF = prepared.pdf_data_url;
+    FUEL_RECEIPT_DUPLICATE = (prepared.duplicates || []).length > 0;
+    document.getElementById('fuelReceiptName').value = prepared.suggested_filename;
+    document.getElementById('fuelReceiptExistingSelect').value = '';
+    document.getElementById('fuelReceiptNew').hidden = false;
+    status.textContent = FUEL_RECEIPT_DUPLICATE
+      ? '⚠️ Mogelijk dubbele PDF. Bij koppelen volgt een bevestiging.'
+      : 'PDF gereed. Controleer de bestandsnaam.';
+  } catch (e) {
+    status.textContent = e.message;
+  } finally {
+    FUEL_RECEIPT_BUSY = false;
+    document.getElementById('fuelReceiptFile').value = '';
+    document.getElementById('fuelReceiptCamera').value = '';
+  }
+}
+
+async function saveFuelReceiptLink() {
+  if (FUEL_RECEIPT_BUSY || FUEL_RECEIPT_TARGET === null) return;
+  const status = document.getElementById('fuelReceiptStatus');
+  const value = document.getElementById('fuelReceiptExistingSelect').value;
+  if (!FUEL_RECEIPT_PDF && !value) { status.textContent = 'Kies eerst een PDF of maak een foto.'; return; }
+  const fuel = DATA?.recent?.find(x => x.id === FUEL_RECEIPT_TARGET && x.type === 'fuel');
+  if (!fuel) { status.textContent = 'Tankbeurt niet gevonden. Vernieuw het overzicht.'; return; }
+  const replacing = Boolean(fuel.receipt_path || fuel.receipt_archive_id);
+  if (replacing && !window.confirm('⚠️ Er is al een bon gekoppeld. Alleen de koppeling vervangen? De oude bon blijft bewaard.')) return;
+  if (FUEL_RECEIPT_DUPLICATE && !window.confirm('⚠️ Deze PDF lijkt al in het archief te staan. Toch opnieuw bewaren en koppelen?')) return;
+  FUEL_RECEIPT_BUSY = true;
+  document.getElementById('fuelReceiptSave').disabled = true;
+  try {
+    const body = FUEL_RECEIPT_PDF
+      ? {pdf_data_url:FUEL_RECEIPT_PDF,filename:document.getElementById('fuelReceiptName').value}
+      : {archive_id:Number(value)};
+    if (replacing) body.confirm_replace = true;
+    if (FUEL_RECEIPT_DUPLICATE) body.confirm_duplicate = true;
+    await api('api/fuel/' + FUEL_RECEIPT_TARGET + '/receipt', {
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+    });
+    FUEL_RECEIPT_PDF = null;
+    FUEL_RECEIPT_TARGET = null;
+    closeModal('fuelReceiptModal');
+    await reloadData();
+    toast('Bon gekoppeld aan bestaande tankbeurt');
+  } catch(e) {
+    if (e.code === 'RECEIPT_DUPLICATE') FUEL_RECEIPT_DUPLICATE = true;
+    status.textContent = e.message;
+  } finally {
+    FUEL_RECEIPT_BUSY = false;
+    document.getElementById('fuelReceiptSave').disabled = false;
+  }
+}
