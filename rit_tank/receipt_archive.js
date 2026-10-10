@@ -311,7 +311,7 @@ async function prepareFuelReceiptLink(files) {
   status.textContent = 'Bon omzetten naar PDF…';
   try {
     if (file.size > 12 * 1024 * 1024) throw new Error('Bestand groter dan 12 MB.');
-    const pdf = file.type === 'application/pdf' || /\\.pdf$/i.test(file.name);
+      const pdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     const data = pdf ? await fileDataUrl(file) : await imageAsJpeg(file);
     const prepared = await api('api/receipt-archive/prepare', {
       method:'POST',headers:{'Content-Type':'application/json'},
