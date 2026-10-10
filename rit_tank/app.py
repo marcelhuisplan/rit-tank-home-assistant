@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.14'
+APP_VERSION = '33.15'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -2828,6 +2828,28 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 @media(min-width:768px){.trip-sheet{padding-left:28px!important;padding-right:28px!important}.simplified-odo-card #physicalTripValue{font-size:72px}.trip-location-actions .location-big{min-height:64px;font-size:17px}}
 
 #fuelReceiptModal{z-index:32;--trip-safe-top:env(safe-area-inset-top);--trip-safe-bottom:env(safe-area-inset-bottom)}#fuelReceiptModal .sheet{max-height:calc(100dvh - var(--trip-safe-top) - 12px);overflow-y:auto;overscroll-behavior:contain;padding-bottom:calc(18px + var(--trip-safe-bottom));scroll-padding-bottom:calc(24px + var(--trip-safe-bottom))}#fuelReceiptModal .sheethead{position:sticky;top:0;z-index:30;gap:12px;min-width:0;background:#14191e;padding:4px env(safe-area-inset-right) 8px env(safe-area-inset-left)}#fuelReceiptModal .sheethead h2{flex:1;min-width:0;overflow-wrap:anywhere}#fuelReceiptModal .close{flex:0 0 56px;width:56px;height:56px;min-width:56px;min-height:56px;display:grid;place-items:center;padding:0;background:#50eec7;color:#05251d;border:2px solid #50eec7;border-radius:16px;font-size:36px;font-weight:900;line-height:1;opacity:1;touch-action:manipulation}#fuelReceiptModal .close:focus-visible{outline:3px solid #fff;outline-offset:3px}.event-actions .fuel-receipt-action,.event-actions .linkbtn{min-height:40px;font-size:12px;border-radius:10px;padding:7px 9px;white-space:normal}.event-actions .fuel-receipt-action{border:1px solid #34866f;background:#123b31;color:#82e7c2}.event-actions{flex-wrap:wrap;justify-content:flex-end}#fuelReceiptModal .field select,#fuelReceiptModal .field input{width:100%;max-width:100%;font-size:16px;min-height:48px}#fuelReceiptModal .save{min-height:52px;width:100%}
+/* 33.15: direct fuel entry is isolated from other kilometre controls */
+#fuelModal .sheet{max-height:min(calc(100% - var(--trip-safe-top) - 12px),calc(100dvh - var(--trip-safe-top) - 12px));scroll-padding-bottom:calc(24px + env(safe-area-inset-bottom))}
+#fuelModal .guide-section{padding:16px;margin-top:14px;scroll-snap-type:none}
+#fuelModal .guide-head{margin-bottom:12px}#fuelModal .guide-head b{font-size:16px}#fuelModal .guide-head small{font-size:12px}
+#fuelModal .sheethead{gap:8px}
+#fuelModal .fuel-done-head{flex:0 0 auto;min-height:44px;border:1px solid #478b79;border-radius:12px;background:#19372e;color:#a5f5d9;padding:8px 10px;font-weight:800;font-size:15px}
+#fuelModal .fuel-number-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px;align-items:end}
+#fuelModal .fuel-number-label{grid-column:1/-1;font-size:13px;color:#c2d0cb;font-weight:800}
+#fuelModal .fuel-number{min-width:0;width:100%;height:72px;border:2px solid #476358;border-radius:15px;background:#0b1315;color:white;padding:10px 13px;font-size:clamp(27px,8vw,39px);font-weight:850;font-variant-numeric:tabular-nums;outline:none;touch-action:manipulation}
+#fuelModal .fuel-number:focus{border-color:#50eec7;box-shadow:0 0 0 2px #50eec733}
+#fuelModal .fuel-clear{min-height:56px;border:1px solid #426055;border-radius:13px;background:#202c29;color:#d7eee5;padding:8px 12px;font-weight:800}
+#fuelModal .fuel-hint{display:block;margin-top:8px;color:#a9bbb7;font-size:12px;line-height:1.5}
+#fuelModal .odo-last{text-align:left;font-size:12px;margin-top:8px}
+#fuelModal .fuel-total-card{margin-top:14px;border:1px solid #348a6c;border-radius:17px;background:#102820;padding:18px;display:grid;gap:5px}
+#fuelModal .fuel-total-card span{font-size:13px;color:#b9dbc9;font-weight:750}
+#fuelModal .fuel-total-card strong{font-size:clamp(27px,8vw,37px);color:#7ff6c7;font-variant-numeric:tabular-nums}
+#fuelModal .fuel-total-card small{font-size:11px;color:#a6c6ba}
+#fuelModal .fuel-input-error{color:#ffabb4;font-size:13px;margin:8px 4px}
+#fuelModal .fuel-input-error:empty{display:none}
+#fuelModal #fuelDate,#fuelModal #fuelStation,#fuelModal #fuelNote{min-height:56px;font-size:16px;background:#0e1216;color:white;border:1px solid #34404a;border-radius:14px;padding:12px}
+#fuelModal #fuelSaveButton{min-height:58px}
+@media(min-width:768px){#fuelModal .fuel-number{height:80px;font-size:40px}}
 </style>
 </head>
 <body>
@@ -2896,15 +2918,16 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 <div class="modal" id="reportWarningModal"><div class="sheet"><div class="sheethead"><h2>Aandachtspunten</h2><button class="close" onclick="closeModal('reportWarningModal')">✕</button></div><p id="reportWarningText"></p><button class="linkbtn" onclick="closeModal('reportWarningModal')">Terug naar controle</button><button class="save" id="reportWarningContinue" onclick="generateCheckedReport(true)">Toch PDF genereren</button></div></div>
 <div class="modal" id="pdfModal"><div class="sheet"><div class="pdf-toolbar"><div class="sheethead"><h2>PDF-ritregistratie</h2><button class="linkbtn" onclick="closePdfPreview()">Sluiten ✕</button></div><div class="settings-actions"><button class="linkbtn" id="pdfShare" onclick="sharePdf()" disabled>Delen / andere app</button><button class="linkbtn" id="pdfPrint" onclick="printPdfPreview()" disabled>Afdrukken</button><a class="linkbtn" id="pdfDownload" hidden>Download PDF</a><button class="linkbtn" id="pdfDrive" onclick="archivePdf()" disabled>Google Drive</button></div><p id="pdfStatus" role="status">PDF voorbereiden…</p></div><div id="pdfPages" aria-label="Voorbeeld rittenregistratie"></div></div></div>
 
-<div class="modal" id="fuelModal"><div class="sheet" id="fuelSheet"><div class="grab"></div><div class="sheethead"><h2>⛽ Tankbeurt</h2><button type="button" class="close" aria-label="Sluiten" onclick="closeModal('fuelModal')"><span aria-hidden="true">✕</span></button></div>
-  <div class="guide-section" id="fuelStepScan"><button type="button" class="scan-card" onclick="openReceiptArchive()">📷 <b>Tankbon scannen</b></button><p>Bon apart bewaren als PDF; vult geen tankgegevens in.</p><button type="button" class="linkbtn" onclick="openReceiptArchive()">🗂️ Bonnenarchief</button></div>
-  <input id="fuelOdo" type="hidden">
-  <div class="guide-section active" id="fuelStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small>Scroll de cijfers</small></div><div class="odo-wheelbox" id="fuelOdoWheels"></div><div class="odo-live"><b id="fuelOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="fuelOdoLast"></div><button class="guide-next" type="button" onclick="guideTo('fuelStepDate')">Kilometerstand staat goed →</button></div>
-  <div class="guide-section guide-date" id="fuelStepDate"><div class="guide-head"><span class="step-badge">2</span><b>Datum & tijd</b><small>Staat standaard op nu</small></div><div class="field" style="margin-top:0"><input id="fuelDate" type="datetime-local"></div><button class="guide-next" type="button" onclick="guideTo('fuelStepLiters')">Verder naar liters →</button></div>
-  <div class="guide-section" id="fuelStepLiters"><div class="guide-head"><span class="step-badge">3</span><b>Liters</b><small>Liters met 2 decimalen</small></div><div class="wheelbox liters"><div class="wheel" id="literWhole"></div><div class="wheel-sep">,</div><div class="wheel" id="literDec"></div><div class="wheel" id="literDec2"></div></div><button class="guide-next" type="button" onclick="guideTo('fuelStepPrice')">Verder naar prijs →</button></div>
-  <div class="guide-section" id="fuelStepPrice"><div class="guide-head"><span class="step-badge">4</span><b>Prijs per liter</b><small>3 decimalen</small></div><div class="wheelbox price"><div class="wheel" id="priceWhole"></div><div class="wheel-sep">,</div><div class="wheel" id="priceD1"></div><div class="wheel" id="priceD2"></div><div class="wheel" id="priceD3"></div></div><div class="live-total">Totaal: <b id="fuelTotal">€ 0,00</b></div><button class="guide-next" type="button" onclick="guideTo('fuelStepLocation')">Verder naar tankstation →</button></div>
-  <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">5</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div><button class="guide-next" type="button" onclick="guideTo('fuelStepFinish')">Verder →</button></div>
+<div class="modal" id="fuelModal"><div class="sheet" id="fuelSheet"><div class="grab"></div><div class="sheethead"><h2>⛽ Tankbeurt</h2><button type="button" class="fuel-done-head" onclick="fuelDone()">Gereed</button><button type="button" class="close" aria-label="Sluiten" onclick="closeModal('fuelModal')"><span aria-hidden="true">✕</span></button></div>
+  <div class="guide-section active" id="fuelStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small>Gehele kilometers</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelOdo">Werkelijke tellerstand (km)</label><input id="fuelOdo" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="done" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'odometer')" oninput="fuelInput(event,'odometer')"><button type="button" class="fuel-clear" onclick="fuelClear('odometer')">Wissen</button></div><small class="fuel-hint">Tik om de vorige waarde volledig te vervangen.</small><div class="odo-last" id="fuelOdoLast"></div></div>
+  <div class="guide-section guide-date" id="fuelStepDate"><div class="guide-head"><span class="step-badge">2</span><b>Datum & tijd</b><small>Staat standaard op nu</small></div><div class="field" style="margin-top:0"><input id="fuelDate" type="datetime-local"></div></div>
+  <div class="guide-section" id="fuelStepLiters"><div class="guide-head"><span class="step-badge">3</span><b>Liters</b><small>Liters met 2 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelLitersInput">Liters</label><input id="fuelLitersInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="done" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'liters')" oninput="fuelInput(event,'liters')"><button type="button" class="fuel-clear" onclick="fuelClear('liters')">Wissen</button></div><small class="fuel-hint">4300 wordt 43,00 L. Tik om het voorstel te vervangen.</small></div>
+  <div class="guide-section" id="fuelStepPrice"><div class="guide-head"><span class="step-badge">4</span><b>Prijs per liter</b><small>3 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelPriceInput">€ per liter</label><input id="fuelPriceInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="done" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'price')" oninput="fuelInput(event,'price')"><button type="button" class="fuel-clear" onclick="fuelClear('price')">Wissen</button></div><small class="fuel-hint">2400 wordt € 2,400. Tik om het voorstel te vervangen.</small></div>
+  <div class="fuel-total-card" aria-live="polite"><span>Berekend totaalbedrag</span><strong id="fuelTotal">€ 0,00</strong><small>Alleen eindbedrag afgerond op centen</small></div>
+  <p id="fuelInputError" class="fuel-input-error" role="alert"></p>
+  <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">5</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div></div>
   <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">6</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" placeholder="Bijv. snelweg, vakantie..."></div><button class="save" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button><div id="fuelConflictWarning" hidden role="alert" style="margin-top:14px;padding:14px;border:2px solid #b97517;border-radius:12px;background:#fff4db;color:#37260b"><strong>⚠️ Kilometerconflict — historische tankbon</strong><p>De ingevoerde kilometerstand botst met de volgende registratie(s):</p><ul id="fuelConflictDetails" style="padding-left:22px"></ul><p>Je kunt deze tankbon bewust opslaan. Hij wordt gemarkeerd als kilometerconflict; onbetrouwbare afstanden en verbruikscycli worden niet meegerekend. De actuele tellerstand verandert niet.</p><button class="save" type="button" onclick="saveFuelConfirmed()">Ja, ondanks kilometerconflict opslaan</button><button class="linkbtn" type="button" onclick="clearFuelConflictWarning()">Terug naar tankbon</button></div></div>
+<div class="guide-section" id="fuelStepScan"><button type="button" class="scan-card" onclick="openReceiptArchive()">📷 <b>Tankbon scannen</b></button><p>Bon apart bewaren als PDF; vult geen tankgegevens in.</p><button type="button" class="linkbtn" onclick="openReceiptArchive()">🗂️ Bonnenarchief</button></div>
 </div></div>
 
 <div class="modal" id="kmModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>🛣️ Kilometerstand</h2><button class="close" onclick="closeModal('kmModal')">✕</button></div><input id="kmOdo" type="hidden"><div class="guide-section active" id="kmStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Nieuwe kilometerstand</b><small>Laatste stand is vooringesteld</small></div><div class="odo-wheelbox" id="kmOdoWheels"></div><div class="odo-live"><b id="kmOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="kmOdoLast"></div><button class="guide-next" type="button" onclick="guideTo('kmStepRest')">Verder →</button></div><div class="guide-section" id="kmStepRest"><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="kmDate" type="datetime-local"></div><div class="field"><label>Notitie (optioneel)</label><input id="kmNote" maxlength="200" placeholder="Bijv. thuiskomst, zakelijke rit..."></div><button class="save" onclick="saveKm()">Kilometerstand opslaan</button></div></div></div>
@@ -3530,12 +3553,64 @@ function initOdometerWheel(prefix,initial){let n=Math.max(0,Math.min(999999,Math
 function updateOdometerWheel(prefix){let raw='';for(let i=0;i<6;i++)raw+=String(wheelVal(prefix+'OdoD'+i)??0);let value=Number(raw),hidden=$(prefix+'Odo'),display=$(prefix+'OdoDisplay');if(hidden)hidden.value=value;if(display)display.textContent=value.toLocaleString('nl-NL')}
 
 let LAST_FUEL_PRICE=null;
-function preferredFuelPrice(){if(LAST_FUEL_PRICE!==null)return LAST_FUEL_PRICE;try{let raw=localStorage.getItem('rit_tank_last_fuel_price'),value=Number(raw);if(raw!==null&&Number.isFinite(value)&&value>0&&value<=5.999)return value}catch(e){}return DATA.latest_fuel?.price_per_liter??1.899}
-function rememberFuelPrice(){let value=fuelValues().price;if(!Number.isFinite(value)||value<=0)return;LAST_FUEL_PRICE=value;try{localStorage.setItem('rit_tank_last_fuel_price',String(value))}catch(e){}}
-function initFuelWheels(liters=null,price=null){let last=DATA.latest_fuel||{},L=Math.max(0,Math.min(25000,Math.round(Number(liters??last.liters??40)*100))),P=Math.max(0,Math.min(5999,Math.round(Number(price??preferredFuelPrice())*1000))),upd=(changed=false)=>{updateFuelTotal();if(changed)rememberFuelPrice()};createWheel('literWhole',Array.from({length:251},(_,i)=>i),Math.floor(L/100),upd);createWheel('literDec',Array.from({length:10},(_,i)=>i),Math.floor(L/10)%10,upd);createWheel('literDec2',Array.from({length:10},(_,i)=>i),L%10,upd);createWheel('priceWhole',Array.from({length:6},(_,i)=>i),Math.floor(P/1000),upd);createWheel('priceD1',Array.from({length:10},(_,i)=>i),Math.floor(P/100)%10,upd);createWheel('priceD2',Array.from({length:10},(_,i)=>i),Math.floor(P/10)%10,upd);createWheel('priceD3',Array.from({length:10},(_,i)=>i),P%10,upd);updateFuelTotal()}
-function fuelValues(){let liters=Number(wheelVal('literWhole')||0)+Number(wheelVal('literDec')||0)/10+Number(wheelVal('literDec2')||0)/100,price=Number(wheelVal('priceWhole')||0)+Number(wheelVal('priceD1')||0)/10+Number(wheelVal('priceD2')||0)/100+Number(wheelVal('priceD3')||0)/1000;return{liters:Number(liters.toFixed(2)),price:Number(price.toFixed(3))}}
-function updateFuelTotal(){if(!DATA)return;let v=fuelValues();$('fuelTotal').textContent=`${DATA.settings.currency} ${fmt(v.liters*v.price,2)}`}
-function openFuel(){clearFuelConflictWarning();$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];$('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';$('stations').innerHTML=(DATA.recent_stations||[]).map(s=>`<option value="${escAttr(s)}">`).join('');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');initOdometerWheel('fuel',DATA.current_odometer??0);initFuelWheels();openModal('fuelModal');fitPhysicalViewport();setTimeout(()=>guideTo('fuelStepScan',0),80)}
+function preferredFuelPrice(){if(LAST_FUEL_PRICE!==null)return LAST_FUEL_PRICE;try{let raw=localStorage.getItem('rit_tank_last_fuel_price'),value=Number(raw);if(raw!==null&&Number.isFinite(value)&&value>0&&value<=10)return value}catch(e){}return DATA.latest_fuel?.price_per_liter??1.899}
+function rememberFuelPrice(value){if(!Number.isFinite(value)||value<=0)return;LAST_FUEL_PRICE=value;try{localStorage.setItem('rit_tank_last_fuel_price',String(value))}catch(e){}}
+// Raw digits are the sole source of truth. Displayed commas never feed back into calculations.
+const FUEL_INPUT_RULES={odometer:{scale:0,max:999999,id:'fuelOdo'},liters:{scale:2,max:25000,id:'fuelLitersInput'},price:{scale:3,max:10000,id:'fuelPriceInput'}};
+let FUEL_DIGITS={odometer:'',liters:'',price:''};
+let FUEL_PENDING_REPLACE=null;
+function fuelNormalizeDigits(raw){return String(raw??'').replace(/[^0-9]/g,'').replace(/^0+(?=[0-9])/,'')}
+function fuelFormatDigits(digits,scale){let n=(fuelNormalizeDigits(digits)||'0').padStart(scale+1,'0');return scale?n.slice(0,-scale)+','+n.slice(-scale):n}
+function fuelNumber(kind){return Number(FUEL_DIGITS[kind]||'0')}
+function fuelSetDigits(kind,raw){
+ const rule=FUEL_INPUT_RULES[kind],digits=fuelNormalizeDigits(raw),num=Number(digits||0),error=$('fuelInputError');
+ if(!Number.isSafeInteger(num)||num>rule.max){
+  const field=$(rule.id);field.value=fuelFormatDigits(FUEL_DIGITS[kind],rule.scale);
+  if(document.activeElement===field)field.setSelectionRange(field.value.length,field.value.length);
+  error.textContent=kind==='odometer'?'Kilometerstand: maximaal 999.999 gehele kilometers.':kind==='liters'?'Liters: maximaal 250,00 L.':'Literprijs: maximaal € 10,000.';
+  return false;
+ }
+ error.textContent='';FUEL_DIGITS[kind]=digits;
+ const input=$(rule.id);input.value=fuelFormatDigits(digits,rule.scale);
+ if(document.activeElement===input)input.setSelectionRange(input.value.length,input.value.length);
+ updateFuelTotal();return true;
+}
+function fuelSelectAll(input){FUEL_PENDING_REPLACE=input.id;input.select()}
+function fuelBeforeInput(event,kind){
+ if(!event.cancelable)return;
+ const type=event.inputType||'',input=event.currentTarget,all=input.selectionStart===0&&input.selectionEnd===input.value.length,replace=all||FUEL_PENDING_REPLACE===input.id;
+ let next=FUEL_DIGITS[kind];
+ if(type.startsWith('delete'))next=replace?'':next.slice(0,-1);
+ else if(type.startsWith('insert')){
+  const content=event.data??event.dataTransfer?.getData('text/plain');
+  if(content==null)return;
+  const inserted=String(content).replace(/[^0-9]/g,'');
+  if(!inserted){event.preventDefault();return}
+  next=(replace?'':next)+inserted;
+ }else return;
+ event.preventDefault();FUEL_PENDING_REPLACE=null;fuelSetDigits(kind,next);
+}
+function fuelInput(event,kind){fuelSetDigits(kind,event.currentTarget.value)}
+function fuelClear(kind){fuelSetDigits(kind,'');const input=$(FUEL_INPUT_RULES[kind].id);input.focus();input.setSelectionRange(input.value.length,input.value.length)}
+function fuelDone(){if($('fuelModal').contains(document.activeElement))document.activeElement.blur()}
+function fuelValues(){return{liters:fuelNumber('liters')/100,price:fuelNumber('price')/1000}}
+function updateFuelTotal(){const cents=Math.round(fuelNumber('liters')*fuelNumber('price')/1000);$('fuelTotal').textContent=(DATA?.settings?.currency||'€')+' '+fmt(cents/100,2)}
+function initFuelInputs(){
+ const last=DATA.latest_fuel||{},liters=last.liters,price=preferredFuelPrice(),odo=DATA.current_odometer;
+ FUEL_DIGITS={odometer:'',liters:'',price:''};FUEL_PENDING_REPLACE=null;
+ fuelSetDigits('odometer',odo==null?'':String(Math.round(Number(odo))));
+ fuelSetDigits('liters',liters==null?'':String(Math.round(Number(liters)*100)));
+ fuelSetDigits('price',price==null?'':String(Math.round(Number(price)*1000)));
+ $('fuelOdoLast').textContent=odo==null?'Nog geen vorige kilometerstand':'Laatste geregistreerde stand: '+fmt(odo,0)+' km';
+}
+function openFuel(){
+ clearFuelConflictWarning();$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];
+ $('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';
+ $('stations').innerHTML=(DATA.recent_stations||[]).map(s=>'<option value="'+escAttr(s)+'">').join('');
+ $('stationResults').innerHTML='';$('googleAttrib').style.display='none';
+ setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');
+ initFuelInputs();openModal('fuelModal');fitPhysicalViewport();
+}
 $('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
 function setLocationStatus(msg,kind=''){$('locationStatus').textContent=msg;$('locationStatus').className='location-status '+kind}
 function browserLocation(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Browser-GPS wordt hier niet ondersteund.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser'}),e=>reject(new Error(e.message||'Locatie niet beschikbaar.')),{enableHighAccuracy:true,timeout:9000,maximumAge:30000})})}
@@ -3544,7 +3619,7 @@ async function migrateLocationFallback(){if(Object.prototype.hasOwnProperty.call
 async function resolveLocation(){try{return await browserLocation()}catch(first){let entity=savedLocationFallback();if(!entity)throw new Error('GPS kon niet worden gebruikt. Kies in ⚙️ een Home Assistant locatie-fallback.');let d=await api(`api/location/entity?entity_id=${encodeURIComponent(entity)}`);return d}}
 async function findStations(){setLocationStatus('📍 Huidige locatie bepalen...');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';try{let loc=await resolveLocation();FUEL_LOCATION=loc;setLocationStatus(`Locatie gevonden${loc.accuracy?` · ±${Math.round(loc.accuracy)} m`:''}. Tankstations zoeken...`,'ok');let r=await api('api/places/nearby',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:loc.latitude,longitude:loc.longitude})});PLACE_RESULTS=r.places||[];renderPlaceChoices();setLocationStatus(`${PLACE_RESULTS.length} tankstation${PLACE_RESULTS.length===1?'':'s'} gevonden binnen ${r.radius_m} m.`,'ok')}catch(e){setLocationStatus(e.message,'err');toast(e.message,true)}}
 function renderPlaceChoices(){let box=$('stationResults');box.innerHTML='';PLACE_RESULTS.forEach((p,i)=>{let b=document.createElement('button');b.type='button';b.className='station-choice';b.onclick=()=>selectPlace(i);let dist=p.distance_m==null?'':` · ${p.distance_m<1000?p.distance_m+' m':fmt(p.distance_m/1000,1)+' km'}`;b.innerHTML=`<b>${esc(p.name)}${dist}</b><small>${esc(p.address||'')}</small>`;box.appendChild(b)});$('googleAttrib').style.display=PLACE_RESULTS.length?'block':'none'}
-function selectPlace(i){let p=PLACE_RESULTS[i];if(!p)return;FUEL_PLACE=p;$('fuelStation').value=p.name;$('stationResults').innerHTML='';$('googleAttrib').style.display='block';setLocationStatus(`✓ ${p.name} geselecteerd`,'ok');guideTo('fuelStepFinish',350)}
+function selectPlace(i){let p=PLACE_RESULTS[i];if(!p)return;FUEL_PLACE=p;$('fuelStation').value=p.name;$('stationResults').innerHTML='';$('googleAttrib').style.display='block';setLocationStatus(`✓ ${p.name} geselecteerd`,'ok');}
 let FUEL_CONFLICT_PAYLOAD=null;
 function clearFuelConflictWarning(){FUEL_CONFLICT_PAYLOAD=null;let panel=$('fuelConflictWarning');if(panel)panel.hidden=true}
 function showFuelConflictWarning(error,payload){
@@ -3555,12 +3630,12 @@ function showFuelConflictWarning(error,payload){
    return `<li><b>${esc(c.direction==='eerdere'?'Eerdere':'Latere')} ${label}</b> op ${esc(when)}: <b>${fmt(c.odometer,0)} km</b> (${esc(c.message)})</li>`;
  }).join('');
  FUEL_CONFLICT_PAYLOAD={...payload,conflict_confirmation_key:error.confirmation_key};
- panel.hidden=false;guideTo('fuelStepFinish',0);
+ panel.hidden=false;
 }
 async function submitFuel(payload){
  try{
   let result=await api('api/fuel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  clearFuelConflictWarning();closeModal('fuelModal');
+  rememberFuelPrice(payload.price_per_liter);clearFuelConflictWarning();closeModal('fuelModal');
   toast(`Tankbeurt opgeslagen · ${money(result.cost)}${result.kilometer_conflict?' · ⚠️ kilometerconflict':''}${result.receipt?' · bon bewaard':''}`);
   reloadData();
  }catch(error){
@@ -3572,8 +3647,16 @@ async function submitFuel(payload){
 }
 async function saveFuel(){
  clearFuelConflictWarning();
- let v=fuelValues(),payload={
-  odometer:$('fuelOdo').value,created_at:$('fuelDate').value,liters:v.liters,price_per_liter:v.price,
+ const odo=fuelNumber('odometer'),lc=fuelNumber('liters'),pm=fuelNumber('price'),date=$('fuelDate').value;
+ let error='';
+ if(!FUEL_DIGITS.odometer||!Number.isSafeInteger(odo)||odo<0||odo>999999)error='Vul een geldige gehele kilometerstand in.';
+ else if(!lc||lc>25000)error='Vul een geldig aantal liters in (0,01 t/m 250,00).';
+ else if(!pm||pm>10000)error='Vul een geldige literprijs in (0,001 t/m 10,000).';
+ else if(!date||Number.isNaN(new Date(date).getTime()))error='Kies een geldige datum en tijd.';
+ if(error){$('fuelInputError').textContent=error;toast(error,true);return}
+ $('fuelInputError').textContent='';
+ const v=fuelValues(),payload={
+  odometer:odo,created_at:date,liters:v.liters,price_per_liter:v.price,
   station:FUEL_PLACE?'':$('fuelStation').value,place_id:FUEL_PLACE?.place_id||'',
   latitude:FUEL_LOCATION?.latitude??null,longitude:FUEL_LOCATION?.longitude??null,
   location_accuracy:FUEL_LOCATION?.accuracy??null,location_source:FUEL_LOCATION?.source||'',
@@ -3650,8 +3733,7 @@ function downloadDiagnosticLog(){let value=$('diagnosticText').value;if(!value){
 async function testAssistantNotification(){try{await api('api/assistant/test-notification',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('Testmelding verzonden')}catch(e){toast(e.message,true)}}
 async function syncAssistantZones(){try{toast('Home Assistant-zones synchroniseren...');let r=await api('api/assistant/sync-zones',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast(`Zones klaar · ${r.ok||0} goed${r.failed?` · ${r.failed} fout`:''}`);reloadData()}catch(e){toast(e.message,true)}}
 // Begeleide invoer: actieve sectie volgt wat je aanraakt, zonder onverwacht te springen tijdens scrollen.
-[['fuelDate','fuelStepDate'],['fuelStation','fuelStepLocation'],['fuelNote','fuelStepFinish'],['kmDate','kmStepRest'],['kmNote','kmStepRest'],['tripDate','tripStepLocation'],['tripStopNote','tripStepLocation']].forEach(([input,section])=>{let el=$(input);if(el){el.addEventListener('focus',()=>guideTo(section,0));el.addEventListener('change',()=>{if(input==='fuelDate')guideTo('fuelStepLiters',220)})}});
-[['literWhole','fuelStepLiters'],['literDec','fuelStepLiters'],['priceWhole','fuelStepPrice'],['priceD1','fuelStepPrice'],['priceD2','fuelStepPrice'],['priceD3','fuelStepPrice']].forEach(([id,section])=>{let el=$(id);if(el){el.addEventListener('touchstart',()=>guideTo(section,0),{passive:true});el.addEventListener('pointerdown',()=>guideTo(section,0),{passive:true})}});
+[['kmDate','kmStepRest'],['kmNote','kmStepRest'],['tripDate','tripStepLocation'],['tripStopNote','tripStepLocation']].forEach(([input,section])=>{let el=$(input);if(el){el.addEventListener('focus',()=>guideTo(section,0))}});
 initPwa();
 loadAuthStatus();
 reloadData();
