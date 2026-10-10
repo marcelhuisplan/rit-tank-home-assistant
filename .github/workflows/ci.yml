@@ -75,6 +75,7 @@ jobs:
           node tools/test_browser_v3100.cjs
           node tools/test_browser_v3200.cjs
           node tools/test_browser_v3300.cjs
+          node tools/test_browser_v3311.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
