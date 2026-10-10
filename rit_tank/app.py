@@ -3564,6 +3564,8 @@ function fuelNumber(kind){return Number(FUEL_DIGITS[kind]||'0')}
 function fuelSetDigits(kind,raw){
  const rule=FUEL_INPUT_RULES[kind],digits=fuelNormalizeDigits(raw),num=Number(digits||0),error=$('fuelInputError');
  if(!Number.isSafeInteger(num)||num>rule.max){
+  const field=$(rule.id);field.value=fuelFormatDigits(FUEL_DIGITS[kind],rule.scale);
+  if(document.activeElement===field)field.setSelectionRange(field.value.length,field.value.length);
   error.textContent=kind==='odometer'?'Kilometerstand: maximaal 999.999 gehele kilometers.':kind==='liters'?'Liters: maximaal 250,00 L.':'Literprijs: maximaal € 10,000.';
   return false;
  }
