@@ -23,13 +23,13 @@ const pdf='data:application/pdf;base64,'+Buffer.from('%PDF-1.4\n%%EOF').toString
   const browser=await engine.launch({headless:true});
   try{
    const context=await browser.newContext({viewport:{width:375,height:667},isMobile:true,hasTouch:true,deviceScaleFactor:2,serviceWorkers:'block'});
-   const page=await context.newPage(),sent=[],errors=[];
+   const page=await context.newPage(),sent=[],errors=[],current=structuredClone(summary);
    page.on('pageerror',e=>errors.push(e.message));
    await page.route('**/*',async route=>{
      const u=new URL(route.request().url()),p=u.pathname;
      if(p==='/')return route.fulfill({contentType:'text/html',body:html});
      if(p==='/receipt-archive.js')return route.fulfill({contentType:'text/javascript',body:js});
-     if(p==='/api/summary')return route.fulfill({json:summary});
+     if(p==='/api/summary')return route.fulfill({json:current});
      if(p==='/api/receipt-archive')return route.fulfill({json:{receipts:[
        {id:1,filename:'Eerste.pdf',created_at:'2026-10-08',legacy:false},
        {id:2,filename:'Tweede.pdf',created_at:'2026-10-08',legacy:false},
@@ -40,7 +40,7 @@ const pdf='data:application/pdf;base64,'+Buffer.from('%PDF-1.4\n%%EOF').toString
        assert.equal(body.odometer,undefined);
        assert.equal(body.liters,undefined);
        assert.equal(body.price_per_liter,undefined);
-       summary.recent.find(e=>e.id===1).receipt_archive_id=body.archive_id||3;
+       current.recent.find(e=>e.id===1).receipt_archive_id=body.archive_id||3;
        return route.fulfill({status:201,json:{ok:true,archive_id:body.archive_id||3}});
      }
      if(p.startsWith('/api/'))return route.fulfill({json:{}});
