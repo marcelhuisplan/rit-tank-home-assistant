@@ -1,4 +1,4 @@
-# Rit & Tank 33.10
+# Rit & Tank 33.11
 
 De ritregistratie is in release 33.00 vereenvoudigd voor iPhone en iPad: de fysieke kilometerteller staat centraal in een groot, rustig invoerveld, gevolgd door grote locatieknoppen. De fysieke teller blijft altijd de definitieve bron voor zakelijke kilometers; GPS blijft uitsluitend aanvullende informatie, controle en waarschuwing.
 
@@ -86,7 +86,7 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **33.10**.
+- Huidige release: **33.11**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
 - Volgende release: **34.00**.
@@ -97,3 +97,7 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 Via **Tankbeurt → Tankbon scannen** kun je met je iPhone een foto maken of maximaal vier foto's/één PDF uploaden. Afbeeldingen worden leesbare PDF's. Alleen datum, tankstation, plaats en totaalbedrag worden conservatief voor een voorgestelde bestandsnaam herkend. Controleer of pas de naam aan vóór opslaan; ontbrekende gegevens blijven zichtbaar als 'onbekend'. Het archief biedt zoeken, bekijken, downloaden en een ZIP-export, inclusief de oude tankbonafbeeldingen. Mogelijke dubbelen vereisen bevestiging. Tankregistraties, liters en kilometerstanden worden hierdoor nooit gewijzigd.
 
 PDF's staan blijvend onder `/data/receipt_archive` en de index in `/data/rit_tank.db`, onderdeel van de Home Assistant add-on data/back-ups. Bewaar ook de ZIP-export extern als extra kopie.
+
+## Bon achteraf koppelen (33.11)
+
+Bij **Recente registraties** heeft iedere tankbeurt **📎 Bon toevoegen**. Selecteer een bestaande PDF uit het bonnenarchief, maak een iPhone-foto of upload een PDF. De nieuwe bon wordt als PDF opgeslagen. Daarna kun je **Bon bekijken** en **Downloaden**. Een bestaande koppeling vervang je uitsluitend na bevestiging; de oude bon blijft in de opslag staan. De koppeling staat in de bestaande database en maakt samen met de PDF deel uit van Home Assistant- en versleutelde app-back-ups. Tankwaarden en ritten worden niet gewijzigd.
