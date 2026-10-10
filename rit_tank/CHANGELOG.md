@@ -1,5 +1,11 @@
 # Changelog
 
+## 33.12
+
+- PWA/iPhone: versiegebonden `receipt-archive.js` voorkomt dat **📎 Bon toevoegen** een oude JavaScript-module laadt.
+- Serviceworker haalt het script online opnieuw op en bewaart de actuele versie voor offline gebruik. Alleen shell-caches worden vernieuwd; registraties en PDF's blijven behouden.
+- Chromium/WebKit-regressie simuleert een werkelijk gecachte oude serviceworker en JavaScript.
+
 ## 33.11
 
 - Bij bestaande tankregistraties een PDF-bon achteraf koppelen via archiefselectie of foto/PDF-upload, met bekijken en downloaden.

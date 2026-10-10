@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.11'
+APP_VERSION = '33.12'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -2661,7 +2661,7 @@ def pwa_manifest() -> bytes:
 
 
 SERVICE_WORKER = f'''const CACHE = "rit-tank-shell-{APP_VERSION}";
-const SHELL = ["./", "manifest.webmanifest", "huisplan-icon-180.png", "huisplan-icon-192.png", "huisplan-icon-512.png", "captur-2014.png"];
+const SHELL = ["./", "manifest.webmanifest", "huisplan-icon-180.png", "huisplan-icon-192.png", "huisplan-icon-512.png", "captur-2014.png", "receipt-archive.js?v={APP_VERSION}"];
 self.addEventListener("install", event => {{
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 }});
@@ -2678,6 +2678,16 @@ self.addEventListener("fetch", event => {{
       if (response.ok) caches.open(CACHE).then(cache => cache.put("./", response.clone()));
       return response;
     }}).catch(() => caches.match("./")));
+    return;
+  }}
+  if (url.pathname.endsWith("/receipt-archive.js")) {{
+    event.respondWith(fetch(request).then(response => {{
+      if (response.ok) {{
+        const copy = response.clone();
+        event.waitUntil(caches.open(CACHE).then(cache => cache.put(request, copy)));
+      }}
+      return response;
+    }}).catch(() => caches.match(request)));
     return;
   }}
   event.respondWith(caches.match(request).then(cached => cached || fetch(request).then(response => {{
@@ -3672,7 +3682,9 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshVi
 </script>
 <script src="receipt-archive.js"></script>
 </body></html>'''
-
+# Refresh the external JS even under a still-active older PWA worker.
+APP_HTML = APP_HTML.replace('<script src="receipt-archive.js"></script>',
+                            f'<script src="receipt-archive.js?v={APP_VERSION}"></script>')
 
 
 class Handler(BaseHTTPRequestHandler):

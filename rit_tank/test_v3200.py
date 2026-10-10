@@ -32,7 +32,7 @@ class Beatrixschool3200Tests(unittest.TestCase):
         app.set_settings({'km_reimbursement_rate': '0.25'})
 
     def test_01_release_and_canonical_school_address(self):
-        self.assertEqual(app.APP_VERSION, '33.11')
+        self.assertEqual(app.APP_VERSION, '33.12')
         self.assertEqual(app.BEATRIXSCHOOL_NAME, 'Beatrixschool Rijssen')
         self.assertEqual(app.BEATRIXSCHOOL_ADDRESS, SCHOOL)
 
