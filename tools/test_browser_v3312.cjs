@@ -78,6 +78,10 @@ const oldWorker = [
     await page.locator('#history .fuel-receipt-action').waitFor({state:'visible'});
     assert.equal(await page.evaluate(()=>typeof window.openFuelReceiptLink),'undefined',
      name+': old JavaScript must reproduce the missing handler');
+    // The 33.11 worker caches fetched JavaScript asynchronously after responding.
+    await page.waitForFunction(async()=>Boolean(
+     await (await caches.open('rit-tank-shell-33.11')).match('receipt-archive.js')
+    ),null,{timeout:10000});
     assert.equal(await page.evaluate(async()=>{
      const response=await (await caches.open('rit-tank-shell-33.11')).match('receipt-archive.js');
      return Boolean(response && !(await response.text()).includes('function openFuelReceiptLink'));
