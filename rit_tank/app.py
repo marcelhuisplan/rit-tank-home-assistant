@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.13'
+APP_VERSION = '33.14'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -2820,7 +2820,9 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 #tripStepLocation .trip-location-box{padding:14px;border-radius:18px;background:#0b1214}
 #tripStepLocation .location-big{min-height:58px;border-radius:17px;font-size:16px}
 #tripStepLocation input{font-size:16px;min-height:50px}
-#tripModal,#fuelModal,#receiptArchiveModal{--trip-safe-top:env(safe-area-inset-top);--trip-safe-bottom:env(safe-area-inset-bottom)}#tripModal .sheet,#fuelModal .sheet,#receiptArchiveModal .sheet{max-height:calc(100dvh - var(--trip-safe-top) - 12px);padding-bottom:calc(18px + var(--trip-safe-bottom));scroll-padding-bottom:calc(24px + var(--trip-safe-bottom))}#tripModal .sheethead,#fuelModal .sheethead,#receiptArchiveModal .sheethead{position:sticky;top:0;z-index:30;gap:12px;min-width:0;background:#14191e;padding-top:4px;padding-bottom:8px;padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}#tripModal .sheethead h2,#fuelModal .sheethead h2,#receiptArchiveModal .sheethead h2{flex:1;min-width:0;overflow-wrap:anywhere}#tripModal .close,#fuelModal .close,#receiptArchiveModal .close{flex:0 0 56px;width:56px;height:56px;min-width:56px;min-height:56px;display:grid;place-items:center;padding:0;background:#50eec7;color:#05251d;border:2px solid #50eec7;border-radius:16px;font-size:36px;font-weight:900;line-height:1;opacity:1;touch-action:manipulation}#tripModal .close:focus-visible,#fuelModal .close:focus-visible,#receiptArchiveModal .close:focus-visible{outline:3px solid #fff;outline-offset:3px}#receiptArchiveModal{z-index:31}
+#tripModal,#fuelModal,#receiptArchiveModal{--trip-safe-top:env(safe-area-inset-top);--trip-safe-bottom:env(safe-area-inset-bottom)}#tripModal .sheet,#fuelModal .sheet,#receiptArchiveModal .sheet{max-height:calc(100dvh - var(--trip-safe-top) - 12px);padding-bottom:calc(18px + var(--trip-safe-bottom));scroll-padding-bottom:calc(24px + var(--trip-safe-bottom))}/* Limit the trip sheet to the visualViewport-backed modal, not the full iOS layout viewport. */
+#tripModal .sheet{max-height:min(calc(100% - var(--trip-safe-top) - 12px),calc(100dvh - var(--trip-safe-top) - 12px))}
+#tripModal .sheethead,#fuelModal .sheethead,#receiptArchiveModal .sheethead{position:sticky;top:0;z-index:30;gap:12px;min-width:0;background:#14191e;padding-top:4px;padding-bottom:8px;padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}#tripModal .sheethead h2,#fuelModal .sheethead h2,#receiptArchiveModal .sheethead h2{flex:1;min-width:0;overflow-wrap:anywhere}#tripModal .close,#fuelModal .close,#receiptArchiveModal .close{flex:0 0 56px;width:56px;height:56px;min-width:56px;min-height:56px;display:grid;place-items:center;padding:0;background:#50eec7;color:#05251d;border:2px solid #50eec7;border-radius:16px;font-size:36px;font-weight:900;line-height:1;opacity:1;touch-action:manipulation}#tripModal .close:focus-visible,#fuelModal .close:focus-visible,#receiptArchiveModal .close:focus-visible{outline:3px solid #fff;outline-offset:3px}#receiptArchiveModal{z-index:31}
 .trip-success-card{text-align:center;padding:10px 0}.trip-success-check{width:72px;height:72px;border-radius:50%;margin:4px auto 14px;display:grid;place-items:center;background:#153f34;color:#77f0ce;font-size:42px;font-weight:900}.trip-success-card h2{font-size:30px;margin:0 0 18px}.trip-success-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:left}.trip-success-grid>div{background:#0d1416;border:1px solid #27373a;border-radius:16px;padding:13px;min-width:0}.trip-success-grid small{display:block;color:var(--muted);font-size:11px;margin-bottom:5px}.trip-success-grid b{display:block;color:#fff;font-size:15px;overflow-wrap:anywhere}.trip-success-distance{grid-column:1/-1;text-align:center!important}.trip-success-distance b{font-size:36px!important;color:var(--teal)!important}.trip-success-actions{display:grid;gap:10px;margin-top:18px}.trip-success-actions button{min-height:56px;border-radius:17px;font-weight:900;font-size:16px}
 @media(max-width:390px){.simplified-odo-card{padding:16px}.simplified-odo-card #physicalTripValue{height:92px;font-size:46px;padding-right:58px}.physical-input-unit{right:14px;font-size:15px}.trip-success-grid{grid-template-columns:1fr}.trip-success-distance{grid-column:auto}#tripStepLocation{padding:8px}#tripStepLocation .trip-location-box{padding:8px}#tripStepLocation .trip-location-actions .location-big{font-size:14px;padding-left:5px;padding-right:5px}}
 @media(min-width:768px){.trip-sheet{padding-left:28px!important;padding-right:28px!important}.simplified-odo-card #physicalTripValue{font-size:72px}.trip-location-actions .location-big{min-height:64px;font-size:17px}}
@@ -3407,13 +3409,16 @@ function revealFocusedOdometer(){
   if(document.activeElement!==input||!modal.classList.contains('show'))return;
   const sheet=modal.querySelector('.sheet'),header=sheet.querySelector('.sheethead');
   const field=input.getBoundingClientRect(),panel=sheet.getBoundingClientRect(),view=window.visualViewport;
-  const top=Math.max(panel.top,header.getBoundingClientRect().bottom,view?view.offsetTop:0)+10;
-  let bottom=Math.min(panel.bottom,view?view.offsetTop+view.height:window.innerHeight)-10;
+  const viewTop=view?view.offsetTop:0,viewBottom=view?viewTop+view.height:window.innerHeight;
+  const top=Math.max(panel.top,header.getBoundingClientRect().bottom,viewTop)+10;
+  let bottom=Math.min(panel.bottom,viewBottom)-10;
   const action=$('physicalConfirmButton'),button=action.getBoundingClientRect();
   if(getComputedStyle(action).position==='sticky'&&button.top<bottom&&button.bottom>top)bottom=Math.min(bottom,button.top-8);
-  if(bottom<=top)return;
-  if(field.bottom>bottom)sheet.scrollTop+=field.bottom-bottom;
-  else if(field.top<top)sheet.scrollTop-=top-field.top;
+  const space=bottom-top;
+  if(space<=0)return;
+  // In a very short keyboard viewport, top-align instead of alternating between two impossible scroll positions.
+  const delta=field.top<top||field.height>space?field.top-top:field.bottom>bottom?field.bottom-bottom:0;
+  if(delta)sheet.scrollTop=Math.max(0,Math.min(sheet.scrollTop+delta,sheet.scrollHeight-sheet.clientHeight));
 }
 function schedulePhysicalInputReveal(){
   if(document.activeElement!==$('physicalTripValue')||!$('tripModal').classList.contains('show'))return;

@@ -230,7 +230,7 @@ class ReceiptArchiveTests(unittest.TestCase):
         self.assertEqual(post.status, 426)
 
     def test_ui_has_archive_and_no_auto_fuel_scanning(self):
-        self.assertEqual(app.APP_VERSION, '33.13')
+        self.assertEqual(app.APP_VERSION, '33.14')
         self.assertIn('onclick="openReceiptArchive()"', app.APP_HTML)
         self.assertIn('receipt-archive.js', app.APP_HTML)
         self.assertNotIn('receipt_data_url=await readReceiptFile()', app.APP_HTML)
