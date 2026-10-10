@@ -67,6 +67,15 @@ const oldWorker = [
    return send('','text/plain');
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  // Closing the origin is repeatable and simulates a real outage without WebKit's
+  // service-worker-incompatible Playwright offline emulation.
+  const stopServer=async()=>{
+   if(!server.listening)return;
+   await new Promise((resolve,reject)=>{
+    server.close(error=>error?reject(error):resolve());
+    server.closeAllConnections();
+   });
+  };
   const origin='http://127.0.0.1:'+server.address().port;
   const browser=await engine.launch({headless:true});
   try {
@@ -139,13 +148,32 @@ const oldWorker = [
     ),true,name+': fresh worker must precache new JS for offline use');
     assert.equal(await page.evaluate(()=>localStorage.getItem('cache-update-preservation')),'kept');
     assert.equal(await page.evaluate(async()=>(await caches.keys()).includes('other-user-cache')),true);
-    await context.setOffline(true);
-    await page.reload({waitUntil:'domcontentloaded'});
+    // Playwright/WebKit can reject SW-served requests under setOffline(true).
+    // Stopping the origin exercises the same real SW fallback on WebKit.
+    const offlineScriptResponses=[];
+    const onOfflineResponse=response=>{
+     if(response.url()===origin+'/receipt-archive.js?v=33.12')
+      offlineScriptResponses.push(response);
+    };
+    page.on('response',onOfflineResponse);
+    if(name==='webkit')await stopServer();
+    else await context.setOffline(true);
+    const offlineNavigation=await page.reload({waitUntil:'domcontentloaded'});
+    page.off('response',onOfflineResponse);
+    assert.equal(offlineNavigation?.status(),200,
+     name+': cached app shell must load without its origin');
+    assert.equal(offlineNavigation.fromServiceWorker(),true,
+     name+': offline navigation must be handled by the service worker');
+    const offlineScript=offlineScriptResponses.at(-1);
+    assert.ok(offlineScript,name+': offline reload must request versioned receipt JS');
+    assert.equal(offlineScript.status(),200,name+': offline receipt JS request must succeed');
+    assert.equal(offlineScript.fromServiceWorker(),true,
+     name+': offline receipt JS must come from the service worker');
     assert.equal(await page.evaluate(()=>typeof window.openFuelReceiptLink),'function',
      name+': updated JS must work offline');
-    await context.setOffline(false);
+    if(name==='chromium')await context.setOffline(false);
     console.log('33.12 '+name+' iPhone old JS cache, modal, update, offline and data preservation OK');
    } finally {await context.close();}
-  } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}
+  } finally {await browser.close();await stopServer();}
  }
 })().catch(e=>{console.error(e);process.exitCode=1;});
