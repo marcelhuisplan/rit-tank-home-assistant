@@ -1,5 +1,11 @@
 # Changelog
 
+## 33.11
+
+- Bij bestaande tankregistraties een PDF-bon achteraf koppelen via archiefselectie of foto/PDF-upload, met bekijken en downloaden.
+- Een bestaande koppeling alleen na expliciete bevestiging vervangen; bestaande bonbestanden, tankwaarden en ritten blijven ongewijzigd.
+- Koppelingen staan in de bestaande SQLite-database en PDF's in de persistente archiefmap; bestaande back-ups omvatten beide.
+
 ## 33.10
 
 - iOS Safari/PWA: gerichte visualViewport- en binnenscrollcorrectie houdt de actieve fysieke kilometerinvoer zichtbaar tijdens openen, typen en sluiten van het toetsenbord op kleinere iPhones.

@@ -1,4 +1,4 @@
-# Rit & Tank 33.10
+# Rit & Tank 33.11
 
 De ritregistratie is in release 33.00 vereenvoudigd voor iPhone en iPad: de fysieke kilometerteller staat centraal in een groot, rustig invoerveld, gevolgd door grote locatieknoppen. De fysieke teller blijft altijd de definitieve bron voor zakelijke kilometers; GPS blijft uitsluitend aanvullende informatie, controle en waarschuwing.
 
@@ -408,3 +408,7 @@ Afstandswaarschuwing: absoluut verschil minimaal 3 km én minimaal 25% van de gr
 De bestaande knop **Tankbon scannen** opent het zelfstandige bonnenarchief. Maak een iPhone-foto, selecteer tot vier afbeeldingen voor een meervoudige PDF of upload een bestaande PDF. Foto's worden op een witte A4-pagina geplaatst, gedraaid volgens EXIF en voor leesbaarheid aangescherpt. De server ondersteunt JPEG/PNG/WebP; iOS zet ondersteunde andere afbeeldingen in de browser om naar JPEG. PDF's mogen maximaal 30 pagina's bevatten. De namen volgen indien herkend het patroon `JJJJ-MM-DD_Tankstation_Plaats_Bedrag.pdf`. OCR geeft uitsluitend die vier naamgegevens terug. Ontbrekende of tegenstrijdige waarden blijven gemarkeerd als onbekend en zijn vóór opslaan aan te passen. Bij identieke PDF-inhoud of naam volgt een dubbelebonwaarschuwing met verplichte expliciete bevestiging.
 
 Nieuwe PDF's en index leven onder `/data/receipt_archive` respectievelijk in de bestaande `/data/rit_tank.db`; de oorspronkelijke bonbestanden in `/data/receipts` blijven onaangeroerd. Bestaande bonnen zijn in het archief te bekijken en worden als originele bestanden opgenomen in de ZIP-export onder `bestaande_bonnen/`. Er vindt geen koppeling of automatische overdracht plaats naar kilometerstand, liters, literprijs, datum van tankregistraties of ritten. Voeg voor extra zekerheid een externe ZIP-kopie toe aan de reguliere Home Assistant back-up.
+
+## Tankbon achteraf koppelen (33.11)
+
+Bij **Recente registraties → 📎 Bon toevoegen** hoort de koppeling uitsluitend bij de gekozen bestaande tankbeurt (`events.receipt_archive_id`). De database migreert deze optionele kolom zonder oudere registraties te wijzigen. Kies een bestaande PDF uit het archief of gebruik iPhone-foto/PDF-upload. Alleen nieuwe uploads worden via de bestaande veilige PDF-verwerking in `/data/receipt_archive` opgeslagen. Koppelen maakt geen tweede tankregistratie, past geen kilometers, liters, bedrag, datum, rit of oorspronkelijke `receipt_path` aan en verwijdert geen bonnen. Bij een eerdere koppeling volgt een expliciete bevestiging; een vervangen bon blijft bewaard. Nieuwe koppelingen zijn via **Bon bekijken** en **Downloaden** direct beschikbaar. SQLite en PDF's vallen onder de bestaande Home Assistant data-/back-ups en de versleutelde app-back-up.
