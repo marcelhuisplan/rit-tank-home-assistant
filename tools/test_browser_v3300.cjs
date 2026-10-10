@@ -35,20 +35,48 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
   try{
    for(const [device,width,height,safeTop,safeBottom] of [['iphone-se',375,667,20,0],['iphone-15-pro',393,852,59,34],['ipad-pro-13',1032,1376,24,20]]){
     const context=await browser.newContext({viewport:{width,height},isMobile:true,hasTouch:true,deviceScaleFactor:2,serviceWorkers:'block'});
-    const page=await context.newPage(),errors=[],sent=[];let current=start;
+    const page=await context.newPage(),errors=[],sent=[],odometerNetwork=[];let current=start;
+    // Collect only synthetic API traffic to diagnose WebKit access-control failures.
+    const isOdometerRequest=url=>new URL(url).pathname==='/api/business/odometer-suggestion';
+    const trace=(event,details={})=>{
+      odometerNetwork.push({event,...details});
+      if(odometerNetwork.length>120)odometerNetwork.shift();
+    };
+    page.on('request',req=>{
+      if(isOdometerRequest(req.url()))trace('request',{url:req.url(),method:req.method(),document:page.url()});
+    });
+    page.on('response',res=>{
+      if(isOdometerRequest(res.url()))trace('response',{url:res.url(),status:res.status()});
+    });
+    page.on('requestfinished',req=>{
+      if(isOdometerRequest(req.url()))trace('requestfinished',{url:req.url()});
+    });
+    page.on('requestfailed',req=>{
+      if(isOdometerRequest(req.url()))trace('requestfailed',{url:req.url(),reason:req.failure(),document:page.url()});
+    });
+    page.on('framenavigated',frame=>{
+      if(frame===page.mainFrame())trace('navigation',{url:frame.url()});
+    });
     await page.addInitScript(({top,bottom})=>{
       addEventListener('DOMContentLoaded',()=>{
         const modal=document.getElementById('tripModal');
         if(modal){modal.style.setProperty('--trip-safe-top',top+'px');modal.style.setProperty('--trip-safe-bottom',bottom+'px')}
       },{once:true});
     },{top:safeTop,bottom:safeBottom});
-    page.on('pageerror',e=>errors.push(e.message));
+    page.on('pageerror',e=>{
+      errors.push(e.message);
+      trace('pageerror',{message:e.message,document:page.url()});
+    });
     await page.route('**/*',async route=>{
       const u=new URL(route.request().url());let data={};
       if(u.pathname==='/'){current=u.searchParams.get('case')==='finish'?finish:start;return route.fulfill({contentType:'text/html',body:html})}
       if(u.pathname==='/api/summary')data=current;
       else if(u.pathname==='/api/assistant/arrivals')data={arrivals:[]};
-      else if(u.pathname==='/api/business/odometer-suggestion')data=current.business.odometer_suggestion;
+      else if(u.pathname==='/api/business/odometer-suggestion'){
+        data=current.business.odometer_suggestion;
+        trace('intercept',{url:u.href,fixture:current===start?'start':'finish',
+          valueType:data===undefined?'undefined':data===null?'null':typeof data});
+      }
       else if(u.pathname==='/api/places/home')data=home;
       else if(u.pathname==='/api/places/beatrixschool')data=school;
       else if(u.pathname==='/api/business/route-preview')data={distance_m:9000,distance_source:'route',suggested_odometer:25255};
@@ -58,6 +86,7 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
         return route.fulfill({status:201,contentType:'application/json',body:JSON.stringify(completed)});
       }else if(!u.pathname.startsWith('/api/'))return route.fulfill({status:204,body:''});
       await route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
+      if(u.pathname==='/api/business/odometer-suggestion')trace('fulfilled',{url:u.href});
     });
 
     // Release 33.09: iPhone/iPad tankbon close-controls at both scroll extremes.
@@ -410,6 +439,7 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
     assert.equal(sent[1].confirmation_token,'release33-browser-token');
     await page.screenshot({path:path.join(output,engine+'-'+device+'-success.png'),fullPage:false});
     assert.equal(await page.locator('#tripSuccessModal .sheet').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
+    if(errors.length)console.error('33.00 WebKit/Chromium odometer API diagnostics',engine,device,JSON.stringify(odometerNetwork));
     assert.deepEqual(errors,[]);
     console.log(engine,device,'start input, selection, keyboard, rotation, 41 km finish, GPS warning and success screenshots PASS');
     await context.close();

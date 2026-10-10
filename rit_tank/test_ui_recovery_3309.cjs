@@ -6,8 +6,12 @@ const root=__dirname;
 const app=fs.readFileSync(path.join(root,'app.py'),'utf8');
 const receipt=fs.readFileSync(path.join(root,'receipt_archive.js'),'utf8');
 const config=fs.readFileSync(path.join(root,'config.yaml'),'utf8');
-const css=app.split('\n').find(line=>line.startsWith('#tripModal,#fuelModal,#receiptArchiveModal{'));
-assert.ok(css,'all three screens must use the same shared safe-area rules');
+// Match the complete shared CSS region, regardless of line breaks or spacing.
+const start=app.search(/#tripModal\s*,\s*#fuelModal\s*,\s*#receiptArchiveModal\s*\{/);
+assert.ok(start>=0,'all three screens must use the same shared safe-area rules');
+const end=app.indexOf('.trip-success-card',start);
+assert.ok(end>start,'the close-control style block must remain in the app');
+const css=app.slice(start,end).replace(/\/\*[\s\S]*?\*\//g,'').replace(/\s+/g,'');
 for(const id of ['tripModal','fuelModal','receiptArchiveModal']){
   for(const selector of ['.sheet','.sheethead','.sheethead h2','.close','.close:focus-visible']){
     assert.ok(css.includes('#'+id+' '+selector),id+' '+selector+' missing');
