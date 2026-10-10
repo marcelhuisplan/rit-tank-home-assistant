@@ -1,6 +1,7 @@
 // 33.12: an iPhone PWA must replace an old cached receipt JavaScript file.
 'use strict';
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -44,6 +45,7 @@ const oldWorker = [
  for (const [name,engine] of Object.entries({chromium,webkit})) {
   let newHtml=false,newWorker=false;
   const requests=[];
+  const servedJs=[];
   const server=http.createServer((req,res)=>{
    const url=new URL(req.url,'http://127.0.0.1');
    requests.push(url.pathname+url.search);
@@ -53,8 +55,13 @@ const oldWorker = [
    }
    if(url.pathname==='/')return send(newHtml?html:oldHtml,'text/html; charset=utf-8','no-store');
    if(url.pathname==='/service-worker.js')return send(newWorker?worker:oldWorker,'text/javascript');
-   if(url.pathname==='/receipt-archive.js')
-    return send(url.searchParams.get('v')==='33.12'?currentJs:oldJs,'text/javascript');
+   if(url.pathname==='/receipt-archive.js') {
+    const body=url.searchParams.get('v')==='33.12'?currentJs:oldJs;
+    servedJs.push({url:url.pathname+url.search,
+     sha256:crypto.createHash('sha256').update(body,'utf8').digest('hex'),
+     bytes:Buffer.byteLength(body,'utf8')});
+    return send(body,'text/javascript');
+   }
    if(url.pathname==='/api/summary')return send(JSON.stringify(summary),'application/json','no-store');
    if(url.pathname==='/api/receipt-archive')
     return send(JSON.stringify({receipts:[{id:1,filename:'Bestaand.pdf',created_at:'2026-10-08',legacy:false}]}),'application/json');
@@ -82,6 +89,52 @@ const oldWorker = [
     await page.waitForFunction(async()=>Boolean(
      await (await caches.open('rit-tank-shell-33.11')).match('receipt-archive.js')
     ),null,{timeout:10000});
+    // Read-only diagnostics for the actual cache response, not an assumed fixture.
+    // Only local synthetic test data is inspected; never print JavaScript source.
+    const snapshot=await page.evaluate(async()=>{
+     const cacheNames=await caches.keys();
+     const entries=[];
+     for(const cacheName of cacheNames) {
+      const cache=await caches.open(cacheName);
+      for(const request of await cache.keys()) {
+       const response=await cache.match(request);
+       entries.push({cacheName,url:request.url,
+        responseUrl:response?response.url:null,status:response?response.status:null,
+        javascript:response&&request.url.includes('/receipt-archive.js')?
+         await response.text():null});
+      }
+     }
+     const registrations=await navigator.serviceWorker.getRegistrations();
+     return {cacheNames,entries,
+      controller:navigator.serviceWorker.controller?
+       {scriptURL:navigator.serviceWorker.controller.scriptURL,
+        state:navigator.serviceWorker.controller.state}:null,
+      registrations:registrations.map(registration=>({
+       scope:registration.scope,
+       active:registration.active?
+        {scriptURL:registration.active.scriptURL,state:registration.active.state}:null,
+       waiting:registration.waiting?
+        {scriptURL:registration.waiting.scriptURL,state:registration.waiting.state}:null,
+       installing:registration.installing?
+        {scriptURL:registration.installing.scriptURL,state:registration.installing.state}:null
+      }))};
+    });
+    const fingerprint=body=>({
+     sha256:crypto.createHash('sha256').update(body,'utf8').digest('hex'),
+     bytes:Buffer.byteLength(body,'utf8')
+    });
+    console.log('33.12 '+name+' cache content diagnostics '+JSON.stringify({
+     origin,
+     expectedOldJs:fingerprint(oldJs),
+     expectedCurrentJs:fingerprint(currentJs),
+     cacheNames:snapshot.cacheNames,
+     cacheEntries:snapshot.entries.map(({javascript,...entry})=>({
+      ...entry,...(javascript===null?{}:fingerprint(javascript))
+     })),
+     serverDeliveredJs:servedJs.map(entry=>({...entry,url:origin+entry.url})),
+     serviceWorkerController:snapshot.controller,
+     serviceWorkerRegistrations:snapshot.registrations
+    }));
     assert.equal(await page.evaluate(async()=>{
      const response=await (await caches.open('rit-tank-shell-33.11')).match('receipt-archive.js');
      return Boolean(response && !(await response.text()).includes('function openFuelReceiptLink'));
