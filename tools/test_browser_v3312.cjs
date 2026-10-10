@@ -26,6 +26,8 @@ assert.equal(fixture.status,0,fixture.stderr);
 const {html,summary,worker} = JSON.parse(fixture.stdout);
 assert.match(html,/receipt-archive\.js\?v=33\.12/);
 const currentJs = fs.readFileSync(path.join(root,'rit_tank/receipt_archive.js'),'utf8');
+assert.match(currentJs,/\b(?:async\s+)?function\s+openFuelReceiptLink\s*\(/,
+ 'updated JavaScript must define the receipt-link handler');
 const marker = currentJs.indexOf('/* Release 33.11:');
 assert.ok(marker > 0,'legacy fixture must omit the 33.11 handler');
 const oldJs = currentJs.slice(0,marker);
@@ -45,7 +47,6 @@ const oldWorker = [
  for (const [name,engine] of Object.entries({chromium,webkit})) {
   let newHtml=false,newWorker=false;
   const requests=[];
-  const servedJs=[];
   const server=http.createServer((req,res)=>{
    const url=new URL(req.url,'http://127.0.0.1');
    requests.push(url.pathname+url.search);
@@ -57,9 +58,6 @@ const oldWorker = [
    if(url.pathname==='/service-worker.js')return send(newWorker?worker:oldWorker,'text/javascript');
    if(url.pathname==='/receipt-archive.js') {
     const body=url.searchParams.get('v')==='33.12'?currentJs:oldJs;
-    servedJs.push({url:url.pathname+url.search,
-     sha256:crypto.createHash('sha256').update(body,'utf8').digest('hex'),
-     bytes:Buffer.byteLength(body,'utf8')});
     return send(body,'text/javascript');
    }
    if(url.pathname==='/api/summary')return send(JSON.stringify(summary),'application/json','no-store');
@@ -85,60 +83,29 @@ const oldWorker = [
     await page.locator('#history .fuel-receipt-action').waitFor({state:'visible'});
     assert.equal(await page.evaluate(()=>typeof window.openFuelReceiptLink),'undefined',
      name+': old JavaScript must reproduce the missing handler');
-    // The 33.11 worker caches fetched JavaScript asynchronously after responding.
-    await page.waitForFunction(async()=>Boolean(
-     await (await caches.open('rit-tank-shell-33.11')).match('receipt-archive.js')
-    ),null,{timeout:10000});
-    // Read-only diagnostics for the actual cache response, not an assumed fixture.
-    // Only local synthetic test data is inspected; never print JavaScript source.
-    const snapshot=await page.evaluate(async()=>{
-     const cacheNames=await caches.keys();
-     const entries=[];
-     for(const cacheName of cacheNames) {
-      const cache=await caches.open(cacheName);
-      for(const request of await cache.keys()) {
-       const response=await cache.match(request);
-       entries.push({cacheName,url:request.url,
-        responseUrl:response?response.url:null,status:response?response.status:null,
-        javascript:response&&request.url.includes('/receipt-archive.js')?
-         await response.text():null});
-      }
-     }
-     const registrations=await navigator.serviceWorker.getRegistrations();
-     return {cacheNames,entries,
-      controller:navigator.serviceWorker.controller?
-       {scriptURL:navigator.serviceWorker.controller.scriptURL,
-        state:navigator.serviceWorker.controller.state}:null,
-      registrations:registrations.map(registration=>({
-       scope:registration.scope,
-       active:registration.active?
-        {scriptURL:registration.active.scriptURL,state:registration.active.state}:null,
-       waiting:registration.waiting?
-        {scriptURL:registration.waiting.scriptURL,state:registration.waiting.state}:null,
-       installing:registration.installing?
-        {scriptURL:registration.installing.scriptURL,state:registration.installing.state}:null
-      }))};
-    });
-    const fingerprint=body=>({
-     sha256:crypto.createHash('sha256').update(body,'utf8').digest('hex'),
-     bytes:Buffer.byteLength(body,'utf8')
-    });
-    console.log('33.12 '+name+' cache content diagnostics '+JSON.stringify({
-     origin,
-     expectedOldJs:fingerprint(oldJs),
-     expectedCurrentJs:fingerprint(currentJs),
-     cacheNames:snapshot.cacheNames,
-     cacheEntries:snapshot.entries.map(({javascript,...entry})=>({
-      ...entry,...(javascript===null?{}:fingerprint(javascript))
-     })),
-     serverDeliveredJs:servedJs.map(entry=>({...entry,url:origin+entry.url})),
-     serviceWorkerController:snapshot.controller,
-     serviceWorkerRegistrations:snapshot.registrations
-    }));
-    assert.equal(await page.evaluate(async()=>{
-     const response=await (await caches.open('rit-tank-shell-33.11')).match('receipt-archive.js');
-     return Boolean(response && !(await response.text()).includes('function openFuelReceiptLink'));
-    }),true,name+': previous worker must have cached the old script');
+    // Seed the old 33.11 cache explicitly: its asynchronous writes are not under test.
+    const legacyScriptUrl=origin+'/receipt-archive.js';
+    const cachedOldJs=await page.evaluate(async({scriptUrl,scriptBody})=>{
+     const cache=await caches.open('rit-tank-shell-33.11');
+     await cache.put(scriptUrl,new Response(scriptBody,{
+      status:200,headers:{'Content-Type':'text/javascript'}
+     }));
+     const entry=await cache.match(scriptUrl);
+     const keys=await cache.keys();
+     return {hasExactKey:keys.some(request=>request.url===scriptUrl),
+      body:entry?await entry.text():null};
+    },{scriptUrl:legacyScriptUrl,scriptBody:oldJs});
+    assert.equal(cachedOldJs.hasExactKey,true,
+     name+': previous cache must contain the exact unversioned script URL');
+    assert.equal(cachedOldJs.body,oldJs,
+     name+': seeded response must contain the complete old JavaScript');
+    const sha256=body=>crypto.createHash('sha256').update(body,'utf8').digest('hex');
+    assert.equal(sha256(cachedOldJs.body),sha256(oldJs),
+     name+': cached script SHA-256 must match the old JavaScript');
+    assert.doesNotMatch(cachedOldJs.body,/function openFuelReceiptLink/,
+     name+': old cached JavaScript must not define the new handler');
+    assert.equal(await page.evaluate(async()=>(await fetch('/receipt-archive.js')).text()),oldJs,
+     name+': active old worker must serve the explicitly cached script');
     await page.evaluate(async()=>{
      localStorage.setItem('cache-update-preservation','kept');
      await caches.open('other-user-cache');
