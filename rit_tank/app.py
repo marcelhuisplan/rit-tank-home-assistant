@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.10'
+APP_VERSION = '33.11'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -375,6 +375,7 @@ def init_db() -> None:
             ('source_kind', 'TEXT'),
             ('business_trip_stop_id', 'INTEGER'),
             ('receipt_path', 'TEXT'),
+            ('receipt_archive_id', 'INTEGER'),
             ('kilometer_conflict', 'INTEGER NOT NULL DEFAULT 0')
         ):
             if col not in cols:
@@ -1189,6 +1190,60 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
     publish_sensors_async()
     return {'ok': True, 'id': rid, 'cost': round(liters * price, 2),
             'receipt': bool(receipt_name), 'kilometer_conflict': bool(conflicts)}
+
+
+
+class FuelReceiptLinkConflict(ValueError):
+    def __init__(self, message: str, code: str):
+        self.code = code
+        super().__init__(message)
+
+
+def link_existing_fuel_receipt(event_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    """Link an existing or new archive PDF; never modify fuel facts or prior files."""
+    with DB_LOCK, db() as con:
+        row = con.execute(
+            "SELECT id, receipt_path, receipt_archive_id FROM events WHERE id=? AND type='fuel'",
+            (event_id,)).fetchone()
+        if not row:
+            raise ValueError('Deze tankregistratie bestaat niet.')
+        if (row['receipt_path'] or row['receipt_archive_id']) and payload.get('confirm_replace') is not True:
+            raise FuelReceiptLinkConflict(
+                'Er is al een bon gekoppeld. Bevestig expliciet dat je de koppeling wilt vervangen.',
+                'FUEL_RECEIPT_EXISTS')
+        archive_id = payload.get('archive_id')
+        pdf_data = payload.get('pdf_data_url')
+        if (archive_id is None) == (pdf_data is None):
+            raise ValueError('Kies één PDF uit het archief of upload een bon.')
+        if archive_id is not None:
+            if type(archive_id) is not int or archive_id <= 0:
+                raise ValueError('Kies een geldige PDF uit het archief.')
+            if archive_id == row['receipt_archive_id']:
+                raise ValueError('Deze bon is al gekoppeld.')
+            try:
+                path, filename = receipt_archive.entry(
+                    con, DATA_DIR / 'receipt_archive', RECEIPT_DIR, str(archive_id))
+            except FileNotFoundError:
+                raise ValueError('De gekozen archiefbon bestaat niet meer.') from None
+            if path.suffix.lower() != '.pdf':
+                raise ValueError('Alleen PDF-bonnen kunnen gekoppeld worden.')
+        else:
+            result = receipt_archive.save(
+                con, DATA_DIR / 'receipt_archive', str(pdf_data or ''),
+                str(payload.get('filename') or ''),
+                payload.get('confirm_duplicate') is True)
+            if result.get('confirmation_required'):
+                raise FuelReceiptLinkConflict(
+                    'Mogelijk dubbele PDF. Controleer de bon en bevestig expliciet.',
+                    'RECEIPT_DUPLICATE')
+            archive_id = int(result['id'])
+            filename = result['filename']
+        con.execute('UPDATE events SET receipt_archive_id=? WHERE id=?', (archive_id, event_id))
+        audit('receipt_link', 'fuel', event_id,
+              {'archive_id': archive_id, 'replaced': bool(row['receipt_path'] or row['receipt_archive_id'])},
+              con=con)
+        con.commit()
+        return {'ok': True, 'event_id': event_id, 'archive_id': archive_id, 'filename': filename}
 
 
 RECEIPT_DIR = DATA_DIR / 'receipts'
@@ -2760,6 +2815,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 @media(max-width:390px){.simplified-odo-card{padding:16px}.simplified-odo-card #physicalTripValue{height:92px;font-size:46px;padding-right:58px}.physical-input-unit{right:14px;font-size:15px}.trip-success-grid{grid-template-columns:1fr}.trip-success-distance{grid-column:auto}#tripStepLocation{padding:8px}#tripStepLocation .trip-location-box{padding:8px}#tripStepLocation .trip-location-actions .location-big{font-size:14px;padding-left:5px;padding-right:5px}}
 @media(min-width:768px){.trip-sheet{padding-left:28px!important;padding-right:28px!important}.simplified-odo-card #physicalTripValue{font-size:72px}.trip-location-actions .location-big{min-height:64px;font-size:17px}}
 
+#fuelReceiptModal{z-index:32;--trip-safe-top:env(safe-area-inset-top);--trip-safe-bottom:env(safe-area-inset-bottom)}#fuelReceiptModal .sheet{max-height:calc(100dvh - var(--trip-safe-top) - 12px);overflow-y:auto;overscroll-behavior:contain;padding-bottom:calc(18px + var(--trip-safe-bottom));scroll-padding-bottom:calc(24px + var(--trip-safe-bottom))}#fuelReceiptModal .sheethead{position:sticky;top:0;z-index:30;gap:12px;min-width:0;background:#14191e;padding:4px env(safe-area-inset-right) 8px env(safe-area-inset-left)}#fuelReceiptModal .sheethead h2{flex:1;min-width:0;overflow-wrap:anywhere}#fuelReceiptModal .close{flex:0 0 56px;width:56px;height:56px;min-width:56px;min-height:56px;display:grid;place-items:center;padding:0;background:#50eec7;color:#05251d;border:2px solid #50eec7;border-radius:16px;font-size:36px;font-weight:900;line-height:1;opacity:1;touch-action:manipulation}#fuelReceiptModal .close:focus-visible{outline:3px solid #fff;outline-offset:3px}.event-actions .fuel-receipt-action,.event-actions .linkbtn{min-height:40px;font-size:12px;border-radius:10px;padding:7px 9px;white-space:normal}.event-actions .fuel-receipt-action{border:1px solid #34866f;background:#123b31;color:#82e7c2}.event-actions{flex-wrap:wrap;justify-content:flex-end}#fuelReceiptModal .field select,#fuelReceiptModal .field input{width:100%;max-width:100%;font-size:16px;min-height:48px}#fuelReceiptModal .save{min-height:52px;width:100%}
 </style>
 </head>
 <body>
@@ -3007,7 +3063,7 @@ async function reloadData(){try{DATA=await api(`api/summary?period=${PERIOD}`);a
 function render(){let s=DATA.settings,p=DATA.period,f=DATA.period_full_tank;$('vehicleName').textContent=s.vehicle_name;$('fuelType').textContent=s.fuel_type;$('odometer').textContent=DATA.current_odometer==null?'—':fmt(DATA.current_odometer,0);$('heroConsumption').textContent=DATA.latest_full_cycle?.l100!=null?fmt(DATA.latest_full_cycle.l100,2):'—';$('sinceFull').textContent=DATA.since_full_km==null?'Nog geen volle-tank startpunt':`${fmt(DATA.since_full_km,0)} km sinds laatste volle tank`;$('periodLabel').textContent=p.label;$('fuelCount').textContent=`${p.fuel_count} tankbeurt${p.fuel_count===1?'':'en'}`;$('kpiKm').textContent=`${fmt(p.km,1)} km`;$('kpiLiters').textContent=`${fmt(p.liters,2)} L`;$('kpiL100').textContent=f?.l100==null?'—':fmt(f.l100,2);$('kpiCost').textContent=money(p.cost);$('kpiPrice').textContent=p.avg_price==null?'—':`${s.currency} ${fmt(p.avg_price,3)}`;$('kpiCost100').textContent=f?.cost100==null?'—':money(f.cost100);if(f){$('fullAvgVal').textContent=`${fmt(f.l100,2)} L/100 km`;$('fullAvgInfo').innerHTML=`${f.cycles} complete cyclus${f.cycles===1?'':'sen'}<br>${fmt(f.km,0)} km · ${fmt(f.liters,1)} L`}else{$('fullAvgVal').textContent='—';$('fullAvgInfo').textContent='Nog geen complete volle-tank cyclus in deze periode'};renderChart();renderStations();renderHistory();renderBusiness();$('eventCount').textContent=`${DATA.total_events} totaal`;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.period===PERIOD));document.querySelectorAll('.seg button').forEach(b=>b.classList.toggle('active',b.dataset.metric===METRIC));switchView(VIEW,false)}
 function renderChart(){let c=$('chart');c.innerHTML='';let vals=DATA.chart.map(x=>Number(x[METRIC]??0)||0),max=Math.max(...vals,1);DATA.chart.forEach(x=>{let w=document.createElement('div');w.className='bar-wrap';let value=Number(x[METRIC]??0)||0,pct=value<=0?1:Math.max(3,value/max*88);let label=METRIC==='cost'?`${DATA.settings.currency}${fmt(value,0)}`:METRIC==='liters'?`${fmt(value,1)}L`:METRIC==='l100'?`${fmt(value,1)}`:`${fmt(value,0)}`;w.innerHTML=`<div class="bar-val">${value?label:''}</div><div class="bar ${METRIC==='l100'?'orange':''}" style="height:${pct}%"></div><div class="bar-label">${x.label}</div>`;c.appendChild(w)})}
 function renderStations(){let box=$('stationStats'),arr=DATA.station_stats||[];$('stationCount').textContent=arr.length?`${arr.length} locatie${arr.length===1?'':'s'}`:'';box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">In deze periode zijn nog geen tanklocaties opgeslagen.</div>';return}arr.forEach(x=>{let r=document.createElement('div');r.className='station-row';let map=x.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(x.google_maps_uri)}">📍</a>`:'';r.innerHTML=`<div class="station-icon">⛽</div><div><strong>${esc(x.name)}</strong><small>${x.count}× getankt · ${fmt(x.liters,1)} L · ${money(x.cost)}<br>gem. ${x.avg_price==null?'—':DATA.settings.currency+' '+fmt(x.avg_price,3)}/L${x.address?'<br>'+esc(x.address):''}</small></div>${map}`;box.appendChild(r)})}
-function renderHistory(){let h=$('history');h.innerHTML='';if(!DATA.recent.length){h.innerHTML='<div class="empty">Nog geen registraties. Voeg je eerste kilometerstand of tankbeurt toe.</div>';return}DATA.recent.forEach(e=>{let d=document.createElement('div');d.className='event';let fuel=e.type==='fuel',station=e.station_display||e.station||'',desc=fuel?`${fmt(e.liters,2)} L · ${DATA.settings.currency} ${fmt(e.price_per_liter,3)}/L${station?' · '+esc(station):''}`:`+${fmt(e.delta_km,1)} km`,map=e.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(e.google_maps_uri)}">📍</a>`:'',receipt=e.receipt_path?`<a class="receipt-link" target="_blank" href="api/receipt/${e.id}">📷</a>`:'';d.innerHTML=`<div class="event-icon">${fuel?'⛽':'🛣️'}</div><div><strong>${fuel?'Tankbeurt':'Kilometerstand'} · ${fmt(e.odometer,0)} km</strong><small>${e.date_label} ${e.time_label} · ${desc}${e.kilometer_conflict?'<br>⚠️ Kilometerconflict — afstand/verbruik uitgesloten':''}${e.station_address?'<br>'+esc(e.station_address):''}${e.note?'<br>'+esc(e.note):''}</small></div><div class="right">${fuel?`<b>${money(e.cost)}</b>`:`<b>${fmt(e.delta_km,1)} km</b>`}<div class="event-actions">${map}${receipt}<button class="trash" onclick="removeEvent(${e.id})">🗑️</button></div></div>`;h.appendChild(d)})}
+function renderHistory(){let h=$('history');h.innerHTML='';if(!DATA.recent.length){h.innerHTML='<div class="empty">Nog geen registraties. Voeg je eerste kilometerstand of tankbeurt toe.</div>';return}DATA.recent.forEach(e=>{let d=document.createElement('div');d.className='event';let fuel=e.type==='fuel',station=e.station_display||e.station||'',desc=fuel?`${fmt(e.liters,2)} L · ${DATA.settings.currency} ${fmt(e.price_per_liter,3)}/L${station?' · '+esc(station):''}`:`+${fmt(e.delta_km,1)} km`,map=e.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(e.google_maps_uri)}">📍</a>`:'',receipt=e.receipt_archive_id?`<a class="linkbtn" target="_blank" rel="noopener" href="api/receipt-archive/${e.receipt_archive_id}">Bon bekijken</a><a class="linkbtn" href="api/receipt-archive/${e.receipt_archive_id}?download=1" download>Downloaden</a>`:e.receipt_path?`<a class="receipt-link" target="_blank" rel="noopener" href="api/receipt/${e.id}">📷</a>`:'';d.innerHTML=`<div class="event-icon">${fuel?'⛽':'🛣️'}</div><div><strong>${fuel?'Tankbeurt':'Kilometerstand'} · ${fmt(e.odometer,0)} km</strong><small>${e.date_label} ${e.time_label} · ${desc}${e.kilometer_conflict?'<br>⚠️ Kilometerconflict — afstand/verbruik uitgesloten':''}${e.station_address?'<br>'+esc(e.station_address):''}${e.note?'<br>'+esc(e.note):''}</small></div><div class="right">${fuel?`<b>${money(e.cost)}</b>`:`<b>${fmt(e.delta_km,1)} km</b>`}<div class="event-actions">${map}${receipt}${fuel?`<button type="button" class="fuel-receipt-action" onclick="openFuelReceiptLink(${e.id})">📎 Bon toevoegen</button>`:'' }<button class="trash" onclick="removeEvent(${e.id})">🗑️</button></div></div>`;h.appendChild(d)})}
 function switchView(view,remember=true){VIEW=view==='business'?'business':'auto';document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${VIEW}`));document.querySelectorAll('.view-tab').forEach(b=>b.classList.toggle('active',b.dataset.view===VIEW));if(remember)localStorage.setItem('rit_tank_view',VIEW)}
 document.querySelectorAll('.view-tab').forEach(b=>b.onclick=()=>{switchView(b.dataset.view);window.scrollTo({top:0,behavior:'smooth'})});VIEW=localStorage.getItem('rit_tank_view')||'auto';
 function smartTripAction(){if(!DATA)return;let active=DATA.business?.active_trip;if(active){switchView('business');$('bizHero').scrollIntoView({block:'start',behavior:'smooth'})}else openTripPoint('start')}
@@ -4040,6 +4096,10 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, add_business_stop(payload, finish=False), 201)
             if path in ('/api/business/finish', '/api/trips/finish'):
                 return json_response(self, add_business_stop(payload, finish=True), 201)
+            fuel_receipt_match = re.fullmatch(r'/api/fuel/(\d+)/receipt', path)
+            if fuel_receipt_match:
+                return json_response(self, link_existing_fuel_receipt(
+                    int(fuel_receipt_match.group(1)), payload), 201)
             if path == '/api/fuel':
                 return json_response(self, add_fuel(payload), 201)
             if path == '/api/odometer':
@@ -4057,6 +4117,8 @@ class Handler(BaseHTTPRequestHandler):
                 'blocking_arrival_id': e.blocking_arrival_id,
                 'blocking_departure_at': e.blocking_departure_at,
             }, 409)
+        except FuelReceiptLinkConflict as e:
+            return json_response(self, {'error': str(e), 'code': e.code}, 409)
         except FuelKilometerConflict as e:
             return json_response(self, {
                 'error': str(e), 'code': 'FUEL_KILOMETER_CONFLICT',
