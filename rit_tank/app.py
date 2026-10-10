@@ -3981,7 +3981,8 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {'error': 'Administratie wissen mislukt. Herstart de add-on voor herstel.'}, 500)
         try:
             payload = read_json(self, 27 * 1024 * 1024
-                                if path in ('/api/receipt-archive/prepare', '/api/receipt-archive/save')
+                                if (path in ('/api/receipt-archive/prepare', '/api/receipt-archive/save')
+                                    or re.fullmatch(r'/api/fuel/\d+/receipt', path))
                                 else 12 * 1024 * 1024)
             physical_routes = {'/api/business/start': 'start', '/api/trips/start': 'start',
                                '/api/business/stop': 'stop', '/api/trips/location': 'stop',
