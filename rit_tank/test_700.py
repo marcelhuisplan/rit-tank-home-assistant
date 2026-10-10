@@ -25,19 +25,19 @@ class Version700Tests(unittest.TestCase):
     """Test current version consistency and the historical 7.00 changelog."""
     
     def test_app_version_is_33_04(self):
-        self.assertEqual(app.APP_VERSION, '33.13')
+        self.assertEqual(app.APP_VERSION, '33.14')
     
     def test_config_yaml_version_is_33_03(self):
         config_path = Path(__file__).with_name('config.yaml')
         if config_path.exists():
             content = config_path.read_text()
-            self.assertIn("version: '33.13'", content)
+            self.assertIn("version: '33.14'", content)
     
     def test_readme_title_has_33_03(self):
         readme_path = Path(__file__).with_name('README.md')
         if readme_path.exists():
             content = readme_path.read_text()
-            self.assertIn('# Rit & Tank 33.13', content)
+            self.assertIn('# Rit & Tank 33.14', content)
     
     def test_changelog_has_7_00_section(self):
         changelog_path = Path(__file__).with_name('CHANGELOG.md')

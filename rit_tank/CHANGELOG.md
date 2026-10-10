@@ -1,5 +1,10 @@
 # Changelog
 
+## 33.14
+
+- Beperkt de ritmodal bij een iOS-toetsenbord tot de zichtbare hoogte van de visualViewport, ook als het layoutvenster groter blijft.
+- Zorgt dat het invoerveld niet boven de rand wordt weggescrold; kilometerstand, bevestiging, mintgroene sluitknoppen en opgeslagen gegevens blijven behouden.
+
 ## 33.13
 
 - Bij het bestaande volle-tankgemiddelde en de verbruiks-KPI staat ook de Nederlandse notatie `1 : x,x` (km per liter), berekend uit kilometers en liters zonder omkering van afgeronde L/100 km.

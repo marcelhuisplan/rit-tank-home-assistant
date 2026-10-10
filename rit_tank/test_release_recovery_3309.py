@@ -13,7 +13,7 @@ class Recovery3309Tests(unittest.TestCase):
         source = (root / 'app.py').read_text(encoding='utf-8')
         config = (root / 'config.yaml').read_text(encoding='utf-8')
         docker = (root / 'Dockerfile').read_text(encoding='utf-8')
-        self.assertEqual(app.APP_VERSION, '33.13')
+        self.assertEqual(app.APP_VERSION, '33.14')
         for fragment in ('day_planning', '/api/day-planning', 'google_calendar_client_id',
                          'google_calendar_client_secret', 'google_calendar_oauth_json'):
             self.assertNotIn(fragment, source + config + docker)
