@@ -1,5 +1,10 @@
 # Changelog
 
+## 33.13
+
+- Bij het bestaande volle-tankgemiddelde en de verbruiks-KPI staat ook de Nederlandse notatie `1 : x,x` (km per liter), berekend uit kilometers en liters zonder omkering van afgeronde L/100 km.
+- Zonder betrouwbare volle-tankcyclus verschijnt `—`; de bestaande L/100 km-berekening, periodefilters, registraties en PDF-bonnen blijven ongewijzigd.
+
 ## 33.12
 
 - PWA/iPhone: versiegebonden `receipt-archive.js` voorkomt dat **📎 Bon toevoegen** een oude JavaScript-module laadt.

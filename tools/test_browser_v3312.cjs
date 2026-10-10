@@ -1,4 +1,4 @@
-// 33.12: an iPhone PWA must replace an old cached receipt JavaScript file.
+// 33.13: an iPhone PWA must replace an old cached receipt JavaScript file.
 'use strict';
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
@@ -32,7 +32,7 @@ const marker = currentJs.indexOf('/* Release 33.11:');
 assert.ok(marker > 0,'legacy fixture must omit the 33.11 handler');
 const oldJs = currentJs.slice(0,marker);
 assert.doesNotMatch(oldJs,/function openFuelReceiptLink/);
-const oldHtml = html.replace('receipt-archive.js?v=33.12','receipt-archive.js');
+const oldHtml = html.replace('receipt-archive.js?v=33.13','receipt-archive.js');
 
 // Match the previous service worker's cache-first strategy and shell cache name.
 const oldWorker = [
@@ -57,7 +57,7 @@ const oldWorker = [
    if(url.pathname==='/')return send(newHtml?html:oldHtml,'text/html; charset=utf-8','no-store');
    if(url.pathname==='/service-worker.js')return send(newWorker?worker:oldWorker,'text/javascript');
    if(url.pathname==='/receipt-archive.js') {
-    const body=url.searchParams.get('v')==='33.12'?currentJs:oldJs;
+    const body=url.searchParams.get('v')==='33.13'?currentJs:oldJs;
     return send(body,'text/javascript');
    }
    if(url.pathname==='/api/summary')return send(JSON.stringify(summary),'application/json','no-store');
@@ -126,8 +126,8 @@ const oldWorker = [
     await page.locator('#history .fuel-receipt-action').waitFor({state:'visible'});
     assert.equal(await page.evaluate(()=>typeof window.openFuelReceiptLink),'function',
      name+': new JS must bypass old cache');
-    assert.ok(requests.includes('/receipt-archive.js?v=33.12'),
-     name+': 33.12 script URL was not fetched');
+    assert.ok(requests.includes('/receipt-archive.js?v=33.13'),
+     name+': 33.13 script URL was not fetched');
     assert.equal(await page.evaluate(async()=>
      Boolean(await (await caches.open('rit-tank-shell-33.11')).match('receipt-archive.js'))
     ),true,name+': old JS still present during upgrade');
@@ -141,10 +141,10 @@ const oldWorker = [
     await page.evaluate(async()=>(await navigator.serviceWorker.ready).update());
     await page.waitForFunction(async()=>{
      const keys=await caches.keys();
-     return keys.includes('rit-tank-shell-33.12')&&!keys.includes('rit-tank-shell-33.11');
+     return keys.includes('rit-tank-shell-33.13')&&!keys.includes('rit-tank-shell-33.11');
     });
     assert.equal(await page.evaluate(async()=>
-     Boolean(await (await caches.open('rit-tank-shell-33.12')).match('receipt-archive.js?v=33.12'))
+     Boolean(await (await caches.open('rit-tank-shell-33.13')).match('receipt-archive.js?v=33.13'))
     ),true,name+': fresh worker must precache new JS for offline use');
     assert.equal(await page.evaluate(()=>localStorage.getItem('cache-update-preservation')),'kept');
     assert.equal(await page.evaluate(async()=>(await caches.keys()).includes('other-user-cache')),true);
@@ -152,7 +152,7 @@ const oldWorker = [
     // Stopping the origin exercises the same real SW fallback on WebKit.
     const offlineScriptResponses=[];
     const onOfflineResponse=response=>{
-     if(response.url()===origin+'/receipt-archive.js?v=33.12')
+     if(response.url()===origin+'/receipt-archive.js?v=33.13')
       offlineScriptResponses.push(response);
     };
     page.on('response',onOfflineResponse);
@@ -172,7 +172,7 @@ const oldWorker = [
     assert.equal(await page.evaluate(()=>typeof window.openFuelReceiptLink),'function',
      name+': updated JS must work offline');
     if(name==='chromium')await context.setOffline(false);
-    console.log('33.12 '+name+' iPhone old JS cache, modal, update, offline and data preservation OK');
+    console.log('33.13 '+name+' iPhone old JS cache, modal, update, offline and data preservation OK');
    } finally {await context.close();}
   } finally {await browser.close();await stopServer();}
  }
