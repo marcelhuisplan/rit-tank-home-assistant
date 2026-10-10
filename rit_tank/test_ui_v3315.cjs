@@ -30,7 +30,7 @@ assert.equal(els.fuelTotal.textContent,'€ 103,20');
 run("fuelSetDigits('liters','4301')");
 assert.equal(els.fuelTotal.textContent,'€ 103,22');
 const edit=(kind,type,data,selectAll=false)=>{
- let el=els[kind==='price'?'fuelPriceInput':'fuelLitersInput'];
+ let el=els[kind==='price'?'fuelPriceInput':kind==='odometer'?'fuelOdo':'fuelLitersInput'];
  el.selectionStart=selectAll?0:el.value.length;el.selectionEnd=el.value.length;
  let prevented=false;ctx._event={cancelable:true,inputType:type,data,currentTarget:el,preventDefault(){prevented=true}};
  run("fuelBeforeInput(_event,'"+kind+"')");assert.equal(prevented,true);
@@ -46,6 +46,10 @@ edit('price','insertText','5',true);assert.equal(els.fuelPriceInput.value,'0,005
 run("fuelSetDigits('price','2400')");edit('price','insertText','5');
 assert.equal(els.fuelPriceInput.value,'2,400');
 assert.match(els.fuelInputError.textContent,/maximaal/);
+run("fuelSetDigits('odometer','25230');fuelSelectAll(document.getElementById('fuelOdo'))");
+// Safari/Chromium can collapse a touch selection before the first key arrives.
+for(const c of '25231')edit('odometer','insertText',c);
+assert.equal(els.fuelOdo.value,'25231','tap must replace a proposed odometer even if selection collapses');
 run("fuelSetDigits('odometer','26199')");assert.equal(els.fuelOdo.value,'26199');
 assert.equal(run("fuelSetDigits('liters','25001')"),false);
 assert.equal(els.fuelLitersInput.value,'4,30');

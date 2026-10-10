@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.14'
+APP_VERSION = '33.15'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -3558,6 +3558,7 @@ function rememberFuelPrice(value){if(!Number.isFinite(value)||value<=0)return;LA
 // Raw digits are the sole source of truth. Displayed commas never feed back into calculations.
 const FUEL_INPUT_RULES={odometer:{scale:0,max:999999,id:'fuelOdo'},liters:{scale:2,max:25000,id:'fuelLitersInput'},price:{scale:3,max:10000,id:'fuelPriceInput'}};
 let FUEL_DIGITS={odometer:'',liters:'',price:''};
+let FUEL_PENDING_REPLACE=null;
 function fuelNormalizeDigits(raw){return String(raw??'').replace(/[^0-9]/g,'').replace(/^0+(?=[0-9])/,'')}
 function fuelFormatDigits(digits,scale){let n=(fuelNormalizeDigits(digits)||'0').padStart(scale+1,'0');return scale?n.slice(0,-scale)+','+n.slice(-scale):n}
 function fuelNumber(kind){return Number(FUEL_DIGITS[kind]||'0')}
@@ -3574,20 +3575,20 @@ function fuelSetDigits(kind,raw){
  if(document.activeElement===input)input.setSelectionRange(input.value.length,input.value.length);
  updateFuelTotal();return true;
 }
-function fuelSelectAll(input){input.select()}
+function fuelSelectAll(input){FUEL_PENDING_REPLACE=input.id;input.select()}
 function fuelBeforeInput(event,kind){
  if(!event.cancelable)return;
- const type=event.inputType||'',input=event.currentTarget,all=input.selectionStart===0&&input.selectionEnd===input.value.length;
+ const type=event.inputType||'',input=event.currentTarget,all=input.selectionStart===0&&input.selectionEnd===input.value.length,replace=all||FUEL_PENDING_REPLACE===input.id;
  let next=FUEL_DIGITS[kind];
- if(type.startsWith('delete'))next=all?'':next.slice(0,-1);
+ if(type.startsWith('delete'))next=replace?'':next.slice(0,-1);
  else if(type.startsWith('insert')){
   const content=event.data??event.dataTransfer?.getData('text/plain');
   if(content==null)return;
   const inserted=String(content).replace(/[^0-9]/g,'');
   if(!inserted){event.preventDefault();return}
-  next=(all?'':next)+inserted;
+  next=(replace?'':next)+inserted;
  }else return;
- event.preventDefault();fuelSetDigits(kind,next);
+ event.preventDefault();FUEL_PENDING_REPLACE=null;fuelSetDigits(kind,next);
 }
 function fuelInput(event,kind){fuelSetDigits(kind,event.currentTarget.value)}
 function fuelClear(kind){fuelSetDigits(kind,'');const input=$(FUEL_INPUT_RULES[kind].id);input.focus();input.setSelectionRange(input.value.length,input.value.length)}
@@ -3596,7 +3597,7 @@ function fuelValues(){return{liters:fuelNumber('liters')/100,price:fuelNumber('p
 function updateFuelTotal(){const cents=Math.round(fuelNumber('liters')*fuelNumber('price')/1000);$('fuelTotal').textContent=(DATA?.settings?.currency||'€')+' '+fmt(cents/100,2)}
 function initFuelInputs(){
  const last=DATA.latest_fuel||{},liters=last.liters,price=preferredFuelPrice(),odo=DATA.current_odometer;
- FUEL_DIGITS={odometer:'',liters:'',price:''};
+ FUEL_DIGITS={odometer:'',liters:'',price:''};FUEL_PENDING_REPLACE=null;
  fuelSetDigits('odometer',odo==null?'':String(Math.round(Number(odo))));
  fuelSetDigits('liters',liters==null?'':String(Math.round(Number(liters)*100)));
  fuelSetDigits('price',price==null?'':String(Math.round(Number(price)*1000)));

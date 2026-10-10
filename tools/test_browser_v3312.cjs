@@ -24,7 +24,7 @@ const fixture = spawnSync('python', ['-B','-c',python], {
 });
 assert.equal(fixture.status,0,fixture.stderr);
 const {html,summary,worker} = JSON.parse(fixture.stdout);
-assert.match(html,/receipt-archive\.js\?v=33\.14/);
+assert.match(html,/receipt-archive\.js\?v=33\.15/);
 const currentJs = fs.readFileSync(path.join(root,'rit_tank/receipt_archive.js'),'utf8');
 assert.match(currentJs,/\b(?:async\s+)?function\s+openFuelReceiptLink\s*\(/,
  'updated JavaScript must define the receipt-link handler');
