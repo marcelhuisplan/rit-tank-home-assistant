@@ -3553,12 +3553,61 @@ function initOdometerWheel(prefix,initial){let n=Math.max(0,Math.min(999999,Math
 function updateOdometerWheel(prefix){let raw='';for(let i=0;i<6;i++)raw+=String(wheelVal(prefix+'OdoD'+i)??0);let value=Number(raw),hidden=$(prefix+'Odo'),display=$(prefix+'OdoDisplay');if(hidden)hidden.value=value;if(display)display.textContent=value.toLocaleString('nl-NL')}
 
 let LAST_FUEL_PRICE=null;
-function preferredFuelPrice(){if(LAST_FUEL_PRICE!==null)return LAST_FUEL_PRICE;try{let raw=localStorage.getItem('rit_tank_last_fuel_price'),value=Number(raw);if(raw!==null&&Number.isFinite(value)&&value>0&&value<=5.999)return value}catch(e){}return DATA.latest_fuel?.price_per_liter??1.899}
-function rememberFuelPrice(){let value=fuelValues().price;if(!Number.isFinite(value)||value<=0)return;LAST_FUEL_PRICE=value;try{localStorage.setItem('rit_tank_last_fuel_price',String(value))}catch(e){}}
-function initFuelWheels(liters=null,price=null){let last=DATA.latest_fuel||{},L=Math.max(0,Math.min(25000,Math.round(Number(liters??last.liters??40)*100))),P=Math.max(0,Math.min(5999,Math.round(Number(price??preferredFuelPrice())*1000))),upd=(changed=false)=>{updateFuelTotal();if(changed)rememberFuelPrice()};createWheel('literWhole',Array.from({length:251},(_,i)=>i),Math.floor(L/100),upd);createWheel('literDec',Array.from({length:10},(_,i)=>i),Math.floor(L/10)%10,upd);createWheel('literDec2',Array.from({length:10},(_,i)=>i),L%10,upd);createWheel('priceWhole',Array.from({length:6},(_,i)=>i),Math.floor(P/1000),upd);createWheel('priceD1',Array.from({length:10},(_,i)=>i),Math.floor(P/100)%10,upd);createWheel('priceD2',Array.from({length:10},(_,i)=>i),Math.floor(P/10)%10,upd);createWheel('priceD3',Array.from({length:10},(_,i)=>i),P%10,upd);updateFuelTotal()}
-function fuelValues(){let liters=Number(wheelVal('literWhole')||0)+Number(wheelVal('literDec')||0)/10+Number(wheelVal('literDec2')||0)/100,price=Number(wheelVal('priceWhole')||0)+Number(wheelVal('priceD1')||0)/10+Number(wheelVal('priceD2')||0)/100+Number(wheelVal('priceD3')||0)/1000;return{liters:Number(liters.toFixed(2)),price:Number(price.toFixed(3))}}
-function updateFuelTotal(){if(!DATA)return;let v=fuelValues();$('fuelTotal').textContent=`${DATA.settings.currency} ${fmt(v.liters*v.price,2)}`}
-function openFuel(){clearFuelConflictWarning();$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];$('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';$('stations').innerHTML=(DATA.recent_stations||[]).map(s=>`<option value="${escAttr(s)}">`).join('');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');initOdometerWheel('fuel',DATA.current_odometer??0);initFuelWheels();openModal('fuelModal');fitPhysicalViewport();setTimeout(()=>guideTo('fuelStepScan',0),80)}
+function preferredFuelPrice(){if(LAST_FUEL_PRICE!==null)return LAST_FUEL_PRICE;try{let raw=localStorage.getItem('rit_tank_last_fuel_price'),value=Number(raw);if(raw!==null&&Number.isFinite(value)&&value>0&&value<=10)return value}catch(e){}return DATA.latest_fuel?.price_per_liter??1.899}
+function rememberFuelPrice(value){if(!Number.isFinite(value)||value<=0)return;LAST_FUEL_PRICE=value;try{localStorage.setItem('rit_tank_last_fuel_price',String(value))}catch(e){}}
+// Raw digits are the sole source of truth. Displayed commas never feed back into calculations.
+const FUEL_INPUT_RULES={odometer:{scale:0,max:999999,id:'fuelOdo'},liters:{scale:2,max:25000,id:'fuelLitersInput'},price:{scale:3,max:10000,id:'fuelPriceInput'}};
+let FUEL_DIGITS={odometer:'',liters:'',price:''};
+function fuelNormalizeDigits(raw){return String(raw??'').replace(/[^0-9]/g,'').replace(/^0+(?=[0-9])/,'')}
+function fuelFormatDigits(digits,scale){let n=(fuelNormalizeDigits(digits)||'0').padStart(scale+1,'0');return scale?n.slice(0,-scale)+','+n.slice(-scale):n}
+function fuelNumber(kind){return Number(FUEL_DIGITS[kind]||'0')}
+function fuelSetDigits(kind,raw){
+ const rule=FUEL_INPUT_RULES[kind],digits=fuelNormalizeDigits(raw),num=Number(digits||0),error=$('fuelInputError');
+ if(!Number.isSafeInteger(num)||num>rule.max){
+  error.textContent=kind==='odometer'?'Kilometerstand: maximaal 999.999 gehele kilometers.':kind==='liters'?'Liters: maximaal 250,00 L.':'Literprijs: maximaal € 10,000.';
+  return false;
+ }
+ error.textContent='';FUEL_DIGITS[kind]=digits;
+ const input=$(rule.id);input.value=fuelFormatDigits(digits,rule.scale);
+ if(document.activeElement===input)input.setSelectionRange(input.value.length,input.value.length);
+ updateFuelTotal();return true;
+}
+function fuelSelectAll(input){input.select()}
+function fuelBeforeInput(event,kind){
+ if(!event.cancelable)return;
+ const type=event.inputType||'',input=event.currentTarget,all=input.selectionStart===0&&input.selectionEnd===input.value.length;
+ let next=FUEL_DIGITS[kind];
+ if(type.startsWith('delete'))next=all?'':next.slice(0,-1);
+ else if(type.startsWith('insert')){
+  const content=event.data??event.dataTransfer?.getData('text/plain');
+  if(content==null)return;
+  const inserted=String(content).replace(/[^0-9]/g,'');
+  if(!inserted){event.preventDefault();return}
+  next=(all?'':next)+inserted;
+ }else return;
+ event.preventDefault();fuelSetDigits(kind,next);
+}
+function fuelInput(event,kind){fuelSetDigits(kind,event.currentTarget.value)}
+function fuelClear(kind){fuelSetDigits(kind,'');const input=$(FUEL_INPUT_RULES[kind].id);input.focus();input.setSelectionRange(input.value.length,input.value.length)}
+function fuelDone(){if($('fuelModal').contains(document.activeElement))document.activeElement.blur()}
+function fuelValues(){return{liters:fuelNumber('liters')/100,price:fuelNumber('price')/1000}}
+function updateFuelTotal(){const cents=Math.round(fuelNumber('liters')*fuelNumber('price')/1000);$('fuelTotal').textContent=(DATA?.settings?.currency||'€')+' '+fmt(cents/100,2)}
+function initFuelInputs(){
+ const last=DATA.latest_fuel||{},liters=last.liters,price=preferredFuelPrice(),odo=DATA.current_odometer;
+ FUEL_DIGITS={odometer:'',liters:'',price:''};
+ fuelSetDigits('odometer',odo==null?'':String(Math.round(Number(odo))));
+ fuelSetDigits('liters',liters==null?'':String(Math.round(Number(liters)*100)));
+ fuelSetDigits('price',price==null?'':String(Math.round(Number(price)*1000)));
+ $('fuelOdoLast').textContent=odo==null?'Nog geen vorige kilometerstand':'Laatste geregistreerde stand: '+fmt(odo,0)+' km';
+}
+function openFuel(){
+ clearFuelConflictWarning();$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];
+ $('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';
+ $('stations').innerHTML=(DATA.recent_stations||[]).map(s=>'<option value="'+escAttr(s)+'">').join('');
+ $('stationResults').innerHTML='';$('googleAttrib').style.display='none';
+ setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');
+ initFuelInputs();openModal('fuelModal');fitPhysicalViewport();
+}
 $('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
 function setLocationStatus(msg,kind=''){$('locationStatus').textContent=msg;$('locationStatus').className='location-status '+kind}
 function browserLocation(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Browser-GPS wordt hier niet ondersteund.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser'}),e=>reject(new Error(e.message||'Locatie niet beschikbaar.')),{enableHighAccuracy:true,timeout:9000,maximumAge:30000})})}
@@ -3567,7 +3616,7 @@ async function migrateLocationFallback(){if(Object.prototype.hasOwnProperty.call
 async function resolveLocation(){try{return await browserLocation()}catch(first){let entity=savedLocationFallback();if(!entity)throw new Error('GPS kon niet worden gebruikt. Kies in ⚙️ een Home Assistant locatie-fallback.');let d=await api(`api/location/entity?entity_id=${encodeURIComponent(entity)}`);return d}}
 async function findStations(){setLocationStatus('📍 Huidige locatie bepalen...');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';try{let loc=await resolveLocation();FUEL_LOCATION=loc;setLocationStatus(`Locatie gevonden${loc.accuracy?` · ±${Math.round(loc.accuracy)} m`:''}. Tankstations zoeken...`,'ok');let r=await api('api/places/nearby',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:loc.latitude,longitude:loc.longitude})});PLACE_RESULTS=r.places||[];renderPlaceChoices();setLocationStatus(`${PLACE_RESULTS.length} tankstation${PLACE_RESULTS.length===1?'':'s'} gevonden binnen ${r.radius_m} m.`,'ok')}catch(e){setLocationStatus(e.message,'err');toast(e.message,true)}}
 function renderPlaceChoices(){let box=$('stationResults');box.innerHTML='';PLACE_RESULTS.forEach((p,i)=>{let b=document.createElement('button');b.type='button';b.className='station-choice';b.onclick=()=>selectPlace(i);let dist=p.distance_m==null?'':` · ${p.distance_m<1000?p.distance_m+' m':fmt(p.distance_m/1000,1)+' km'}`;b.innerHTML=`<b>${esc(p.name)}${dist}</b><small>${esc(p.address||'')}</small>`;box.appendChild(b)});$('googleAttrib').style.display=PLACE_RESULTS.length?'block':'none'}
-function selectPlace(i){let p=PLACE_RESULTS[i];if(!p)return;FUEL_PLACE=p;$('fuelStation').value=p.name;$('stationResults').innerHTML='';$('googleAttrib').style.display='block';setLocationStatus(`✓ ${p.name} geselecteerd`,'ok');guideTo('fuelStepFinish',350)}
+function selectPlace(i){let p=PLACE_RESULTS[i];if(!p)return;FUEL_PLACE=p;$('fuelStation').value=p.name;$('stationResults').innerHTML='';$('googleAttrib').style.display='block';setLocationStatus(`✓ ${p.name} geselecteerd`,'ok');}
 let FUEL_CONFLICT_PAYLOAD=null;
 function clearFuelConflictWarning(){FUEL_CONFLICT_PAYLOAD=null;let panel=$('fuelConflictWarning');if(panel)panel.hidden=true}
 function showFuelConflictWarning(error,payload){
@@ -3578,12 +3627,12 @@ function showFuelConflictWarning(error,payload){
    return `<li><b>${esc(c.direction==='eerdere'?'Eerdere':'Latere')} ${label}</b> op ${esc(when)}: <b>${fmt(c.odometer,0)} km</b> (${esc(c.message)})</li>`;
  }).join('');
  FUEL_CONFLICT_PAYLOAD={...payload,conflict_confirmation_key:error.confirmation_key};
- panel.hidden=false;guideTo('fuelStepFinish',0);
+ panel.hidden=false;
 }
 async function submitFuel(payload){
  try{
   let result=await api('api/fuel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  clearFuelConflictWarning();closeModal('fuelModal');
+  rememberFuelPrice(payload.price_per_liter);clearFuelConflictWarning();closeModal('fuelModal');
   toast(`Tankbeurt opgeslagen · ${money(result.cost)}${result.kilometer_conflict?' · ⚠️ kilometerconflict':''}${result.receipt?' · bon bewaard':''}`);
   reloadData();
  }catch(error){
@@ -3595,8 +3644,16 @@ async function submitFuel(payload){
 }
 async function saveFuel(){
  clearFuelConflictWarning();
- let v=fuelValues(),payload={
-  odometer:$('fuelOdo').value,created_at:$('fuelDate').value,liters:v.liters,price_per_liter:v.price,
+ const odo=fuelNumber('odometer'),lc=fuelNumber('liters'),pm=fuelNumber('price'),date=$('fuelDate').value;
+ let error='';
+ if(!FUEL_DIGITS.odometer||!Number.isSafeInteger(odo)||odo<0||odo>999999)error='Vul een geldige gehele kilometerstand in.';
+ else if(!lc||lc>25000)error='Vul een geldig aantal liters in (0,01 t/m 250,00).';
+ else if(!pm||pm>10000)error='Vul een geldige literprijs in (0,001 t/m 10,000).';
+ else if(!date||Number.isNaN(new Date(date).getTime()))error='Kies een geldige datum en tijd.';
+ if(error){$('fuelInputError').textContent=error;toast(error,true);return}
+ $('fuelInputError').textContent='';
+ const v=fuelValues(),payload={
+  odometer:odo,created_at:date,liters:v.liters,price_per_liter:v.price,
   station:FUEL_PLACE?'':$('fuelStation').value,place_id:FUEL_PLACE?.place_id||'',
   latitude:FUEL_LOCATION?.latitude??null,longitude:FUEL_LOCATION?.longitude??null,
   location_accuracy:FUEL_LOCATION?.accuracy??null,location_source:FUEL_LOCATION?.source||'',
@@ -3673,8 +3730,7 @@ function downloadDiagnosticLog(){let value=$('diagnosticText').value;if(!value){
 async function testAssistantNotification(){try{await api('api/assistant/test-notification',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('Testmelding verzonden')}catch(e){toast(e.message,true)}}
 async function syncAssistantZones(){try{toast('Home Assistant-zones synchroniseren...');let r=await api('api/assistant/sync-zones',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast(`Zones klaar · ${r.ok||0} goed${r.failed?` · ${r.failed} fout`:''}`);reloadData()}catch(e){toast(e.message,true)}}
 // Begeleide invoer: actieve sectie volgt wat je aanraakt, zonder onverwacht te springen tijdens scrollen.
-[['fuelDate','fuelStepDate'],['fuelStation','fuelStepLocation'],['fuelNote','fuelStepFinish'],['kmDate','kmStepRest'],['kmNote','kmStepRest'],['tripDate','tripStepLocation'],['tripStopNote','tripStepLocation']].forEach(([input,section])=>{let el=$(input);if(el){el.addEventListener('focus',()=>guideTo(section,0));el.addEventListener('change',()=>{if(input==='fuelDate')guideTo('fuelStepLiters',220)})}});
-[['literWhole','fuelStepLiters'],['literDec','fuelStepLiters'],['priceWhole','fuelStepPrice'],['priceD1','fuelStepPrice'],['priceD2','fuelStepPrice'],['priceD3','fuelStepPrice']].forEach(([id,section])=>{let el=$(id);if(el){el.addEventListener('touchstart',()=>guideTo(section,0),{passive:true});el.addEventListener('pointerdown',()=>guideTo(section,0),{passive:true})}});
+[['kmDate','kmStepRest'],['kmNote','kmStepRest'],['tripDate','tripStepLocation'],['tripStopNote','tripStepLocation']].forEach(([input,section])=>{let el=$(input);if(el){el.addEventListener('focus',()=>guideTo(section,0))}});
 initPwa();
 loadAuthStatus();
 reloadData();
