@@ -254,7 +254,12 @@ def prepare(items: list[dict], con: sqlite3.Connection) -> dict:
     fields = recognize_filename_fields(ocr_text)
     from receipt_recognition import recognize_receipt_fields
     details = recognize_receipt_fields(ocr_text)
-    fields['place'] = details['place']
+    location_text = re.split(
+        r'\b(?:brandstofleverancier|leverancier|supplier|geleverd door)\b',
+        ocr_text, maxsplit=1, flags=re.I
+    )[0]
+    legacy_place = recognize_filename_fields(location_text)['place']
+    fields['place'] = details['place'] or legacy_place
     name = suggested_filename(fields)
     return {'pdf_data_url': 'data:application/pdf;base64,'+base64.b64encode(pdf).decode('ascii'),
             'suggested_filename': name, 'recognized': fields, 'recognized_details': details,
