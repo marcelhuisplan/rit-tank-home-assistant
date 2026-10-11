@@ -1,6 +1,6 @@
 // Release 33.15: iPhone/iPad Safari/PWA fuel entry, scrollability and saving.
 'use strict';
-const assert=require('node:assert/strict'),path=require('node:path'),{spawnSync}=require('node:child_process'),{chromium,webkit}=require('playwright');
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process'),{chromium,webkit}=require('playwright');
 const root=path.resolve(__dirname,'..');
 const fixture=spawnSync('python',['-B','-c',[
  'import app,json,tempfile','from pathlib import Path',
@@ -13,6 +13,22 @@ const fixture=spawnSync('python',['-B','-c',[
 ].join('\n')],{cwd:path.join(root,'rit_tank'),encoding:'utf8',maxBuffer:4*1024*1024});
 assert.equal(fixture.status,0,fixture.stderr);
 const {html,summary}=JSON.parse(fixture.stdout);
+async function fuelFailureDiagnostics(page,scenario){
+ try{
+  const measurements=await page.evaluate(()=>{
+   const measure=id=>{
+    const el=document.getElementById(id),r=el.getBoundingClientRect(),css=getComputedStyle(el);
+    return{top:r.top,bottom:r.bottom,height:r.height,scrollTop:el.scrollTop,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight,overflowY:css.overflowY};
+   };
+   return{innerWidth,innerHeight,visualViewportHeight:visualViewport.height,visualViewportTop:visualViewport.offsetTop,
+    modal:measure('fuelModal'),sheet:measure('fuelSheet'),liters:measure('fuelLitersInput'),
+    price:measure('fuelPriceInput'),save:measure('fuelSaveButton')};
+  });
+  console.error('33.15 '+scenario+' fuel geometry '+JSON.stringify(measurements));
+  const directory=path.join(root,'test-results');fs.mkdirSync(directory,{recursive:true});
+  await page.screenshot({path:path.join(directory,'fuel-3315-'+scenario.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'.png'),animations:'disabled'});
+ }catch(diagnosticError){console.error('33.15 fuel diagnostics unavailable:',diagnosticError)}
+}
 (async()=>{
  for(const [engineName,engine] of Object.entries({chromium,webkit})){
   const browser=await engine.launch({headless:true});
@@ -23,8 +39,10 @@ const {html,summary}=JSON.parse(fixture.stdout);
      const page=await ctx.newPage(),sent=[],errors=[];
      page.on('pageerror',err=>errors.push(err.message));
      await page.addInitScript(({pwa})=>{
-       const box={height:window.innerHeight,top:0},view=new EventTarget();
-       Object.defineProperty(view,'height',{get:()=>box.height});
+       // At document-start innerHeight is still the pre-meta mobile viewport (e.g. 1744px on iPhone).
+       // Follow the settled layout viewport until the simulated keyboard explicitly overrides it.
+       const box={height:null,top:0},view=new EventTarget();
+       Object.defineProperty(view,'height',{get:()=>box.height??window.innerHeight});
        Object.defineProperty(view,'offsetTop',{get:()=>box.top});
        Object.defineProperty(window,'visualViewport',{configurable:true,value:view});
        if(pwa)Object.defineProperty(navigator,'standalone',{configurable:true,value:true});
@@ -45,8 +63,13 @@ const {html,summary}=JSON.parse(fixture.stdout);
      const odo=page.locator('#fuelOdo'),liters=page.locator('#fuelLitersInput'),price=page.locator('#fuelPriceInput');
      assert.equal(await page.locator('#fuelModal .wheel').count(),0);
      assert.equal(await odo.inputValue(),'26199');assert.equal(await liters.inputValue(),'43,75');assert.equal(await price.inputValue(),'2,409');
+     const scenario=engineName+' '+device.name+' '+(pwa?'PWA':'Safari');
+     const baseline=await page.evaluate(()=>({layout:window.innerHeight,visual:window.visualViewport.height}));
+     if(baseline.visual!==baseline.layout)await fuelFailureDiagnostics(page,scenario);
+     assert.equal(baseline.visual,baseline.layout,'visualViewport fixture must use post-meta mobile height');
      // A new sequence replaces selected proposals, not appends to them.
-     await liters.click();await liters.pressSequentially('4300',{delay:3});
+     try{await liters.click({timeout:5000})}catch(error){await fuelFailureDiagnostics(page,scenario);throw error}
+     await liters.pressSequentially('4300',{delay:3});
      assert.equal(await liters.inputValue(),'43,00');
      await liters.press('Backspace');assert.equal(await liters.inputValue(),'4,30');
      await liters.pressSequentially('0',{delay:3});assert.equal(await liters.inputValue(),'43,00');
@@ -71,10 +94,14 @@ const {html,summary}=JSON.parse(fixture.stdout);
       }
       return false;
      }
-     assert.equal(await reach(price),true,'price must be manually reachable above keyboard');
+     const priceReachable=await reach(price);
+     if(!priceReachable)await fuelFailureDiagnostics(page,scenario);
+     assert.equal(priceReachable,true,'price must be manually reachable above keyboard');
      await price.press('Backspace');await price.pressSequentially('0',{delay:3});
      assert.equal(await price.inputValue(),'2,400','keyboard scrolling preserves typed digits');
-     assert.equal(await reach(button),true,'save button reachable with keyboard open');
+     const saveReachable=await reach(button);
+     if(!saveReachable)await fuelFailureDiagnostics(page,scenario);
+     assert.equal(saveReachable,true,'save button reachable with keyboard open');
      assert.equal(await close.evaluate(el=>{const r=el.getBoundingClientRect(),v=window.visualViewport;return r.top>=v.offsetTop&&r.bottom<=v.offsetTop+v.height}),true,'mint close reachable');
      await page.locator('#fuelModal .fuel-done-head').click();
      await page.evaluate(()=>window.__keyboard(window.innerHeight,0));
@@ -82,7 +109,7 @@ const {html,summary}=JSON.parse(fixture.stdout);
      assert.equal(await odo.inputValue(),'26200');
      assert.equal(await liters.inputValue(),'43,00');assert.equal(await price.inputValue(),'2,400');
      await page.locator('#fuelDate').fill('2026-10-10T15:30');
-     await page.evaluate(()=>saveFuel());
+     await button.click();
      await page.waitForFunction(()=>!document.querySelector('#fuelModal').classList.contains('show'));
      assert.equal(sent.length,1);assert.equal(sent[0].odometer,26200);assert.equal(sent[0].liters,43);assert.equal(sent[0].price_per_liter,2.4);
      assert.equal(sent[0].station,'Vorige pomp');assert.equal(sent[0].full_tank,true);
