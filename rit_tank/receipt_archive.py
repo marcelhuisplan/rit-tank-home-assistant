@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import json
 import os
 import re
 import secrets
@@ -30,6 +31,12 @@ def init_schema(con: sqlite3.Connection) -> None:
         created_at TEXT NOT NULL
     )""")
     con.execute("CREATE INDEX IF NOT EXISTS idx_receipt_archive_hash ON receipt_archive(sha256)")
+    con.execute("""CREATE TABLE IF NOT EXISTS receipt_archive_review (
+        receipt_id INTEGER PRIMARY KEY REFERENCES receipt_archive(id) ON DELETE CASCADE,
+        fields_json TEXT NOT NULL,
+        reviewed_at TEXT NOT NULL
+    )""")
+
 
 
 def decode_file(item: dict) -> tuple[bytes, str]:
@@ -245,9 +252,11 @@ def prepare(items: list[dict], con: sqlite3.Connection) -> dict:
     if len(pdf) > MAX_PDF:
         raise ValueError('De gemaakte PDF is groter dan 24 MB.')
     fields = recognize_filename_fields(ocr_text)
+    from receipt_recognition import recognize_receipt_fields
+    details = recognize_receipt_fields(ocr_text)
     name = suggested_filename(fields)
     return {'pdf_data_url': 'data:application/pdf;base64,'+base64.b64encode(pdf).decode('ascii'),
-            'suggested_filename': name, 'recognized': fields,
+            'suggested_filename': name, 'recognized': fields, 'recognized_details': details,
             'duplicates': duplicates(con, hashlib.sha256(pdf).hexdigest(), name)}
 
 
@@ -263,9 +272,53 @@ def decode_pdf(data_url: str) -> bytes:
     return raw
 
 
+
+REVIEW_FIELDS = {
+    'station', 'shop', 'supplier', 'address', 'postcode',
+    'place', 'date', 'time', 'fuel_type', 'pump',
+    'liters', 'price_per_liter', 'total',
+    'vat_rate', 'vat_amount'
+}
+
+
+def validate_reviewed_fields(fields):
+    if fields is None:
+        return None
+    if not isinstance(fields, dict) or not fields:
+        raise ValueError('Controleer de bongegevens eerst.')
+
+    clean = {}
+    for key, value in fields.items():
+        if key not in REVIEW_FIELDS or not isinstance(value, str):
+            raise ValueError('Ongeldig bongegeven.')
+        value = value.strip()
+        if len(value) > 150 or any(ord(c) < 32 for c in value):
+            raise ValueError('Ongeldige tekst in bongegevens.')
+        clean[key] = value
+
+    for key, decimals in (
+        ('liters', 2),
+        ('price_per_liter', 3),
+        ('total', 2),
+        ('vat_amount', 2),
+    ):
+        value = clean.get(key, '')
+        if value and not re.fullmatch(
+            r'\d{1,5}[,.]\d{' + str(decimals) + r'}',
+            value
+        ):
+            raise ValueError('Controleer de decimalen van ' + key)
+        if value:
+            clean[key] = value.replace('.', ',')
+
+    return json.dumps(clean, ensure_ascii=False, sort_keys=True)
+
+
 def save(con: sqlite3.Connection, folder: Path, pdf_data_url: str, filename: str,
-         confirm_duplicate: bool = False) -> dict:
+         confirm_duplicate: bool = False,
+         reviewed_fields: dict | None = None) -> dict:
     filename = clean_filename(filename)
+    review_json = validate_reviewed_fields(reviewed_fields)
     raw = decode_pdf(pdf_data_url)
     pdf_details(raw)  # Never archive corrupt PDFs.
     digest = hashlib.sha256(raw).hexdigest()
@@ -285,8 +338,17 @@ def save(con: sqlite3.Connection, folder: Path, pdf_data_url: str, filename: str
         cur = con.execute(
             'INSERT INTO receipt_archive(stored_name,filename,sha256,created_at) VALUES(?,?,?,?)',
             (stored_name, filename, digest, datetime.now().astimezone().isoformat()))
+        if review_json is not None:
+            con.execute(
+                'INSERT INTO receipt_archive_review '
+                '(receipt_id, fields_json, reviewed_at) '
+                'VALUES (?, ?, ?)',
+                (cur.lastrowid, review_json,
+                 datetime.now().astimezone().isoformat())
+            )
         con.commit()
     except Exception:
+        con.rollback()
         path.unlink(missing_ok=True)
         raise
     return {'ok': True, 'id': cur.lastrowid, 'filename': filename}

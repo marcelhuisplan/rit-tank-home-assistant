@@ -50,15 +50,19 @@ def recognize_receipt_fields(text: str) -> dict:
     lines = [line for line in lines if line][:180]
     found: dict[str, list[str]] = {key: [] for key in FIELDS}
     issues: list[str] = []
+    in_supplier = False
 
     for i, line in enumerate(lines):
         lower = line.casefold()
         supplier_line = bool(re.search(r'\b(?:brandstofleverancier|leverancier|supplier|geleverd door)\b', lower))
+        if re.match(r'^(?:klantenbon|artikel|totaal|maestro)\b', lower):
+            in_supplier = False
         if supplier_line:
+            in_supplier = True
             match = re.search(r'\b(?:brandstofleverancier|leverancier|supplier|geleverd door)\s*[:\-]?\s*(.+)', line, re.I)
             if match and match.group(1).strip():
                 found['supplier'].append(match.group(1).strip()[:100])
-        elif i < 12:
+        elif i < 12 and not in_supplier:
             for brand in BRANDS:
                 if re.search(r'(?<![a-z])' + r'\s*'.join(map(re.escape, brand)) + r'(?![a-z])', lower):
                     found['station'].append(brand.upper() if brand in ('bp', 'q8', 'ok tankstation') else brand.title())
@@ -70,19 +74,22 @@ def recognize_receipt_fields(text: str) -> dict:
                 found['shop'].append(explicit_shop.group(1).strip()[:100])
 
         postal = re.search(r'(?<!\d)(\d{4})\s*([A-Z]{2})\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ \x27-]{1,38})\s*$', line, re.I)
-        if postal and not supplier_line:
+        if postal and not in_supplier:
             postcode = postal.group(1) + ' ' + postal.group(2).upper()
             place = postal.group(3).strip()
             found['postcode'].append(postcode)
             found['place'].append(place)
-            if i > 0 and re.search(r'\b\d{1,4}\s*[A-Za-z]?\s*$', lines[i-1]):
+            street = line[:postal.start()].strip(' ,;')
+            if re.fullmatch(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ .'-]*\s+\d{1,4}[A-Za-z]?", street):
+                found['address'].append(street + ', ' + postcode + ' ' + place)
+            elif i > 0 and re.search(r'\b\d{1,4}\s*[A-Za-z]?\s*$', lines[i-1]):
                 # Street belongs to location directly above postcode, not to supplier.
                 if not re.search(r'\b(?:leverancier|supplier|postbus)\b', lines[i-1], re.I):
                     found['address'].append(lines[i-1] + ', ' + postcode + ' ' + place)
             else:
                 found['address'].append(postcode + ' ' + place)
         explicit_place = re.search(r'^(?:vestiging|plaats|locatie)\s*:\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ -]{2,40})$', line, re.I)
-        if explicit_place and not supplier_line:
+        if explicit_place and not in_supplier:
             found['place'].append(explicit_place.group(1).strip())
 
         # Date text may be year-first or Dutch day-first.
