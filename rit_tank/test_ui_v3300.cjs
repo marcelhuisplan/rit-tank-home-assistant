@@ -12,7 +12,7 @@ const ctx=vm.createContext({
   window:{visualViewport:view},document:{activeElement:{blur(){}},createElement:element},
   setTimeout:f=>{f();return 1},clearTimeout(){},
   fmt:(v,d=0)=>Number(v).toLocaleString('nl-NL',{minimumFractionDigits:d,maximumFractionDigits:d}),
-  esc:String,toast:(m)=>toasts.push(m),guideTo:id=>guides.push(id),openModal:id=>{$(id).opened=true},closeModal:id=>{$(id).opened=false},
+  esc:String,toast:(m)=>toasts.push(m),guideTo:id=>guides.push(id),scheduleFuelInputReveal(){},openModal:id=>{$(id).opened=true},closeModal:id=>{$(id).opened=false},
   switchView(){},reloadData:async()=>{},fetch:async()=>{throw Error('unexpected fetch')}
 });
 const a=source.indexOf('// Physical odometer flow:'),b=source.indexOf('\nfunction esc(s)',a);

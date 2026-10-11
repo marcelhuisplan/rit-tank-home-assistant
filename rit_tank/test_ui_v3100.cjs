@@ -8,7 +8,7 @@ const ctx=vm.createContext({$,console,crypto:require('node:crypto').webcrypto,Ui
   DATA:{current_odometer:64334,business:{active_trip:{id:5,start_odometer:64334,last_odometer:64334},odometer_suggestion:{suggested_odometer:64370,tracked_km:36.4,gps_total_km:36.4,gps_incomplete:true,distance_warning:'GPS-route mogelijk onderbroken — controleer de tellerstand.'}}},
   TRIP_MODE:'finish',TRIP_ODO_MANUAL:false,TRIP_LOCATION:null,TRIP_SEARCH_TIMER:null,TRIP_ADDRESS_REQUEST:0,TRIP_ROUTE_PREVIEW_REQUEST:0,
   clearTimeout(){},setTimeout:f=>f(),fmt:(v,d)=>Number(v).toLocaleString('nl-NL',{maximumFractionDigits:d,minimumFractionDigits:d}),esc:String,
-  toast:m=>toasts.push(m),guideTo(){},advanceTripAfterLocation(){},openModal(){},closeModal(){},
+  toast:m=>toasts.push(m),guideTo(){},scheduleFuelInputReveal(){},advanceTripAfterLocation(){},openModal(){},closeModal(){},
   initOdometerWheel:(p,v)=>{$(p+'Odo').value=v},switchView(){},reloadData(){},
   api:async()=>new Promise(resolve=>routeResolve=resolve),
   fetch:async(path,options)=>{calls.push({path,options,payload:JSON.parse(options.body)});return typeof reply==='function'?reply():reply}
