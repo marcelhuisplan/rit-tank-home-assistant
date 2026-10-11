@@ -1,4 +1,11 @@
-# Rit & Tank 33.15
+# Rit & Tank 33.16
+
+## Toetsenbordnavigatie tankformulier (33.16)
+
+- **Volgende** op het iPhone-/iPad-toetsenbord: kilometerstand → datum/tijd → liters → literprijs → tankstation → notitie.
+- Bij het native datum/tijdveld staat ook **Volgende → Liters**, omdat iOS daar niet altijd een toetsenbord-Volgende biedt.
+- **Gereed** in het notitieveld sluit het toetsenbord. Zonder notitie kun je direct **Tankbeurt opslaan** kiezen.
+- Scrollcorrecties vinden alleen plaats als het volgende veld buiten het zichtbare scherm raakt. De automatische komma, ritten, bonnen en kilometerconflictcontrole blijven ongewijzigd.
 
 ## Eenvoudig tankformulier (33.15)
 

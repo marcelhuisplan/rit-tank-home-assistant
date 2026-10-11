@@ -1,5 +1,11 @@
 # Changelog
 
+## 33.16
+
+- Enter/Volgende verplaatst de focus in het tankformulier; datum/tijd heeft een aparte Volgende → Liters-knop voor de native iOS-kiezer.
+- Alleen noodzakelijke binnenscrollcorrecties boven het toetsenbord; Gereed sluit het toetsenbord bij de notitie.
+- Mobiele focusregressies op Chromium/WebKit, iPhone/iPad en Safari/PWA. Geen rit-, database-, reken-, bonnen- of kilometerconflictwijzigingen.
+
 ## 33.15
 
 - Groot numeriek tankformulier zonder draaiwielen: hele kilometers, automatisch twee liter- en drie prijsdecimalen, betrouwbare Backspace/vervangen.

@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.15'
+APP_VERSION = '33.16'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -2848,6 +2848,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 #fuelModal .fuel-input-error{color:#ffabb4;font-size:13px;margin:8px 4px}
 #fuelModal .fuel-input-error:empty{display:none}
 #fuelModal #fuelDate,#fuelModal #fuelStation,#fuelModal #fuelNote{min-height:56px;font-size:16px;background:#0e1216;color:white;border:1px solid #34404a;border-radius:14px;padding:12px}
+#fuelModal .fuel-date-next{width:100%;min-height:48px;margin-top:10px;touch-action:manipulation}
 #fuelModal #fuelSaveButton{min-height:58px}
 @media(min-width:768px){#fuelModal .fuel-number{height:80px;font-size:40px}}
 </style>
@@ -2919,14 +2920,14 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 <div class="modal" id="pdfModal"><div class="sheet"><div class="pdf-toolbar"><div class="sheethead"><h2>PDF-ritregistratie</h2><button class="linkbtn" onclick="closePdfPreview()">Sluiten ✕</button></div><div class="settings-actions"><button class="linkbtn" id="pdfShare" onclick="sharePdf()" disabled>Delen / andere app</button><button class="linkbtn" id="pdfPrint" onclick="printPdfPreview()" disabled>Afdrukken</button><a class="linkbtn" id="pdfDownload" hidden>Download PDF</a><button class="linkbtn" id="pdfDrive" onclick="archivePdf()" disabled>Google Drive</button></div><p id="pdfStatus" role="status">PDF voorbereiden…</p></div><div id="pdfPages" aria-label="Voorbeeld rittenregistratie"></div></div></div>
 
 <div class="modal" id="fuelModal"><div class="sheet" id="fuelSheet"><div class="grab"></div><div class="sheethead"><h2>⛽ Tankbeurt</h2><button type="button" class="fuel-done-head" onclick="fuelDone()">Gereed</button><button type="button" class="close" aria-label="Sluiten" onclick="closeModal('fuelModal')"><span aria-hidden="true">✕</span></button></div>
-  <div class="guide-section active" id="fuelStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small>Gehele kilometers</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelOdo">Werkelijke tellerstand (km)</label><input id="fuelOdo" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="done" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'odometer')" oninput="fuelInput(event,'odometer')"><button type="button" class="fuel-clear" onclick="fuelClear('odometer')">Wissen</button></div><small class="fuel-hint">Tik om de vorige waarde volledig te vervangen.</small><div class="odo-last" id="fuelOdoLast"></div></div>
-  <div class="guide-section guide-date" id="fuelStepDate"><div class="guide-head"><span class="step-badge">2</span><b>Datum & tijd</b><small>Staat standaard op nu</small></div><div class="field" style="margin-top:0"><input id="fuelDate" type="datetime-local"></div></div>
-  <div class="guide-section" id="fuelStepLiters"><div class="guide-head"><span class="step-badge">3</span><b>Liters</b><small>Liters met 2 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelLitersInput">Liters</label><input id="fuelLitersInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="done" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'liters')" oninput="fuelInput(event,'liters')"><button type="button" class="fuel-clear" onclick="fuelClear('liters')">Wissen</button></div><small class="fuel-hint">4300 wordt 43,00 L. Tik om het voorstel te vervangen.</small></div>
-  <div class="guide-section" id="fuelStepPrice"><div class="guide-head"><span class="step-badge">4</span><b>Prijs per liter</b><small>3 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelPriceInput">€ per liter</label><input id="fuelPriceInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="done" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'price')" oninput="fuelInput(event,'price')"><button type="button" class="fuel-clear" onclick="fuelClear('price')">Wissen</button></div><small class="fuel-hint">2400 wordt € 2,400. Tik om het voorstel te vervangen.</small></div>
+  <div class="guide-section active" id="fuelStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small>Gehele kilometers</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelOdo">Werkelijke tellerstand (km)</label><input id="fuelOdo" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'odometer')" oninput="fuelInput(event,'odometer')" onkeydown="fuelAdvance(event,'fuelDate')"><button type="button" class="fuel-clear" onclick="fuelClear('odometer')">Wissen</button></div><small class="fuel-hint">Tik om de vorige waarde volledig te vervangen.</small><div class="odo-last" id="fuelOdoLast"></div></div>
+  <div class="guide-section guide-date" id="fuelStepDate"><div class="guide-head"><span class="step-badge">2</span><b>Datum & tijd</b><small>Staat standaard op nu</small></div><div class="field" style="margin-top:0"><input id="fuelDate" type="datetime-local" onkeydown="fuelAdvance(event,'fuelLitersInput')"></div><button type="button" class="guide-next fuel-date-next" id="fuelDateNext" onclick="fuelFocusNext('fuelLitersInput')">Volgende → Liters</button></div>
+  <div class="guide-section" id="fuelStepLiters"><div class="guide-head"><span class="step-badge">3</span><b>Liters</b><small>Liters met 2 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelLitersInput">Liters</label><input id="fuelLitersInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'liters')" oninput="fuelInput(event,'liters')" onkeydown="fuelAdvance(event,'fuelPriceInput')"><button type="button" class="fuel-clear" onclick="fuelClear('liters')">Wissen</button></div><small class="fuel-hint">4300 wordt 43,00 L. Tik om het voorstel te vervangen.</small></div>
+  <div class="guide-section" id="fuelStepPrice"><div class="guide-head"><span class="step-badge">4</span><b>Prijs per liter</b><small>3 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelPriceInput">€ per liter</label><input id="fuelPriceInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'price')" oninput="fuelInput(event,'price')" onkeydown="fuelAdvance(event,'fuelStation')"><button type="button" class="fuel-clear" onclick="fuelClear('price')">Wissen</button></div><small class="fuel-hint">2400 wordt € 2,400. Tik om het voorstel te vervangen.</small></div>
   <div class="fuel-total-card" aria-live="polite"><span>Berekend totaalbedrag</span><strong id="fuelTotal">€ 0,00</strong><small>Alleen eindbedrag afgerond op centen</small></div>
   <p id="fuelInputError" class="fuel-input-error" role="alert"></p>
-  <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">5</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div></div>
-  <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">6</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" placeholder="Bijv. snelweg, vakantie..."></div><button class="save" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button><div id="fuelConflictWarning" hidden role="alert" style="margin-top:14px;padding:14px;border:2px solid #b97517;border-radius:12px;background:#fff4db;color:#37260b"><strong>⚠️ Kilometerconflict — historische tankbon</strong><p>De ingevoerde kilometerstand botst met de volgende registratie(s):</p><ul id="fuelConflictDetails" style="padding-left:22px"></ul><p>Je kunt deze tankbon bewust opslaan. Hij wordt gemarkeerd als kilometerconflict; onbetrouwbare afstanden en verbruikscycli worden niet meegerekend. De actuele tellerstand verandert niet.</p><button class="save" type="button" onclick="saveFuelConfirmed()">Ja, ondanks kilometerconflict opslaan</button><button class="linkbtn" type="button" onclick="clearFuelConflictWarning()">Terug naar tankbon</button></div></div>
+  <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">5</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" enterkeyhint="next" onkeydown="fuelAdvance(event,'fuelNote')" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div></div>
+  <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">6</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" enterkeyhint="done" onkeydown="fuelAdvance(event)" placeholder="Bijv. snelweg, vakantie..."></div><button class="save" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button><div id="fuelConflictWarning" hidden role="alert" style="margin-top:14px;padding:14px;border:2px solid #b97517;border-radius:12px;background:#fff4db;color:#37260b"><strong>⚠️ Kilometerconflict — historische tankbon</strong><p>De ingevoerde kilometerstand botst met de volgende registratie(s):</p><ul id="fuelConflictDetails" style="padding-left:22px"></ul><p>Je kunt deze tankbon bewust opslaan. Hij wordt gemarkeerd als kilometerconflict; onbetrouwbare afstanden en verbruikscycli worden niet meegerekend. De actuele tellerstand verandert niet.</p><button class="save" type="button" onclick="saveFuelConfirmed()">Ja, ondanks kilometerconflict opslaan</button><button class="linkbtn" type="button" onclick="clearFuelConflictWarning()">Terug naar tankbon</button></div></div>
 <div class="guide-section" id="fuelStepScan"><button type="button" class="scan-card" onclick="openReceiptArchive()">📷 <b>Tankbon scannen</b></button><p>Bon apart bewaren als PDF; vult geen tankgegevens in.</p><button type="button" class="linkbtn" onclick="openReceiptArchive()">🗂️ Bonnenarchief</button></div>
 </div></div>
 
@@ -3457,6 +3458,7 @@ function fitPhysicalViewport(){
     if(modal){modal.style.top=view.offsetTop+'px';modal.style.height=view.height+'px';modal.style.bottom='auto'}
   }
   schedulePhysicalInputReveal();
+  scheduleFuelInputReveal();
 }
 if(typeof window!=='undefined'){
   if(window.visualViewport){window.visualViewport.addEventListener('resize',fitPhysicalViewport);window.visualViewport.addEventListener('scroll',fitPhysicalViewport)}
@@ -3593,6 +3595,36 @@ function fuelBeforeInput(event,kind){
 function fuelInput(event,kind){fuelSetDigits(kind,event.currentTarget.value)}
 function fuelClear(kind){fuelSetDigits(kind,'');const input=$(FUEL_INPUT_RULES[kind].id);input.focus();input.setSelectionRange(input.value.length,input.value.length)}
 function fuelDone(){if($('fuelModal').contains(document.activeElement))document.activeElement.blur()}
+// Limit focus scrolling to the newly focused fuel field inside its scrollable sheet.
+let FUEL_FOCUS_FRAME=0;
+function fuelRevealFocused(){
+ const modal=$('fuelModal'),input=document.activeElement;
+ if(!modal.classList.contains('show')||!input||!['fuelOdo','fuelDate','fuelLitersInput','fuelPriceInput','fuelStation','fuelNote'].includes(input.id))return;
+ const sheet=$('fuelSheet'),head=sheet.querySelector('.sheethead'),pane=sheet.getBoundingClientRect(),field=input.getBoundingClientRect(),view=window.visualViewport;
+ const viewTop=view?view.offsetTop:0,viewBottom=view?viewTop+view.height:window.innerHeight;
+ const top=Math.max(pane.top,head.getBoundingClientRect().bottom,viewTop)+8,bottom=Math.min(pane.bottom,viewBottom)-8;
+ if(bottom<=top)return;
+ const delta=field.top<top||field.height>bottom-top?field.top-top:field.bottom>bottom?field.bottom-bottom:0;
+ if(delta)sheet.scrollTop=Math.max(0,Math.min(sheet.scrollTop+delta,sheet.scrollHeight-sheet.clientHeight));
+}
+function scheduleFuelInputReveal(){
+ if(!$('fuelModal').classList.contains('show'))return;
+ if(FUEL_FOCUS_FRAME)cancelAnimationFrame(FUEL_FOCUS_FRAME);
+ FUEL_FOCUS_FRAME=requestAnimationFrame(()=>{FUEL_FOCUS_FRAME=0;fuelRevealFocused()});
+}
+function fuelFocusNext(id){
+ const next=$(id);
+ if(!$('fuelModal').classList.contains('show')||!next)return;
+ next.focus({preventScroll:true});
+ scheduleFuelInputReveal();
+}
+function fuelAdvance(event,nextId){
+ if(event.key!=='Enter'||event.isComposing)return;
+ event.preventDefault();
+ if(nextId)fuelFocusNext(nextId);
+ else fuelDone();
+}
+
 function fuelValues(){return{liters:fuelNumber('liters')/100,price:fuelNumber('price')/1000}}
 function updateFuelTotal(){const cents=Math.round(fuelNumber('liters')*fuelNumber('price')/1000);$('fuelTotal').textContent=(DATA?.settings?.currency||'€')+' '+fmt(cents/100,2)}
 function initFuelInputs(){
@@ -3611,6 +3643,7 @@ function openFuel(){
  setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');
  initFuelInputs();openModal('fuelModal');fitPhysicalViewport();
 }
+['fuelOdo','fuelDate','fuelLitersInput','fuelPriceInput','fuelStation','fuelNote'].forEach(id=>$(id).addEventListener('focus',scheduleFuelInputReveal));
 $('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
 function setLocationStatus(msg,kind=''){$('locationStatus').textContent=msg;$('locationStatus').className='location-status '+kind}
 function browserLocation(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Browser-GPS wordt hier niet ondersteund.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser'}),e=>reject(new Error(e.message||'Locatie niet beschikbaar.')),{enableHighAccuracy:true,timeout:9000,maximumAge:30000})})}
