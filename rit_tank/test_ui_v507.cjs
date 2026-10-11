@@ -7,21 +7,21 @@ const frames=[],timers=new Map();let nextTimer=0;
 function node(){return {children:[],value:'',textContent:'',style:{},dataset:{},classList:{toggle(){}},appendChild(x){this.children.push(x)},set innerHTML(x){this.children=[]},get innerHTML(){return ''}}}
 const nodes=new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>[m[1],node()]));
 const get=id=>{assert(nodes.has(id),id);return nodes.get(id)};
-const ctx=vm.createContext({$:get,document:{createElement:node},DATA:{settings:{currency:'€'},latest_fuel:{liters:40,price_per_liter:1.899}},wheels:{},requestAnimationFrame:f=>frames.push(f),setTimeout:f=>{let n=++nextTimer;timers.set(n,f);return n},clearTimeout:n=>timers.delete(n),fmt:(v,n)=>Number(v).toFixed(n),money:v=>Number(v).toFixed(2),toast(){},receiptScanImage:async()=>'',FUEL_PLACE:{place_id:'old'},RECEIPT_REQUEST:0,RECEIPT_SCANNING:false,localStorage:{getItem:()=> 'device_tracker.old'},openModal(){},closeModal(){}});
+const ctx=vm.createContext({$:get,document:{createElement:node,activeElement:null},DATA:{settings:{currency:'€'},latest_fuel:{liters:40,price_per_liter:1.899}},wheels:{},requestAnimationFrame:f=>frames.push(f),setTimeout:f=>{let n=++nextTimer;timers.set(n,f);return n},clearTimeout:n=>timers.delete(n),fmt:(v,n)=>Number(v).toFixed(n),money:v=>Number(v).toFixed(2),toast(){},receiptScanImage:async()=>'',FUEL_PLACE:{place_id:'old'},RECEIPT_REQUEST:0,RECEIPT_SCANNING:false,localStorage:{getItem:()=> 'device_tracker.old'},openModal(){},closeModal(){}});
 function section(start,end){vm.runInContext(script.slice(script.indexOf(start),script.indexOf(end,script.indexOf(start))),ctx)}
 function single(name){const line=script.split('\n').find(x=>x.startsWith('function '+name+'(')||x.startsWith('async function '+name+'('));assert(line,name);vm.runInContext(line,ctx)}
 const flush=()=>{while(frames.length)frames.shift()();for(const f of timers.values())f();timers.clear()};
-section('function createWheel(', 'function initOdometerWheel(');
-single('initFuelWheels');single('fuelValues');single('updateFuelTotal');
-ctx.LAST_FUEL_PRICE=null;single('preferredFuelPrice');single('rememberFuelPrice');
+section('let LAST_FUEL_PRICE=null;', 'function openFuel(){');
 assert(!script.includes('scanSelectedReceipt('));
 single('savedLocationFallback');single('migrateLocationFallback');single('loadLocationEntities');
 (async()=>{
- ctx.initFuelWheels();flush();
- const oldWheel=ctx.wheels.literWhole;get('literWhole').scrollTop=100;get('literWhole').onscroll();
- ctx.initFuelWheels(32.45,1.9996);flush();oldWheel.select(2);
+ ctx.initFuelInputs();
+ assert.equal(get('fuelLitersInput').value,'40,00');
+ assert.equal(get('fuelPriceInput').value,'1,899');
+ ctx.fuelSetDigits('liters','3245');ctx.fuelSetDigits('price','2000');
  assert.equal(ctx.fuelValues().liters,32.45);assert.equal(ctx.fuelValues().price,2);
- ctx.initFuelWheels(41.99,2.009);flush();assert.equal(ctx.fuelValues().liters,41.99);
+ ctx.fuelSetDigits('liters','4199');ctx.fuelSetDigits('price','2009');
+ assert.equal(ctx.fuelValues().liters,41.99);
  assert(html.includes('onclick="openReceiptArchive()"'));
  assert(!script.includes('receipt_data_url=await readReceiptFile()'));
  assert.equal(ctx.fuelValues().liters,41.99);
@@ -34,16 +34,25 @@ single('savedLocationFallback');single('migrateLocationFallback');single('loadLo
  // Native sharing gets a prepared File in the same click, and cancellation is harmless.
  ctx.PDF_EXPORT={file:{name:'test.pdf'}};let shared;ctx.navigator={share:async x=>{shared=x}};
  single('sharePdf');await ctx.sharePdf();assert.equal(shared.files[0].name,'test.pdf');
- assert(html.indexOf('id="fuelStepScan"')<html.indexOf('id="fuelStepOdo"'));
+ assert(html.indexOf('id="fuelStepScan"')>html.indexOf('id="fuelStepFinish"'));
+ assert(!html.slice(html.indexOf('id="fuelModal"'),html.indexOf('id="kmModal"')).includes('class="wheel"'));
+ assert(!html.slice(html.indexOf('id="fuelModal"'),html.indexOf('id="kmModal"')).includes('guideTo('));
  // Remember physical selections without external OCR changes.
  let remembered={};ctx.localStorage={getItem:k=>remembered[k]??null,setItem:(k,v)=>remembered[k]=v};
- ctx.wheels.priceD3.select(5,true);flush();let chosen=ctx.fuelValues().price;
- ctx.initFuelWheels();flush();assert.equal(ctx.fuelValues().price,chosen);
- ctx.LAST_FUEL_PRICE=null;ctx.initFuelWheels();flush();assert.equal(ctx.fuelValues().price,chosen);
- ctx.initFuelWheels(32.45,2.019);flush();assert.equal(ctx.fuelValues().price,2.019);
+ ctx.fuelSetDigits('price','2019');assert.equal(remembered.rit_tank_last_fuel_price,undefined);
+ let chosen=ctx.fuelValues().price;ctx.rememberFuelPrice(chosen);
+ assert.equal(remembered.rit_tank_last_fuel_price,'2.019');
+ ctx.fuelSetDigits('price','2400');assert.equal(ctx.fuelValues().price,2.4);
+ vm.runInContext('LAST_FUEL_PRICE=null',ctx);ctx.initFuelInputs();flush();
+ assert.equal(ctx.fuelValues().price,chosen);
+ assert.equal(get('fuelPriceInput').value,'2,019');
  assert(!html.slice(0,html.indexOf('id="fuelModal"')).includes('class="scan-card"'));
- assert(html.includes('class="wheelbox liters"'));
- assert(html.includes('grid-template-columns:minmax(0,1.2fr) auto minmax(0,1fr) minmax(0,1fr)'));
+ assert(!html.includes('class="wheelbox liters"'));
+ assert(html.includes('id="fuelLitersInput"'));
+ assert(html.includes('id="fuelPriceInput"'));
+ assert(html.includes('inputmode="numeric"'));
+ assert(html.includes('class="fuel-clear"'));
+ assert(html.includes('grid-template-columns:minmax(0,1fr) auto'));
  assert(script.includes("$('tripPurpose').value='klantbezoek'"));
  // Address confirmation scrolls immediately, even while a suggestion is pending.
  let target;ctx.guideTo=id=>target=id;ctx.TRIP_MODE='start';ctx.TRIP_SEGMENT_TYPE='';
@@ -61,6 +70,6 @@ single('savedLocationFallback');single('migrateLocationFallback');single('loadLo
  get('tripSaveButton').closest=selector=>selector==='.modal'?modal:sheet;
  get('tripSaveButton').getBoundingClientRect=()=>({top:500});ctx.GUIDE_TIMER=null;
  single('guideTo');ctx.guideTo('tripSaveButton',0);flush();assert.equal(sheet.result,476);
- console.log('PASS: wheel races/rounding, PDF-only archive, no automatic fuel fields, fallback migration/outage/clear.');
- console.log('PASS: price memory, scanner placement, single-row liters and sheet scrolling.');
+ console.log('PASS: digit precision, PDF-only archive, no automatic fuel fields, fallback migration/outage/clear.');
+ console.log('PASS: saved price memory, scanner placement, direct liters input and sheet scrolling.');
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -1,4 +1,13 @@
-# Rit & Tank 33.14
+# Rit & Tank 33.15
+
+## Eenvoudig tankformulier (33.15)
+
+- Voer de echte tellerstand in als geheel getal. Datum en tijd zijn vooraf ingevuld en blijven aanpasbaar.
+- Typ alleen cijfers: `4300` wordt `43,00 L`; `2400` wordt `€ 2,400`. Backspace verwijdert het laatste cijfer.
+- De vorige liters en literprijs zijn voorstellen. Tik op het veld om alles te selecteren en met nieuwe cijfers te vervangen, of gebruik **Wissen**.
+- Het totaal wordt meteen berekend uit gehele honderdsten liters en duizendsten euro. Alleen het eindbedrag wordt op centen afgerond.
+- Er is geen automatische gids-scroll tijdens tanken. Scroll handmatig en gebruik **Gereed** om het numerieke toetsenbord te sluiten.
+- De bestaande ritregistraties, historische kilometerconflictcontrole, bonnen en data onder `/data` blijven behouden.
 
 De ritregistratie is in release 33.00 vereenvoudigd voor iPhone en iPad: de fysieke kilometerteller staat centraal in een groot, rustig invoerveld, gevolgd door grote locatieknoppen. De fysieke teller blijft altijd de definitieve bron voor zakelijke kilometers; GPS blijft uitsluitend aanvullende informatie, controle en waarschuwing.
 
@@ -86,7 +95,7 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **33.14**.
+- Huidige release: **33.15**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
 - Volgende release: **34.00**.

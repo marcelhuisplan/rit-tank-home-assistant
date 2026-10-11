@@ -295,25 +295,24 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
       assert.equal(sent.length,0,engine+' '+device+' '+mode+' typing did not save trip');
     }
 
-    // Tankbeurt enters kilometres by six wheels (no keyboard). The displayed
-    // value must survive opening and closing a keyboard for another fuel field.
+    // Release 33.15: fuel odometer uses direct digits and survives keyboard resizing.
     await page.goto('https://rit-tank.test/?case=start');
     await page.waitForFunction(()=>typeof DATA!=='undefined');
     await page.evaluate(()=>openFuel());
     await page.locator('#fuelModal').waitFor({state:'visible'});
-    await page.waitForTimeout(180);
-    assert.equal(await page.locator('#fuelOdoDisplay').textContent(),'25.230');
-    await page.locator('#fuelOdoD5').evaluate(el=>{el.scrollTop=50});
-    await page.waitForFunction(()=>document.getElementById('fuelOdo').value==='25231');
-    assert.equal(await page.locator('#fuelOdoDisplay').textContent(),'25.231');
+    const fuelOdo=page.locator('#fuelOdo');
+    assert.equal(await fuelOdo.inputValue(),'25230');
+    await fuelOdo.click();
+    await fuelOdo.pressSequentially('25231',{delay:8});
+    assert.equal(await fuelOdo.inputValue(),'25231');
     await page.locator('#fuelStation').focus();
     await page.setViewportSize({width,height:360});
     await page.waitForFunction(()=>document.getElementById('fuelModal').getBoundingClientRect().height<=361);
-    assert.equal(await page.locator('#fuelOdoDisplay').textContent(),'25.231');
+    assert.equal(await fuelOdo.inputValue(),'25231');
     await page.setViewportSize({width,height});
     await page.locator('#fuelModal .close').tap();
     await page.locator('#fuelModal').waitFor({state:'hidden'});
-    assert.equal(sent.length,0,engine+' '+device+' fuel wheel keyboard check did not save data');
+    assert.equal(sent.length,0,engine+' '+device+' fuel keyboard resize did not save data');
 
     // Start: proposal is not trusted until the large explicit confirmation button is pressed.
     await page.goto('https://rit-tank.test/?case=start');

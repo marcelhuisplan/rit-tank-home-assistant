@@ -1,5 +1,12 @@
 # Changelog
 
+## 33.15
+
+- Groot numeriek tankformulier zonder draaiwielen: hele kilometers, automatisch twee liter- en drie prijsdecimalen, betrouwbare Backspace/vervangen.
+- Het live totaal wordt uit gehele eenheden berekend en de grenzen worden vóór opslaan gevalideerd. Literprijsvoorstellen worden alleen na succesvol opslaan vernieuwd.
+- Geen automatische gids-scroll bij tankinvoer; handmatig scrollen binnen de iOS-visualViewport, met Gereed en blijvend bereikbare mintgroene X.
+- Alle rit-, kilometerconflict-, bonnen- en databasefuncties behouden.
+
 ## 33.14
 
 - Beperkt de ritmodal bij een iOS-toetsenbord tot de zichtbare hoogte van de visualViewport, ook als het layoutvenster groter blijft.

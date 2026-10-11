@@ -5,11 +5,11 @@ import app
 
 class PwaUpdate3312Tests(unittest.TestCase):
     def test_versioned_receipt_script_and_network_first_worker(self):
-        self.assertEqual(app.APP_VERSION, '33.14')
-        self.assertIn('<script src="receipt-archive.js?v=33.14"></script>', app.APP_HTML)
+        self.assertEqual(app.APP_VERSION, '33.15')
+        self.assertIn('<script src="receipt-archive.js?v=33.15"></script>', app.APP_HTML)
         worker = app.SERVICE_WORKER.decode('utf-8')
-        self.assertIn('const CACHE = "rit-tank-shell-33.14";', worker)
-        self.assertIn('"receipt-archive.js?v=33.14"', worker)
+        self.assertIn('const CACHE = "rit-tank-shell-33.15";', worker)
+        self.assertIn('"receipt-archive.js?v=33.15"', worker)
         self.assertIn('if (url.pathname.endsWith("/receipt-archive.js"))', worker)
         self.assertLess(
             worker.index('if (url.pathname.endsWith("/receipt-archive.js"))'),
