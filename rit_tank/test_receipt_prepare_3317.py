@@ -48,8 +48,12 @@ class ReceiptPrepareTests(unittest.TestCase):
             )
             self.assertEqual(details["total"], "60,00")
             self.assertEqual(details["warnings"], [])
-            self.assertTrue(
-                result["suggested_filename"].endswith(".pdf")
+            self.assertEqual(
+                result["suggested_filename"],
+                "2026-10-10_Argos_Rijssen_60-00.pdf"
+            )
+            self.assertNotIn(
+                "Rotterdam", result["suggested_filename"]
             )
             self.assertEqual(
                 con.execute(
