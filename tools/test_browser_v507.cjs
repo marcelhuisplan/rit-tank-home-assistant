@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory() as d:
  await page.evaluate(()=>{browserLocation=async()=>{throw Error('GPS unavailable')};openTripPoint('start');return captureTripLocation()});
  await page.locator('#tripAddressChoices button').click();
  assert.equal(await page.evaluate(()=>TRIP_LOCATION.manual_label),'Teststraat 7A, Teststad');
- await page.locator('#tripManualAddress').fill('Teststraat 9, Teststad');
+ await page.locator('#tripOtherAddressButton').click();await page.locator('#tripManualAddress').fill('Teststraat 9, Teststad');
  assert.equal(await page.evaluate(()=>TRIP_LOCATION),null);
  await page.evaluate(()=>{confirmManualTripAddress();closeModal('tripModal');switchView('business')});
  assert.equal(await page.evaluate(()=>TRIP_LOCATION.manual_label),'Teststraat 9, Teststad');
