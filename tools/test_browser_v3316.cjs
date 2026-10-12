@@ -90,17 +90,16 @@ async function fuelFailureDiagnostics(page,scenario){
        if(!g.visible){console.error('33.16 focus geometry '+scenario+' '+JSON.stringify(g));await fuelFailureDiagnostics(page,scenario)}
        assert.equal(g.visible,true,id+' focused above the keyboard in '+scenario);
      };
-     for(const [id,hint] of [['fuelOdo','next'],['fuelLitersInput','next'],['fuelPriceInput','next'],['fuelStation','next'],['fuelNote','done']])
+     for(const [id,hint] of [['fuelOdo','next'],['fuelLitersInput','next'],['fuelPriceInput','next'],['fuelStation','next'],['fuelNote','next']])
        assert.equal(await page.locator('#'+id).getAttribute('enterkeyhint'),hint,id+' keyboard hint');
      await odo.click();
      await odo.pressSequentially('26200',{delay:3});
      assert.equal(await odo.inputValue(),'26200');
+     assert.match(await page.locator('#fuelDate').inputValue(),/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/,'local date defaults to now');
+     const sections=await page.locator('#fuelModal .guide-section[id^="fuelStep"]').evaluateAll(els=>els.filter(e=>e.id!=='fuelStepScan').map(e=>e.id));
+     assert.deepEqual(sections,['fuelStepOdo','fuelStepLiters','fuelStepPrice','fuelStepLocation','fuelStepFinish','fuelStepDate']);
+     assert.equal(await page.locator('#fuelDateNext').count(),0);
      await odo.press('Enter');
-     await visibleFocused('fuelDate');
-     await page.locator('#fuelDate').fill('2026-10-10T15:30');
-     const dateNext=page.locator('#fuelDateNext');
-     assert.equal(await dateNext.textContent(),'Volgende → Liters');
-     await dateNext.click();
      await visibleFocused('fuelLitersInput');
      await liters.pressSequentially('4300',{delay:3});
      assert.equal(await liters.inputValue(),'43,00');
@@ -121,9 +120,13 @@ async function fuelFailureDiagnostics(page,scenario){
      await visibleFocused('fuelNote');
      await note.fill('Notitie test');
      await note.press('Enter');
-     assert.notEqual(await page.evaluate(()=>document.activeElement?.id),'fuelNote','Done must blur last field');
+     await visibleFocused('fuelDate');
+     await page.locator('#fuelDate').fill('2026-10-10T15:30');
+     await page.locator('#fuelDate').press('Enter');
+     assert.notEqual(await page.evaluate(()=>document.activeElement?.id),'fuelSaveButton','Return never focuses save');
+     assert.equal(sent.length,0,'Return never saves fuel');
      const pressed=await page.evaluate(()=>window.__fuelReturnKeys);
-     assert.deepEqual(pressed.map(x=>x.id),['fuelOdo','fuelLitersInput','fuelPriceInput','fuelStation','fuelNote']);
+     assert.deepEqual(pressed.map(x=>x.id),['fuelOdo','fuelLitersInput','fuelPriceInput','fuelStation','fuelNote','fuelDate']);
      assert.equal(pressed.every(x=>x.trusted),true,'the actual keyboard Return events must be trusted');
      assert.equal(await page.locator('#fuelDate').inputValue(),'2026-10-10T15:30');
      assert.equal(await station.inputValue(),'Testpomp');assert.equal(await note.inputValue(),'Notitie test');

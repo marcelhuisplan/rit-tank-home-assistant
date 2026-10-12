@@ -1,5 +1,11 @@
 # Changelog
 
+## 34.00
+
+- Tankformulier: Datum & tijd als zesde en laatste stap, met bijgewerkte Enter-/focusnavigatie en een afzonderlijke opslagknop.
+- Tussenstop: BAG-huisnummer zoeken uitsluitend in de via GPS/PDOK herkende straat en woonplaats, met kortlevende servercontext, expliciete adreskeuze en veilige terugval naar vrij adreszoeken.
+- Add-on, applicatie en PWA-shell naar 34.00; bestaande opslag, PWA-identiteit, database en historische administratie blijven behouden.
+
 ## 33.17
 
 - Foto's van tankbonnen kunnen optioneel op bonhoeken worden rechtgezet; de originele foto blijft beschikbaar.

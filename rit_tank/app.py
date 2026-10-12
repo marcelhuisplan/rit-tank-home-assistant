@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.17'
+APP_VERSION = '34.00'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -798,6 +798,10 @@ def google_reverse_geocode(lat: float, lon: float) -> dict[str, Any]:
 
 def nearby_house_numbers(lat: float, lon: float) -> dict[str, Any]:
     return google_places.nearby_house_numbers(lat, lon, dependencies=_places_dependencies())
+
+
+def search_street_house_number(context: str, house_number: str) -> dict[str, Any]:
+    return google_places.search_street_house_number(context, house_number, dependencies=_places_dependencies())
 
 
 def cached_report_address(lat: float, lon: float) -> str:
@@ -2920,14 +2924,15 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 <div class="modal" id="pdfModal"><div class="sheet"><div class="pdf-toolbar"><div class="sheethead"><h2>PDF-ritregistratie</h2><button class="linkbtn" onclick="closePdfPreview()">Sluiten ✕</button></div><div class="settings-actions"><button class="linkbtn" id="pdfShare" onclick="sharePdf()" disabled>Delen / andere app</button><button class="linkbtn" id="pdfPrint" onclick="printPdfPreview()" disabled>Afdrukken</button><a class="linkbtn" id="pdfDownload" hidden>Download PDF</a><button class="linkbtn" id="pdfDrive" onclick="archivePdf()" disabled>Google Drive</button></div><p id="pdfStatus" role="status">PDF voorbereiden…</p></div><div id="pdfPages" aria-label="Voorbeeld rittenregistratie"></div></div></div>
 
 <div class="modal" id="fuelModal"><div class="sheet" id="fuelSheet"><div class="grab"></div><div class="sheethead"><h2>⛽ Tankbeurt</h2><button type="button" class="fuel-done-head" onclick="fuelDone()">Gereed</button><button type="button" class="close" aria-label="Sluiten" onclick="closeModal('fuelModal')"><span aria-hidden="true">✕</span></button></div>
-  <div class="guide-section active" id="fuelStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small>Gehele kilometers</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelOdo">Werkelijke tellerstand (km)</label><input id="fuelOdo" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'odometer')" oninput="fuelInput(event,'odometer')" onkeydown="fuelAdvance(event,'fuelDate')"><button type="button" class="fuel-clear" onclick="fuelClear('odometer')">Wissen</button></div><small class="fuel-hint">Tik om de vorige waarde volledig te vervangen.</small><div class="odo-last" id="fuelOdoLast"></div></div>
-  <div class="guide-section guide-date" id="fuelStepDate"><div class="guide-head"><span class="step-badge">2</span><b>Datum & tijd</b><small>Staat standaard op nu</small></div><div class="field" style="margin-top:0"><input id="fuelDate" type="datetime-local" onkeydown="fuelAdvance(event,'fuelLitersInput')"></div><button type="button" class="guide-next fuel-date-next" id="fuelDateNext" onclick="fuelFocusNext('fuelLitersInput')">Volgende → Liters</button></div>
-  <div class="guide-section" id="fuelStepLiters"><div class="guide-head"><span class="step-badge">3</span><b>Liters</b><small>Liters met 2 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelLitersInput">Liters</label><input id="fuelLitersInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'liters')" oninput="fuelInput(event,'liters')" onkeydown="fuelAdvance(event,'fuelPriceInput')"><button type="button" class="fuel-clear" onclick="fuelClear('liters')">Wissen</button></div><small class="fuel-hint">4300 wordt 43,00 L. Tik om het voorstel te vervangen.</small></div>
-  <div class="guide-section" id="fuelStepPrice"><div class="guide-head"><span class="step-badge">4</span><b>Prijs per liter</b><small>3 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelPriceInput">€ per liter</label><input id="fuelPriceInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'price')" oninput="fuelInput(event,'price')" onkeydown="fuelAdvance(event,'fuelStation')"><button type="button" class="fuel-clear" onclick="fuelClear('price')">Wissen</button></div><small class="fuel-hint">2400 wordt € 2,400. Tik om het voorstel te vervangen.</small></div>
+  <div class="guide-section active" id="fuelStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small>Gehele kilometers</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelOdo">Werkelijke tellerstand (km)</label><input id="fuelOdo" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'odometer')" oninput="fuelInput(event,'odometer')" onkeydown="fuelAdvance(event,'fuelLitersInput')"><button type="button" class="fuel-clear" onclick="fuelClear('odometer')">Wissen</button></div><small class="fuel-hint">Tik om de vorige waarde volledig te vervangen.</small><div class="odo-last" id="fuelOdoLast"></div></div>
+  <div class="guide-section" id="fuelStepLiters"><div class="guide-head"><span class="step-badge">2</span><b>Liters</b><small>Liters met 2 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelLitersInput">Liters</label><input id="fuelLitersInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'liters')" oninput="fuelInput(event,'liters')" onkeydown="fuelAdvance(event,'fuelPriceInput')"><button type="button" class="fuel-clear" onclick="fuelClear('liters')">Wissen</button></div><small class="fuel-hint">4300 wordt 43,00 L. Tik om het voorstel te vervangen.</small></div>
+  <div class="guide-section" id="fuelStepPrice"><div class="guide-head"><span class="step-badge">3</span><b>Prijs per liter</b><small>3 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelPriceInput">€ per liter</label><input id="fuelPriceInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'price')" oninput="fuelInput(event,'price')" onkeydown="fuelAdvance(event,'fuelStation')"><button type="button" class="fuel-clear" onclick="fuelClear('price')">Wissen</button></div><small class="fuel-hint">2400 wordt € 2,400. Tik om het voorstel te vervangen.</small></div>
   <div class="fuel-total-card" aria-live="polite"><span>Berekend totaalbedrag</span><strong id="fuelTotal">€ 0,00</strong><small>Alleen eindbedrag afgerond op centen</small></div>
   <p id="fuelInputError" class="fuel-input-error" role="alert"></p>
-  <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">5</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" enterkeyhint="next" onkeydown="fuelAdvance(event,'fuelNote')" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div></div>
-  <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">6</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" enterkeyhint="done" onkeydown="fuelAdvance(event)" placeholder="Bijv. snelweg, vakantie..."></div><button class="save" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button><div id="fuelConflictWarning" hidden role="alert" style="margin-top:14px;padding:14px;border:2px solid #b97517;border-radius:12px;background:#fff4db;color:#37260b"><strong>⚠️ Kilometerconflict — historische tankbon</strong><p>De ingevoerde kilometerstand botst met de volgende registratie(s):</p><ul id="fuelConflictDetails" style="padding-left:22px"></ul><p>Je kunt deze tankbon bewust opslaan. Hij wordt gemarkeerd als kilometerconflict; onbetrouwbare afstanden en verbruikscycli worden niet meegerekend. De actuele tellerstand verandert niet.</p><button class="save" type="button" onclick="saveFuelConfirmed()">Ja, ondanks kilometerconflict opslaan</button><button class="linkbtn" type="button" onclick="clearFuelConflictWarning()">Terug naar tankbon</button></div></div>
+  <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">4</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" enterkeyhint="next" onkeydown="fuelAdvance(event,'fuelNote')" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div></div>
+  <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">5</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" enterkeyhint="next" onkeydown="fuelAdvance(event,'fuelDate')" placeholder="Bijv. snelweg, vakantie..."></div></div>
+  <div class="guide-section guide-date" id="fuelStepDate"><div class="guide-head"><span class="step-badge">6</span><b>Datum & tijd</b><small>Staat standaard op nu; wijzig zo nodig</small></div><div class="field" style="margin-top:0"><label for="fuelDate">Datum & tijd van deze tankbeurt</label><input id="fuelDate" type="datetime-local" enterkeyhint="done" onkeydown="fuelAdvance(event)"></div></div>
+  <button class="save" type="button" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button><div id="fuelConflictWarning" hidden role="alert" style="margin-top:14px;padding:14px;border:2px solid #b97517;border-radius:12px;background:#fff4db;color:#37260b"><strong>⚠️ Kilometerconflict — historische tankbon</strong><p>De ingevoerde kilometerstand botst met de volgende registratie(s):</p><ul id="fuelConflictDetails" style="padding-left:22px"></ul><p>Je kunt deze tankbon bewust opslaan. Hij wordt gemarkeerd als kilometerconflict; onbetrouwbare afstanden en verbruikscycli worden niet meegerekend. De actuele tellerstand verandert niet.</p><button class="save" type="button" onclick="saveFuelConfirmed()">Ja, ondanks kilometerconflict opslaan</button><button class="linkbtn" type="button" onclick="clearFuelConflictWarning()">Terug naar tankbon</button></div>
 <div class="guide-section" id="fuelStepScan"><button type="button" class="scan-card" onclick="openReceiptArchive()">📷 <b>Tankbon scannen</b></button><p>Bon apart bewaren als PDF; vult geen tankgegevens in.</p><button type="button" class="linkbtn" onclick="openReceiptArchive()">🗂️ Bonnenarchief</button></div>
 </div></div>
 
@@ -2948,7 +2953,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   </section>
   <div id="tripStartFields"><div class="tax-note">Start hier een zakelijke ritregistratie. De fysieke tellerstand blijft leidend.</div><div class="purpose-grid"><div class="field"><label>Doel / afspraak</label><input id="tripPurpose" maxlength="120" placeholder="Bijv. klantbezoek"></div><div class="field"><label>Klant / project</label><input id="tripClient" maxlength="120" placeholder="Optioneel"></div></div><div class="field"><label>Ritnotitie (optioneel)</label><input id="tripTripNote" maxlength="250" placeholder="Bijv. offertebespreking"></div></div>
   <input id="tripOdo" type="hidden"><div class="guide-section active" id="tripStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Kilometerstand</b><small id="tripOdoStepHint">Laatste stand is vooringesteld</small></div><div class="odo-suggest" id="tripOdoSuggestion"><div class="odo-suggest-label">Berekende kilometerstand</div><div class="odo-suggest-value"><b id="tripOdoSuggestedValue">—</b> <span>km</span></div><div class="odo-suggest-detail" id="tripOdoSuggestedDetail"></div><div class="odo-suggest-actions"><button class="odo-suggest-accept" type="button" onclick="acceptTripOdoSuggestion()">✓ Akkoord</button><button class="odo-suggest-edit" type="button" onclick="editTripOdoSuggestion()">Wijzigen</button></div></div><div class="odo-editor" id="tripOdoEditor"><div class="odo-wheelbox" id="tripOdoWheels"></div><div class="odo-live"><b id="tripOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="tripOdoLast"></div><label class="assistant-note"><input type="checkbox" id="tripOdoChecked"> Ik heb de vorige én huidige tellerstand gecontroleerd; gebruik dit traject voor kilometerleren.</label><button class="guide-next" type="button" onclick="guideTo('tripStepLocation')">Kilometerstand bevestigen →</button></div></div>
-  <div class="guide-section" id="tripStepLocation" hidden><div class="guide-head"><span class="step-badge">2</span><b>📍 Locatie vastleggen</b><small>Kies een snelknop of zoek een adres</small></div><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="tripDate" type="datetime-local"></div><div class="trip-location-box"><b id="tripLocationTitle">📍 Nog geen locatie vastgelegd</b><small id="tripLocationDetail">Kies hieronder de juiste locatie.</small><div class="trip-location-actions"><button id="tripHomeButton" class="location-big" type="button" onclick="selectTripHome()">🏠 Thuis</button><button id="tripSchoolButton" class="location-big" type="button" onclick="selectTripSchool()">🏫 Beatrixschool</button><button id="tripCurrentLocationButton" class="location-big location-current" type="button" onclick="captureTripLocation()">📍 Gebruik huidige locatie</button></div><div id="tripAddressChoices" class="address-choices"></div><div class="field"><label for="tripManualAddress">Ander adres zoeken</label><input id="tripManualAddress" maxlength="120" placeholder="Straat, huisnummer en plaats"></div><div class="google-attrib" id="tripGoogleAttrib" style="display:none">Adres via <b translate="no">Google Maps</b></div></div></div>
+  <div class="guide-section" id="tripStepLocation" hidden><div class="guide-head"><span class="step-badge">2</span><b>📍 Locatie vastleggen</b><small>Kies een snelknop of zoek een adres</small></div><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="tripDate" type="datetime-local"></div><div class="trip-location-box"><b id="tripLocationTitle">📍 Nog geen locatie vastgelegd</b><small id="tripLocationDetail">Kies hieronder de juiste locatie.</small><div class="trip-location-actions"><button id="tripHomeButton" class="location-big" type="button" onclick="selectTripHome()">🏠 Thuis</button><button id="tripSchoolButton" class="location-big" type="button" onclick="selectTripSchool()">🏫 Beatrixschool</button><button id="tripCurrentLocationButton" class="location-big location-current" type="button" onclick="captureTripLocation()">📍 Gebruik huidige locatie</button></div><div id="tripAddressChoices" class="address-choices"></div><div id="tripHouseSearchBox" hidden><div class="field"><label id="tripHouseLabel" for="tripHouseNumber">Huisnummer zoeken in de herkende straat</label><input id="tripHouseNumber" type="text" inputmode="text" autocomplete="off" maxlength="22" placeholder="Bijv. 7 of 7a"></div><div id="tripHouseStatus" role="status" aria-live="polite"></div><div id="tripHouseResults" class="address-choices"></div></div><button id="tripOtherAddressButton" type="button" class="linkbtn" onclick="enableTripManualSearch()">Andere straat of plaats zoeken</button><div id="tripManualBox" class="field" hidden><label for="tripManualAddress">Ander adres zoeken</label><input id="tripManualAddress" maxlength="120" placeholder="Straat, huisnummer en plaats"></div><div class="google-attrib" id="tripGoogleAttrib" style="display:none">Adres via <b translate="no">Google Maps</b></div></div></div>
   <div class="field"><label>Notitie bij deze stop (optioneel)</label><input id="tripStopNote" maxlength="250" placeholder="Bijv. bezoek afgerond"></div><div id="tripFinishFields" style="display:none"><div class="field"><label>Afwijkende route (alleen indien van toepassing)</label><input id="tripDeviatingRoute" maxlength="300" placeholder="Bijv. omleiding via A1 wegens afsluiting"></div></div>
   <button class="trip-save-sticky" id="tripSaveButton" onclick="saveTripPoint()">Opslaan</button>
 </div></div>
@@ -3094,7 +3099,7 @@ function money(n){let c=DATA?.settings?.currency||'€';return n===null||n===und
 function kmPerLiter(f){const km=Number(f?.km),liters=Number(f?.liters);return f?.l100==null||!Number.isFinite(km)||!Number.isFinite(liters)||km<=0||liters<=0?'—':`1 : ${fmt(km/liters,1)}`}
 function localInputNow(){let d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,16)}
 function toast(msg,error=false){let t=$('toast');t.textContent=msg;t.className='toast show'+(error?' error':'');setTimeout(()=>t.className='toast',3300)}
-let modalScrollY=0;function lockModalScroll(){if(document.body.classList.contains('modal-open'))return;modalScrollY=window.scrollY;document.body.style.top=`-${modalScrollY}px`;document.body.classList.add('modal-open')}function unlockModalScroll(){if(document.querySelector('.modal.show'))return;let scrollY=modalScrollY;document.body.classList.remove('modal-open');document.body.style.top='';modalScrollY=0;window.scrollTo(0,scrollY)}function closeModal(id){if(id==='assistantModal')openAssistantComplete.request=(openAssistantComplete.request||0)+1;if(['tripModal','assistantModal','distanceModal'].includes(id)){PHYSICAL_PENDING=null;++PHYSICAL_GENERATION;}$(id).classList.remove('show');unlockModalScroll()} function openModal(id){lockModalScroll();$(id).classList.add('show');let sh=$(id).querySelector('.sheet');if(sh)sh.scrollTop=0}
+let modalScrollY=0;function lockModalScroll(){if(document.body.classList.contains('modal-open'))return;modalScrollY=window.scrollY;document.body.style.top=`-${modalScrollY}px`;document.body.classList.add('modal-open')}function unlockModalScroll(){if(document.querySelector('.modal.show'))return;let scrollY=modalScrollY;document.body.classList.remove('modal-open');document.body.style.top='';modalScrollY=0;window.scrollTo(0,scrollY)}function closeModal(id){if(id==='tripModal'){clearTimeout(TRIP_HOUSE_TIMER);++TRIP_HOUSE_REQUEST;++TRIP_ADDRESS_REQUEST;++TRIP_ROUTE_PREVIEW_REQUEST;TRIP_STREET_CONTEXT='';}if(id==='assistantModal')openAssistantComplete.request=(openAssistantComplete.request||0)+1;if(['tripModal','assistantModal','distanceModal'].includes(id)){PHYSICAL_PENDING=null;++PHYSICAL_GENERATION;}$(id).classList.remove('show');unlockModalScroll()} function openModal(id){lockModalScroll();$(id).classList.add('show');let sh=$(id).querySelector('.sheet');if(sh)sh.scrollTop=0}
 let GUIDE_TIMER=null;
 function guideTo(id,delay=80){clearTimeout(GUIDE_TIMER);GUIDE_TIMER=setTimeout(()=>{let el=$(id);if(!el)return;let modal=el.closest('.modal');if(modal&&!modal.classList.contains('show'))return;if(modal)modal.querySelectorAll('.guide-section').forEach(x=>x.classList.toggle('active',x===el));let sheet=el.closest('.sheet');if(sheet){let top=el.getBoundingClientRect().top-sheet.getBoundingClientRect().top+sheet.scrollTop-24;sheet.scrollTo({top:Math.max(0,top),behavior:'smooth'})}else el.scrollIntoView({behavior:'smooth',block:'center'})},delay)}
 async function reloadData(){try{DATA=await api(`api/summary?period=${PERIOD}`);await migrateLocationFallback();render();handleLaunchAction()}catch(e){toast(e.message,true)}}
@@ -3266,14 +3271,78 @@ async function refreshTripOdoProposal(request){
     $('tripOdoStepHint').textContent='Voorstel niet beschikbaar — controleer de teller';
   }finally{clearTimeout(timer)}
 }
-async function openTripPoint(mode){clearTimeout(TRIP_SEARCH_TIMER);TRIP_MODE=mode;++TRIP_PROPOSAL_REQUEST;++TRIP_ADDRESS_REQUEST;++TRIP_ROUTE_PREVIEW_REQUEST;TRIP_GPS=null;$('tripAddressChoices').innerHTML='';$('tripManualAddress').value='';$('tripOdoChecked').checked=false;TRIP_LOCATION=null;TRIP_SEGMENT_TYPE='business';TRIP_ODO_MANUAL=false;let active=DATA.business?.active_trip;$('tripModalTitle').textContent=mode==='start'?'Rit starten':mode==='finish'?'Rit afsluiten':'Tussenstop vastleggen';$('tripStartFields').style.display=mode==='start'?'block':'none';$('tripFinishFields').style.display=mode==='finish'?'block':'none';$('tripHomeButton').hidden=false;$('tripSchoolButton').hidden=false;$('tripDate').value=localInputNow();$('tripStopNote').value='';if(mode==='start'){$('tripPurpose').value='klantbezoek';$('tripClient').value='';$('tripTripNote').value=''};if(mode==='finish')$('tripDeviatingRoute').value=active?.deviating_route||'';$('tripLocationTitle').textContent='📍 Nog geen locatie vastgelegd';$('tripLocationDetail').textContent='Kies hieronder de juiste locatie.';$('tripGoogleAttrib').style.display='none';$('tripSaveButton').textContent=mode==='start'?'Registratie starten':mode==='finish'?'Ritregistratie afsluiten':'Locatie opslaan';$('tripOdoSuggestion').classList.remove('show');$('tripOdoEditor').hidden=mode!=='start';$('tripOdoStepHint').textContent=mode==='start'?'Laatste stand is vooringesteld':'Berekende stand ophalen…';initOdometerWheel('trip',DATA.current_odometer??0);if(mode!=='start')await refreshTripOdoProposal(TRIP_PROPOSAL_REQUEST);initPhysicalTrip(mode,active);openModal('tripModal');setTimeout(()=>{if(document.activeElement!==$('physicalTripValue'))$('physicalTripCard').scrollIntoView({block:'start'})},80)}
+async function openTripPoint(mode){clearTimeout(TRIP_SEARCH_TIMER);TRIP_MODE=mode;++TRIP_PROPOSAL_REQUEST;++TRIP_ADDRESS_REQUEST;++TRIP_ROUTE_PREVIEW_REQUEST;TRIP_GPS=null;resetTripHouseLookup();$('tripManualBox').hidden=true;$('tripAddressChoices').innerHTML='';$('tripManualAddress').value='';$('tripOdoChecked').checked=false;TRIP_LOCATION=null;TRIP_SEGMENT_TYPE='business';TRIP_ODO_MANUAL=false;let active=DATA.business?.active_trip;$('tripModalTitle').textContent=mode==='start'?'Rit starten':mode==='finish'?'Rit afsluiten':'Tussenstop vastleggen';$('tripStartFields').style.display=mode==='start'?'block':'none';$('tripFinishFields').style.display=mode==='finish'?'block':'none';$('tripHomeButton').hidden=false;$('tripSchoolButton').hidden=false;$('tripDate').value=localInputNow();$('tripStopNote').value='';if(mode==='start'){$('tripPurpose').value='klantbezoek';$('tripClient').value='';$('tripTripNote').value=''};if(mode==='finish')$('tripDeviatingRoute').value=active?.deviating_route||'';$('tripLocationTitle').textContent='📍 Nog geen locatie vastgelegd';$('tripLocationDetail').textContent='Kies hieronder de juiste locatie.';$('tripGoogleAttrib').style.display='none';$('tripSaveButton').textContent=mode==='start'?'Registratie starten':mode==='finish'?'Ritregistratie afsluiten':'Locatie opslaan';$('tripOdoSuggestion').classList.remove('show');$('tripOdoEditor').hidden=mode!=='start';$('tripOdoStepHint').textContent=mode==='start'?'Laatste stand is vooringesteld':'Berekende stand ophalen…';initOdometerWheel('trip',DATA.current_odometer??0);if(mode!=='start')await refreshTripOdoProposal(TRIP_PROPOSAL_REQUEST);initPhysicalTrip(mode,active);openModal('tripModal');setTimeout(()=>{if(document.activeElement!==$('physicalTripValue'))$('physicalTripCard').scrollIntoView({block:'start'})},80)}
 let TRIP_SEARCH_TIMER=null,TRIP_ADDRESS_REQUEST=0,TRIP_ROUTE_PREVIEW_REQUEST=0,TRIP_ADDRESSES=[],TRIP_GPS=null;
-async function captureTripLocation(){clearTimeout(TRIP_SEARCH_TIMER);++TRIP_ROUTE_PREVIEW_REQUEST;let request=++TRIP_ADDRESS_REQUEST,title=$('tripLocationTitle'),detail=$('tripLocationDetail');TRIP_LOCATION=null;TRIP_GPS=null;TRIP_ADDRESSES=[];$('tripManualAddress').value='';$('tripAddressChoices').innerHTML='';title.textContent='📍 Locatie bepalen…';detail.textContent='Adressen in de buurt ophalen.';try{
- let loc=await resolveLocation();if(request!==TRIP_ADDRESS_REQUEST)return;TRIP_GPS=loc;
- let r=await api('api/location/addresses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(loc)});if(request!==TRIP_ADDRESS_REQUEST)return;TRIP_ADDRESSES=r.addresses||[];
- title.textContent='Kies het huisnummer van je afspraak';detail.textContent=TRIP_ADDRESSES.length?`${r.street} · ${TRIP_ADDRESSES.length} adressen · bron PDOK / BAG. Controleer straat en huisnummer.`:'Geen adressen gevonden. Vul straat, huisnummer en plaats handmatig in.';
- $('tripGoogleAttrib').style.display='none';TRIP_ADDRESSES.forEach((a,i)=>{let b=document.createElement('button');b.type='button';b.className='guide-next';b.textContent=`${a.address} · ${a.distance_m} m`;b.onclick=()=>chooseTripAddress(i);$('tripAddressChoices').appendChild(b)});
- }catch(e){if(request!==TRIP_ADDRESS_REQUEST)return;title.textContent=TRIP_GPS?'Adres handmatig bevestigen':'⚠️ Locatie niet vastgelegd';detail.textContent=e.message;toast(e.message,true)}}
+let TRIP_STREET_CONTEXT='',TRIP_HOUSE_TIMER=null,TRIP_HOUSE_REQUEST=0;
+function resetTripHouseLookup(){
+ clearTimeout(TRIP_HOUSE_TIMER);++TRIP_HOUSE_REQUEST;TRIP_STREET_CONTEXT='';
+ $('tripHouseNumber').value='';$('tripHouseResults').innerHTML='';$('tripHouseStatus').textContent='';
+ $('tripHouseSearchBox').hidden=true;
+}
+function enableTripManualSearch(){
+ resetTripHouseLookup();++TRIP_ADDRESS_REQUEST;
+ $('tripManualBox').hidden=false;$('tripManualAddress').focus();
+}
+async function captureTripLocation(){
+ clearTimeout(TRIP_SEARCH_TIMER);++TRIP_ROUTE_PREVIEW_REQUEST;resetTripHouseLookup();
+ let request=++TRIP_ADDRESS_REQUEST,title=$('tripLocationTitle'),detail=$('tripLocationDetail');
+ TRIP_LOCATION=null;TRIP_GPS=null;TRIP_ADDRESSES=[];$('tripManualAddress').value='';$('tripManualBox').hidden=true;
+ $('tripAddressChoices').innerHTML='';$('tripGoogleAttrib').style.display='none';
+ title.textContent='📍 Locatie bepalen…';detail.textContent='Adressen in de buurt ophalen.';
+ try{
+  let loc=await resolveLocation();if(request!==TRIP_ADDRESS_REQUEST)return;TRIP_GPS=loc;
+  let r=await api('api/location/addresses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(loc)});
+  if(request!==TRIP_ADDRESS_REQUEST)return;
+  TRIP_ADDRESSES=r.addresses||[];
+  const uncertain=loc.accuracy!=null&&Number.isFinite(Number(loc.accuracy))&&Number(loc.accuracy)>100;
+  const reliable=!!(r.street&&r.town&&r.street_context&&!uncertain);
+  if(reliable){
+   TRIP_STREET_CONTEXT=r.street_context;
+   $('tripHouseSearchBox').hidden=false;
+   $('tripHouseLabel').textContent='Huisnummer zoeken in '+r.street+', '+r.town;
+  }
+  title.textContent='Kies het huisnummer van je afspraak';
+  detail.textContent=uncertain?'GPS is te onnauwkeurig om de straat veilig vast te stellen. Kies eventueel een nabijgelegen adres of gebruik de vrije adreszoekfunctie.':
+    reliable?r.street+', '+r.town+' · '+TRIP_ADDRESSES.length+' nabijgelegen BAG-adressen. Ontbreekt je nummer? Zoek hieronder alleen in deze straat.':
+    'Straat of woonplaats niet betrouwbaar herkend. Kies eventueel een nabijgelegen adres of zoek een andere straat of plaats.';
+  TRIP_ADDRESSES.forEach((a,i)=>{let b=document.createElement('button');b.type='button';b.className='guide-next';b.textContent=a.address+' · '+a.distance_m+' m';b.onclick=()=>chooseTripAddress(i);$('tripAddressChoices').appendChild(b)});
+ }catch(e){
+  if(request!==TRIP_ADDRESS_REQUEST)return;
+  title.textContent=TRIP_GPS?'Adres handmatig bevestigen':'⚠️ Locatie niet vastgelegd';
+  detail.textContent=e.message+' Gebruik zo nodig Andere straat of plaats zoeken.';
+  toast(e.message,true);
+ }
+}
+async function searchTripHouseNumber(){
+ clearTimeout(TRIP_HOUSE_TIMER);let request=++TRIP_HOUSE_REQUEST;
+ const context=TRIP_STREET_CONTEXT,scopeRequest=TRIP_ADDRESS_REQUEST,number=$('tripHouseNumber').value.trim();
+ const results=$('tripHouseResults'),status=$('tripHouseStatus');
+ results.innerHTML='';status.textContent='';
+ if(!context||!number)return;
+ try{
+  const r=await api('api/location/house-number',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({street_context:context,house_number:number})});
+  if(request!==TRIP_HOUSE_REQUEST||context!==TRIP_STREET_CONTEXT||scopeRequest!==TRIP_ADDRESS_REQUEST)return;
+  const found=r.addresses||[];
+  status.textContent=found.length?found.length+' BAG-adres'+(found.length===1?'':'sen')+' gevonden. Selecteer het volledige adres.':'Dit huisnummer bestaat niet in de herkende straat en woonplaats.';
+  for(const address of found){
+   const lat=Number(address.latitude),lon=Number(address.longitude);
+   if(!Number.isFinite(lat)||!Number.isFinite(lon)||!address.address)continue;
+   let b=document.createElement('button');b.type='button';b.className='guide-next';
+   b.textContent=address.address;b.onclick=()=>confirmTripAddress(address.address,{latitude:lat,longitude:lon,source:'pdok_confirmed'});
+   results.appendChild(b);
+  }
+ }catch(e){
+  if(request===TRIP_HOUSE_REQUEST&&context===TRIP_STREET_CONTEXT&&scopeRequest===TRIP_ADDRESS_REQUEST)status.textContent=e.message;
+ }
+}
+$('tripHouseNumber').addEventListener('input',()=>{
+ clearTimeout(TRIP_HOUSE_TIMER);++TRIP_HOUSE_REQUEST;
+ $('tripHouseResults').innerHTML='';$('tripHouseStatus').textContent='';
+ if($('tripHouseNumber').value.trim())TRIP_HOUSE_TIMER=setTimeout(searchTripHouseNumber,350);
+});
+$('tripHouseNumber').addEventListener('keydown',event=>{
+ if(event.key==='Enter'){event.preventDefault();searchTripHouseNumber()}
+});
 function chooseTripAddress(index){let address=TRIP_ADDRESSES[index];if(!address||!TRIP_GPS)return;$('tripManualAddress').value=address.address;confirmTripAddress(address.address,{...TRIP_GPS,latitude:address.latitude,longitude:address.longitude,source:'pdok_confirmed'})}
 async function searchTripManualAddress(){
   let query=$('tripManualAddress').value.trim(),request=++TRIP_ADDRESS_REQUEST;
@@ -3298,7 +3367,7 @@ async function searchTripManualAddress(){
 }
 function advanceTripAfterLocation(){if(TRIP_LOCATION)guideTo('tripSaveButton',80)}
 async function confirmTripAddress(label,location){
-  clearTimeout(TRIP_SEARCH_TIMER);++TRIP_ADDRESS_REQUEST;
+  clearTimeout(TRIP_SEARCH_TIMER);resetTripHouseLookup();++TRIP_ADDRESS_REQUEST;
   $('tripManualAddress').value=label;
   TRIP_LOCATION={...location,place_id:location.place_id||'',address:label,manual_label:label};
   TRIP_SEGMENT_TYPE='business';
@@ -3330,7 +3399,7 @@ async function confirmTripAddress(label,location){
 }
 async function selectTripFixedLocation(path,label,buttonId,titleLabel){
   clearTimeout(TRIP_SEARCH_TIMER);++TRIP_ROUTE_PREVIEW_REQUEST;
-  TRIP_LOCATION=null;TRIP_GPS=null;TRIP_ADDRESSES=[];
+  TRIP_LOCATION=null;TRIP_GPS=null;TRIP_ADDRESSES=[];resetTripHouseLookup();$('tripManualBox').hidden=true;
   $('tripManualAddress').value='';$('tripAddressChoices').innerHTML='';$('tripGoogleAttrib').style.display='none';
   $('tripLocationTitle').textContent=titleLabel+' selecteren…';$('tripLocationDetail').textContent='Vast adres ophalen.';
   let button=$(buttonId),request=++TRIP_ADDRESS_REQUEST;
@@ -4157,6 +4226,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not query:
                     raise ValueError('Vul een adres of zoekterm in.')
                 return json_response(self, {'places': google_places_text_search(query, location=payload.get('location'))})
+            if path == '/api/location/house-number':
+                return json_response(self, search_street_house_number(
+                    payload.get('street_context'), payload.get('house_number')))
             if path in ('/api/location/reverse', '/api/location/addresses'):
                 lat = to_float(payload.get('latitude'))
                 lon = to_float(payload.get('longitude'))

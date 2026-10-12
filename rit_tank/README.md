@@ -1,4 +1,4 @@
-# Rit & Tank 33.17
+# Rit & Tank 34.00
 
 ## Slimme boncontrole (33.17)
 
@@ -6,10 +6,16 @@
 - Herkende bongegevens worden als voorstel getoond en pas na expliciete controle bevestigd. De bon wordt als PDF gearchiveerd.
 - Bestaande ritten, kilometerstanden, tankbeurten en PDF-bonnen worden niet automatisch gewijzigd.
 
+## Verbeteringen in 34.00
+
+- Tankbeurt: **Datum & tijd** staat als laatste stap, na kilometerstand, liters, literprijs, tankstation en notitie. De datum/tijd staat standaard op nu; opslaan blijft een afzonderlijke bewuste handeling.
+- Tussenstop: **📍 Gebruik huidige locatie** toont BAG-adressen bij de GPS-locatie. Staat het huisnummer er niet bij, typ dan alleen het huisnummer (bijvoorbeeld `7` of `7a`); de resultaten blijven beperkt tot de herkende straat en woonplaats. Selecteer het adres expliciet en bevestig de tussenstop met **Opslaan**. Bij onherkenbare GPS-straat of voor een andere straat/plaats gebruik je **Andere straat of plaats zoeken**.
+- De huisnummerzoekcontext verloopt automatisch; een nieuwe GPS- of adreszoekactie maakt oude resultaten ongeldig. Bestaande ritten, tankbeurten, kilometerstanden en bonnen worden niet automatisch aangepast.
+
 ## Toetsenbordnavigatie tankformulier (33.16)
 
-- **Volgende** op het iPhone-/iPad-toetsenbord: kilometerstand → datum/tijd → liters → literprijs → tankstation → notitie.
-- Bij het native datum/tijdveld staat ook **Volgende → Liters**, omdat iOS daar niet altijd een toetsenbord-Volgende biedt.
+- **Volgende** op het iPhone-/iPad-toetsenbord: kilometerstand → liters → literprijs → tankstation → notitie → datum/tijd.
+- Datum & tijd is de laatste stap; opslaan gebeurt uitsluitend met de aparte knop **Tankbeurt opslaan**.
 - **Gereed** in het notitieveld sluit het toetsenbord. Zonder notitie kun je direct **Tankbeurt opslaan** kiezen.
 - Scrollcorrecties vinden alleen plaats als het volgende veld buiten het zichtbare scherm raakt. De automatische komma, ritten, bonnen en kilometerconflictcontrole blijven ongewijzigd.
 
@@ -108,10 +114,10 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **33.17**.
+- Huidige release: **34.00**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
-- Volgende release: **34.00**.
+- Volgende release: **nog niet vastgesteld**.
 - Dit is een **handmatig** releasebeleid: het versienummer (`APP_VERSION` in `app.py`, `version` in `config.yaml`, de titels in `README.md`/`DOCS.md`) wordt alleen door een expliciete, door de eigenaar aangevraagde wijziging opgehoogd. De applicatie verhoogt dit nummer nooit automatisch tijdens runtime.
 
 ## Tankbonnenarchief (33.06)
