@@ -1,6 +1,6 @@
-# Rit & Tank 34.00
+# Rit & Tank 34.01
 
-## Verbeteringen in 34.00
+## Verbeteringen in 34.01
 
 - Tankbeurt: **Datum & tijd** staat als laatste stap, na kilometerstand, liters, literprijs, tankstation en notitie. De datum/tijd staat standaard op nu; opslaan blijft een afzonderlijke bewuste handeling.
 - Tussenstop: **📍 Gebruik huidige locatie** toont BAG-adressen bij de GPS-locatie. Staat het huisnummer er niet bij, typ dan alleen het huisnummer (bijvoorbeeld `7` of `7a`); de resultaten blijven beperkt tot de herkende straat en woonplaats. Selecteer het adres expliciet en bevestig de tussenstop met **Opslaan**. Bij onherkenbare GPS-straat of voor een andere straat/plaats gebruik je **Andere straat of plaats zoeken**.
