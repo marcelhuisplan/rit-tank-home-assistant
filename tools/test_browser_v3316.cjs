@@ -95,7 +95,7 @@ async function fuelFailureDiagnostics(page,scenario){
      await odo.click();
      await odo.pressSequentially('26200',{delay:3});
      assert.equal(await odo.inputValue(),'26200');
-     assert.match(await page.locator('#fuelDate').inputValue(),/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$/,'local date defaults to now');
+     assert.match(await page.locator('#fuelDate').inputValue(),/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/,'local date defaults to now');
      const sections=await page.locator('#fuelModal .guide-section[id^="fuelStep"]').evaluateAll(els=>els.filter(e=>e.id!=='fuelStepScan').map(e=>e.id));
      assert.deepEqual(sections,['fuelStepOdo','fuelStepLiters','fuelStepPrice','fuelStepLocation','fuelStepFinish','fuelStepDate']);
      assert.equal(await page.locator('#fuelDateNext').count(),0);
