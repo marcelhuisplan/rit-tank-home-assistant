@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+import secrets
 import sqlite3
+import threading
 import time
 from typing import Any, Mapping
 from urllib.parse import quote, urlencode
@@ -237,41 +239,126 @@ def google_reverse_geocode(lat: float, lon: float, *, dependencies: Mapping[str,
         }
 
 
-def nearby_house_numbers(lat: float, lon: float, *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
-    """Use real BAG addresses, never manufacture house numbers from GPS."""
-    base = 'https://api.pdok.nl/bzk/locatieserver/search/v3_1/'
-    fields = 'id,weergavenaam,straatnaam,woonplaatsnaam,openbareruimte_id,huis_nlt,centroide_ll,afstand'
+# Opaque, short-lived server-side contexts prevent changing street or town from the browser.
+_STREET_CONTEXTS: dict[str, tuple[float, str, str, str]] = {}
+_STREET_LOCK = threading.Lock()
+_STREET_CONTEXT_TTL = 600.0
+_PDOK_BASE = 'https://api.pdok.nl/bzk/locatieserver/search/v3_1/'
+_PDOK_FIELDS = 'id,weergavenaam,straatnaam,woonplaatsnaam,openbareruimte_id,huis_nlt,huisnummer,centroide_ll,afstand'
+
+
+def _bag_coordinates(doc: Mapping[str, Any]) -> tuple[float, float] | None:
+    match = re.fullmatch(r'POINT\(([-\d.]+) ([-\d.]+)\)', str(doc.get('centroide_ll') or ''))
+    if not match:
+        return None
     try:
-        nearest = _provider(dependencies, 'http_json')(base + 'reverse?' + urlencode({
+        lon, lat = (float(part) for part in match.groups())
+    except ValueError:
+        return None
+    if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+        return None
+    return lat, lon
+
+
+def _street_context(street_id: str, street: str, town: str) -> str:
+    now = time.monotonic()
+    with _STREET_LOCK:
+        for key, item in list(_STREET_CONTEXTS.items()):
+            if item[0] < now:
+                del _STREET_CONTEXTS[key]
+        # Hard bound memory even if the browser constantly requests new GPS fixes.
+        if len(_STREET_CONTEXTS) >= 256:
+            oldest = min(_STREET_CONTEXTS, key=lambda key: _STREET_CONTEXTS[key][0])
+            del _STREET_CONTEXTS[oldest]
+        token = secrets.token_urlsafe(32)
+        _STREET_CONTEXTS[token] = (now + _STREET_CONTEXT_TTL, street_id, street, town)
+    return token
+
+
+def nearby_house_numbers(lat: float, lon: float, *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
+    """Find nearby real BAG addresses and issue an unforgeable street identity."""
+    empty = {'addresses': [], 'street': '', 'town': '', 'street_context': '', 'source': 'PDOK / BAG'}
+    try:
+        nearest = _provider(dependencies, 'http_json')(_PDOK_BASE + 'reverse?' + urlencode({
             'lat': lat, 'lon': lon, 'type': 'adres', 'distance': 250,
-            'rows': 1, 'fl': fields,
+            'rows': 1, 'fl': _PDOK_FIELDS,
         }), timeout=10).get('response', {}).get('docs', [])
         if not nearest:
-            return {'addresses': [], 'street': '', 'source': 'PDOK / BAG'}
+            return empty
         street_id = str(nearest[0].get('openbareruimte_id') or '')
-        if not re.fullmatch(r'\d+', street_id):
-            return {'addresses': [], 'street': '', 'source': 'PDOK / BAG'}
-        docs = _provider(dependencies, 'http_json')(base + 'free?' + urlencode({
+        street = str(nearest[0].get('straatnaam') or '').strip()
+        town = str(nearest[0].get('woonplaatsnaam') or '').strip()
+        if not re.fullmatch(r'\d+', street_id) or not street or not town:
+            return empty
+        docs = _provider(dependencies, 'http_json')(_PDOK_BASE + 'free?' + urlencode({
             'q': '*:*', 'fq': f'type:adres AND openbareruimte_id:{street_id}',
-            'lat': lat, 'lon': lon, 'rows': 10, 'fl': fields,
+            'lat': lat, 'lon': lon, 'rows': 10, 'fl': _PDOK_FIELDS,
         }), timeout=10).get('response', {}).get('docs', [])
         addresses, seen = [], set()
         for doc in docs:
-            if str(doc.get('openbareruimte_id')) != street_id:
+            if (str(doc.get('openbareruimte_id') or '') != street_id
+                    or str(doc.get('straatnaam') or '').strip().casefold() != street.casefold()
+                    or str(doc.get('woonplaatsnaam') or '').strip().casefold() != town.casefold()):
                 continue
-            point = re.fullmatch(r'POINT\(([\d.\-]+) ([\d.\-]+)\)', str(doc.get('centroide_ll') or ''))
-            label = str(doc.get('weergavenaam') or '')
-            if not point or not label or label in seen:
+            point = _bag_coordinates(doc)
+            label = str(doc.get('weergavenaam') or '').strip()
+            if point is None or not label or label in seen:
                 continue
-            lng, latitude = map(float, point.groups())
+            latitude, lng = point
             seen.add(label)
             addresses.append({'address': label, 'house_number': doc.get('huis_nlt') or '',
                               'latitude': latitude, 'longitude': lng,
                               'distance_m': round(_provider(dependencies, 'haversine_m')(lat, lon, latitude, lng))})
         addresses.sort(key=lambda item: item['distance_m'])
-        return {'addresses': addresses[:10], 'street': nearest[0].get('straatnaam') or '', 'source': 'PDOK / BAG'}
+        return {'addresses': addresses[:10], 'street': street, 'town': town,
+                'street_context': _street_context(street_id, street, town), 'source': 'PDOK / BAG'}
     except Exception:
         raise ValueError('Huisnummers konden niet worden opgehaald. Probeer opnieuw of vul het adres handmatig in.') from None
+
+
+def search_street_house_number(context: str, house_number: str, *, dependencies: Mapping[str, Any]) -> dict[str, Any]:
+    """Search BAG only within the server-verified street AND town, never Google."""
+    token = str(context or '').strip()
+    number = str(house_number or '').strip()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{20,100}', token):
+        raise ValueError('Bepaal de huidige locatie opnieuw voordat je een huisnummer zoekt.')
+    if not re.fullmatch(r'[1-9]\d{0,4}(?:\s*(?:[-/]\s*)?[A-Za-z0-9]{1,5})?', number):
+        raise ValueError('Vul een geldig huisnummer in, bijvoorbeeld 7, 7a of 12 bis.')
+    with _STREET_LOCK:
+        identity = _STREET_CONTEXTS.get(token)
+        if not identity or identity[0] < time.monotonic():
+            _STREET_CONTEXTS.pop(token, None)
+            raise ValueError('De herkende straat is verlopen. Gebruik huidige locatie opnieuw.')
+    _, street_id, street, town = identity
+    numeric = re.match(r'\d+', number).group(0)
+    expected = re.sub(r'\s+', '', number).casefold()
+    matches, seen = [], set()
+    # BAG house number is indexed separately from house letter/addition. No 10-nearest cap.
+    for offset in range(0, 1000, 200):
+        data = _provider(dependencies, 'http_json')(_PDOK_BASE + 'free?' + urlencode({
+            'q': '*:*', 'fq': f'type:adres AND openbareruimte_id:{street_id} AND huisnummer:{numeric}',
+            'rows': 200, 'start': offset, 'fl': _PDOK_FIELDS,
+        }), timeout=10).get('response', {})
+        docs = data.get('docs', [])
+        for doc in docs:
+            if (str(doc.get('openbareruimte_id') or '') != street_id
+                    or str(doc.get('straatnaam') or '').strip().casefold() != street.casefold()
+                    or str(doc.get('woonplaatsnaam') or '').strip().casefold() != town.casefold()
+                    or re.sub(r'\s+', '', str(doc.get('huis_nlt') or '')).casefold() != expected):
+                continue
+            point = _bag_coordinates(doc)
+            label = str(doc.get('weergavenaam') or '').strip()
+            if point is None or not label or label in seen:
+                continue
+            seen.add(label)
+            latitude, longitude = point
+            matches.append({'address': label, 'house_number': str(doc.get('huis_nlt') or ''),
+                            'latitude': latitude, 'longitude': longitude})
+        if len(docs) < 200:
+            break
+    else:
+        raise ValueError('Te veel BAG-adressen voor dit nummer. Gebruik de vrije adreszoekfunctie.')
+    return {'addresses': matches[:20], 'street': street, 'town': town, 'source': 'PDOK / BAG'}
 
 
 def cached_report_address(lat: float, lon: float, *, dependencies: Mapping[str, Any]) -> str:
