@@ -18,7 +18,7 @@ const exact={address:'Voorste Land 7, Gieten',latitude:53.0007,longitude:6.7505}
   const browser=await engine.launch({headless:true});
   try{
    for(const viewport of [{name:'iPhone',width:375,height:667},{name:'iPad',width:768,height:1024}]){
-    const ctx=await browser.newContext({viewport,isMobile:true,hasTouch:true,serviceWorkers:'block'});
+    const ctx=await browser.newContext({viewport:{width:viewport.width,height:viewport.height},isMobile:true,hasTouch:true,serviceWorkers:'block'});
     try{
      const page=await ctx.newPage(),errors=[],houseRequests=[],generalSearches=[];
      page.on('pageerror',e=>errors.push(e.message));
@@ -42,6 +42,8 @@ const exact={address:'Voorste Land 7, Gieten',latitude:53.0007,longitude:6.7505}
      await page.waitForFunction(()=>typeof DATA!=='undefined'&&DATA!==null);
      await page.evaluate(()=>{resolveLocation=async()=>({latitude:53,longitude:6.75,accuracy:8});return openTripPoint('start')});
      await page.locator('#tripModal').waitFor({state:'visible'});
+     await page.locator('#physicalTripValue').fill('10000');
+     await page.locator('#physicalConfirmButton').click();
      await page.locator('#tripCurrentLocationButton').click();
      await page.locator('#tripHouseSearchBox').waitFor({state:'visible'});
      assert.equal(await page.locator('#tripHouseLabel').textContent(),'Huisnummer zoeken in Voorste Land, Gieten');
