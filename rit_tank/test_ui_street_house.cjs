@@ -10,9 +10,12 @@ assert.ok(html.includes('id="tripHouseNumber"'));
 assert.ok(html.includes('Andere straat of plaats zoeken'));
 const nodes=new Map(),calls=[],deferred=[];
 function element(){
- return {value:'',innerHTML:'',textContent:'',hidden:false,style:{},children:[],
+ const node={value:'',textContent:'',hidden:false,style:{},children:[],
   classList:{toggle(){},add(){},remove(){}},events:{},addEventListener(type,cb){this.events[type]=cb},
   appendChild(item){this.children.push(item)},focus(){}};
+ Object.defineProperty(node,'innerHTML',{get(){return this._html||''},set(value){this._html=value;if(value==='')this.children=[]}});
+ node.innerHTML='';
+ return node;
 }
 const $=id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id)};
 const gps={address:'Voorste Land 1, Gieten',latitude:53.0,longitude:6.75,distance_m:10};
