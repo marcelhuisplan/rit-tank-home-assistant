@@ -1,5 +1,11 @@
 # Changelog
 
+## 33.17
+
+- Foto's van tankbonnen kunnen optioneel op bonhoeken worden rechtgezet; de originele foto blijft beschikbaar.
+- OCR toont herkende bongegevens ter controle voordat een PDF-bon wordt opgeslagen.
+- Bestaande ritten, kilometerstanden, tankbeurten en PDF-bonnen worden niet automatisch gewijzigd.
+
 ## 33.16
 
 - Enter/Volgende verplaatst de focus in het tankformulier; datum/tijd heeft een aparte Volgende → Liters-knop voor de native iOS-kiezer.

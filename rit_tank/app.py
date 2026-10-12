@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '33.16'
+APP_VERSION = '33.17'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -2661,7 +2661,7 @@ def pwa_manifest() -> bytes:
 
 
 SERVICE_WORKER = f'''const CACHE = "rit-tank-shell-{APP_VERSION}";
-const SHELL = ["./", "manifest.webmanifest", "huisplan-icon-180.png", "huisplan-icon-192.png", "huisplan-icon-512.png", "captur-2014.png", "receipt-archive.js?v={APP_VERSION}"];
+const SHELL = ["./", "manifest.webmanifest", "huisplan-icon-180.png", "huisplan-icon-192.png", "huisplan-icon-512.png", "captur-2014.png", "receipt-scanner.js?v={APP_VERSION}", "receipt-archive.js?v={APP_VERSION}"];
 self.addEventListener("install", event => {{
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 }});
@@ -2680,7 +2680,7 @@ self.addEventListener("fetch", event => {{
     }}).catch(() => caches.match("./")));
     return;
   }}
-  if (url.pathname.endsWith("/receipt-archive.js")) {{
+  if (url.pathname.endsWith("/receipt-scanner.js") || url.pathname.endsWith("/receipt-archive.js")) {{
     event.respondWith(fetch(request).then(response => {{
       if (response.ok) {{
         const copy = response.clone();
@@ -3802,11 +3802,14 @@ async function refreshActiveTripLiveStatus(){if(document.hidden||LIVE_TRIP_REFRE
 setInterval(refreshActiveTripLiveStatus,5000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshVisibleDashboard();refreshActiveTripLiveStatus()}});
 </script>
+<script src="receipt-scanner.js"></script>
 <script src="receipt-archive.js"></script>
 </body></html>'''
 # Refresh the external JS even under a still-active older PWA worker.
 APP_HTML = APP_HTML.replace('<script src="receipt-archive.js"></script>',
                             f'<script src="receipt-archive.js?v={APP_VERSION}"></script>')
+APP_HTML = APP_HTML.replace('<script src="receipt-scanner.js"></script>',
+                            f'<script src="receipt-scanner.js?v={APP_VERSION}"></script>')
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -3950,6 +3953,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/receipt-archive.js':
             data = Path(__file__).with_name('receipt_archive.js').read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/javascript; charset=utf-8')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if path == '/receipt-scanner.js':
+            data = Path(__file__).with_name('receipt_scanner.js').read_bytes()
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript; charset=utf-8')
             self.send_header('Content-Length', str(len(data)))
@@ -4185,12 +4197,18 @@ class Handler(BaseHTTPRequestHandler):
                 with DB_LOCK, db() as con:
                     return json_response(self, receipt_archive.prepare(payload.get('files'), con))
             if path == '/api/receipt-archive/save':
+                reviewed = payload.get('reviewed_fields')
+                if reviewed is not None and payload.get('review_confirmed') is not True:
+                    return json_response(self, {
+                        'error': 'Controleer en bevestig eerst de herkende bongegevens.'
+                    }, 400)
                 with DB_LOCK, db() as con:
                     result = receipt_archive.save(
                         con, DATA_DIR / 'receipt_archive',
                         str(payload.get('pdf_data_url') or ''),
                         str(payload.get('filename') or ''),
-                        payload.get('confirm_duplicate') is True)
+                        payload.get('confirm_duplicate') is True,
+                        reviewed_fields=reviewed)
                 if result.get('confirmation_required'):
                     return json_response(self, {
                         'error': 'Mogelijk dubbele bon. Controleer en bevestig expliciet.',

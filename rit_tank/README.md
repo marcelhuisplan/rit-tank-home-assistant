@@ -1,4 +1,10 @@
-# Rit & Tank 33.16
+# Rit & Tank 33.17
+
+## Slimme boncontrole (33.17)
+
+- Maak een foto en controleer de voorgestelde bonhoeken; perspectiefcorrectie blijft optioneel, zodat de originele foto bruikbaar blijft.
+- Herkende bongegevens worden als voorstel getoond en pas na expliciete controle bevestigd. De bon wordt als PDF gearchiveerd.
+- Bestaande ritten, kilometerstanden, tankbeurten en PDF-bonnen worden niet automatisch gewijzigd.
 
 ## Toetsenbordnavigatie tankformulier (33.16)
 
@@ -102,7 +108,7 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **33.16**.
+- Huidige release: **33.17**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
 - Volgende release: **34.00**.

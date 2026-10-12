@@ -1,6 +1,7 @@
 """Targeted regressions for the PDF-only tankbon archive (33.06)."""
 import base64
 import io
+import json
 import tempfile
 import unittest
 import zipfile
@@ -168,6 +169,115 @@ class ReceiptArchiveTests(unittest.TestCase):
         self.assertEqual(app.rows_events(), original_rows)
         self.assertEqual(len(list((self.root/'receipt_archive').glob('*.pdf'))), 2)
 
+    def test_confirmed_ocr_http_save_is_validated_and_preserves_existing_data(self):
+        app.RECEIPT_DIR.mkdir()
+        historical_receipt = app.RECEIPT_DIR / 'fuel_1.jpg'
+        historical_receipt.write_bytes(b'synthetic historical receipt')
+        with app.db() as con:
+            con.execute(
+                """INSERT INTO events
+                   (created_at,type,odometer,liters,price_per_liter,station,receipt_path)
+                   VALUES(?, 'fuel', 24763, 30, 1.8, 'Oud', 'fuel_1.jpg')""",
+                ('2026-10-04T10:00:00+02:00',))
+            con.execute(
+                """INSERT INTO events(created_at,type,odometer)
+                   VALUES(?, 'odometer', 24763)""",
+                ('2026-10-04T10:01:00+02:00',))
+            con.execute(
+                """INSERT INTO business_trips(started_at,ended_at,status,purpose,client)
+                   VALUES(?, ?, 'completed', 'Zakelijk', 'Testklant')""",
+                ('2026-10-04T09:00:00+02:00', '2026-10-04T09:30:00+02:00'))
+
+        def preserved_rows():
+            with app.db() as con:
+                return {
+                    table: [tuple(row) for row in con.execute(
+                        f'SELECT * FROM {table} ORDER BY id')]
+                    for table in ('events', 'business_trips', 'trip_stops')
+                }
+
+        original_rows = preserved_rows()
+        original_receipt = historical_receipt.read_bytes()
+        ocr_text = (
+            'Shop\nKlik Services BV, ARGOS\n'
+            'Reggesingel 40, 7461 AK Rijssen\n'
+            'Brandstofleverancier\nVaro Energy Retail BV\n'
+            'Wilhelminakade 919, 3072 AP Rotterdam\n'
+            'KLANTENBON\n*95 Ongelood\n'
+            '(POMP 4; 24.70 l * € 2.429/l)\n'
+            'TOTAAL € 60.00\nBTW 21% € 10.41\n'
+            '10-10-2026 11:22:59')
+        with patch.object(archive, '_ocr', return_value=ocr_text):
+            prepared = Request(
+                '/api/receipt-archive/prepare',
+                {'files': [{'data_url': self.image_data()}]})
+            prepared.do_POST()
+
+        self.assertEqual(prepared.status, 200, prepared.wfile.getvalue())
+        result = prepared.json()
+        self.assertIn('_Rijssen_', result['suggested_filename'])
+        self.assertNotIn('Rotterdam', result['suggested_filename'])
+        self.assertEqual(result['recognized_details']['place'], 'Rijssen')
+        self.assertEqual(preserved_rows(), original_rows)
+
+        reviewed_fields = {
+            'station': 'Argos',
+            'place': 'Rijssen',
+            'address': 'Reggesingel 40, 7461 AK Rijssen',
+            'postcode': '7461 AK',
+            'date': '2026-10-10',
+            'fuel_type': '95 ongelood',
+            'pump': '4',
+            'liters': '24,70',
+            'price_per_liter': '2,500',
+            'total': '60,00',
+            'vat_rate': '21%',
+            'vat_amount': '10,41',
+        }
+        payload = {
+            'pdf_data_url': result['pdf_data_url'],
+            'filename': '2026-10-10_Argos_Rijssen_gewijzigd.pdf',
+            'reviewed_fields': reviewed_fields,
+        }
+
+        unconfirmed = Request('/api/receipt-archive/save', payload)
+        unconfirmed.do_POST()
+        self.assertEqual(unconfirmed.status, 400)
+        self.assertIn('bevestig', unconfirmed.json()['error'].lower())
+        self.assertEqual(preserved_rows(), original_rows)
+        self.assertFalse((self.root / 'receipt_archive').exists())
+
+        invalid_fields = dict(payload, review_confirmed=True)
+        invalid_fields['reviewed_fields'] = dict(reviewed_fields, liters='24,7')
+        invalid = Request('/api/receipt-archive/save', invalid_fields)
+        invalid.do_POST()
+        self.assertEqual(invalid.status, 400)
+        self.assertIn('liters', invalid.json()['error'])
+        self.assertEqual(preserved_rows(), original_rows)
+        self.assertFalse((self.root / 'receipt_archive').exists())
+
+        confirmed = Request(
+            '/api/receipt-archive/save',
+            dict(payload, review_confirmed=True))
+        with patch.object(archive, 'pdf_details', return_value=(1, '')):
+            confirmed.do_POST()
+        self.assertEqual(confirmed.status, 201, confirmed.wfile.getvalue())
+        receipt_id = confirmed.json()['id']
+
+        with app.db() as con:
+            row = con.execute(
+                """SELECT a.filename, r.fields_json
+                   FROM receipt_archive AS a
+                   JOIN receipt_archive_review AS r ON r.receipt_id = a.id
+                   WHERE a.id = ?""",
+                (receipt_id,)).fetchone()
+        self.assertEqual(row['filename'], payload['filename'])
+        self.assertEqual(json.loads(row['fields_json']), reviewed_fields)
+        self.assertEqual(preserved_rows(), original_rows)
+        self.assertEqual(historical_receipt.read_bytes(), original_receipt)
+        self.assertEqual(
+            len(list((self.root / 'receipt_archive').glob('*.pdf'))), 1)
+
     def test_existing_image_receipts_remain_available_and_in_zip(self):
         app.RECEIPT_DIR.mkdir()
         (app.RECEIPT_DIR/'fuel_1.jpg').write_bytes(b'original')
@@ -230,11 +340,18 @@ class ReceiptArchiveTests(unittest.TestCase):
         self.assertEqual(post.status, 426)
 
     def test_ui_has_archive_and_no_auto_fuel_scanning(self):
-        self.assertEqual(app.APP_VERSION, '33.16')
+        self.assertEqual(app.APP_VERSION, '33.17')
         self.assertIn('onclick="openReceiptArchive()"', app.APP_HTML)
         self.assertIn('receipt-archive.js', app.APP_HTML)
         self.assertNotIn('receipt_data_url=await readReceiptFile()', app.APP_HTML)
         self.assertNotIn('scanSelectedReceipt', app.APP_HTML)
+        archive_ui = (Path(archive.__file__).with_name('receipt_archive.js')
+                      .read_text(encoding='utf-8'))
+        self.assertIn(
+            '<input id="archiveFilename" maxlength="200">', archive_ui)
+        self.assertIn(
+            "filename:document.getElementById('archiveFilename').value",
+            archive_ui)
 
 
 if __name__ == '__main__':

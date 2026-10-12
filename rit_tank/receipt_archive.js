@@ -3,6 +3,11 @@
 let ARCHIVE_PDF = null;
 let ARCHIVE_ROWS = [];
 let ARCHIVE_BUSY = false;
+let ARCHIVE_CAMERA_FILE = null;
+let ARCHIVE_CAMERA_SOURCE = null;
+let ARCHIVE_CAMERA_EDITOR = null;
+let ARCHIVE_CAMERA_STRAIGHTENED = null;
+let ARCHIVE_PREPARE_SEQUENCE = 0;
 
 function mountReceiptArchive() {
   const style = document.createElement('style');
@@ -15,6 +20,8 @@ function mountReceiptArchive() {
     #receiptArchiveModal .archive-name small { display:block; }
     #receiptArchiveModal .archive-links { display:flex; flex-wrap:wrap; gap:6px; }
     #receiptArchiveModal .archive-links a { font-size:12px; padding:9px; min-height:40px; }
+    #receiptArchiveModal .camera-review { display:grid; gap:10px; margin:15px 0; }
+    #receiptArchiveModal .camera-review-actions { display:flex; flex-wrap:wrap; gap:8px; }
     #archiveDuplicate { color:#ffd38d; }
   `;
   document.head.appendChild(style);
@@ -33,10 +40,22 @@ function mountReceiptArchive() {
         <label class="scan-card" for="archiveFiles">📁 <b>Foto’s of PDF uploaden</b></label>
         <input class="archive-files" id="archiveFiles" type="file" accept="image/*,.heic,.heif,application/pdf" multiple>
       </div>
+      <section id="archiveCameraReview" class="camera-review" hidden>
+        <h3>Controleer de bonhoeken</h3>
+        <div id="archiveCameraPreview"></div>
+        <div class="camera-review-actions">
+          <button id="archiveStraighten" type="button">Bon rechtzetten</button>
+          <button id="archiveUseStraightened" class="save" type="button" disabled>Deze bon gebruiken</button>
+          <button id="archiveUseOriginal" type="button">Originele foto gebruiken</button>
+          <button id="archiveCancelCamera" type="button">Annuleren</button>
+        </div>
+      </section>
       <p id="archiveStatus" role="status" aria-live="polite"></p>
       <section id="archiveDraft" hidden>
         <h3>Controleer de voorgestelde bestandsnaam</h3>
         <p id="archiveRecognized" class="assistant-note"></p>
+        <div id="archiveDetails" class="assistant-note"
+             style="white-space:pre-line;line-height:1.8"></div>
         <div class="field"><label for="archiveFilename">PDF-bestandsnaam (aanpasbaar)</label><input id="archiveFilename" maxlength="200"></div>
         <p id="archiveDuplicate" role="alert" hidden>⚠️ Mogelijk dubbele bon. Controleer de bestaande bonnen.</p>
         <label id="archiveConfirmLabel" hidden><input id="archiveConfirm" type="checkbox"> Ik heb dit gecontroleerd en wil deze bon toch opslaan.</label>
@@ -48,9 +67,163 @@ function mountReceiptArchive() {
       <div id="archiveList" class="known-list" aria-live="polite"></div>
     </div>`;
   document.body.appendChild(modal);
-  document.getElementById('archiveCamera').addEventListener('change', e => prepareArchiveReceipt(e.target.files));
-  document.getElementById('archiveFiles').addEventListener('change', e => prepareArchiveReceipt(e.target.files));
+  document.getElementById('archiveCamera').addEventListener('change', e => startArchiveCameraReview(e.target.files));
+  document.getElementById('archiveFiles').addEventListener('change', e => {
+    cancelArchiveCamera();
+    prepareArchiveReceipt(e.target.files);
+  });
+  document.getElementById('archiveStraighten').addEventListener('click', straightenArchiveCamera);
+  document.getElementById('archiveUseStraightened').addEventListener('click', useStraightenedArchiveCamera);
+  document.getElementById('archiveUseOriginal').addEventListener('click', useOriginalArchiveCamera);
+  document.getElementById('archiveCancelCamera').addEventListener('click', cancelArchiveCamera);
   document.getElementById('archiveSearch').addEventListener('input', renderArchiveRows);
+}
+
+function loadArchiveCameraCanvas(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const scale = Math.min(1, 2400 / Math.max(image.naturalWidth, image.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('De foto kan niet worden geopend.');
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        resolve(canvas);
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        reject(error);
+      }
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('De iPhone kan deze foto niet verwerken. Exporteer hem eerst als JPEG.'));
+    };
+    image.src = url;
+  });
+}
+
+async function startArchiveCameraReview(selection) {
+  const file = Array.from(selection || [])[0];
+  if (!file) return;
+  const input = document.getElementById('archiveCamera');
+  input.value = '';
+  cancelArchiveCamera();
+  const requestSequence = cancelArchiveCamera.sequence;
+  const status = document.getElementById('archiveStatus');
+  if (file.size > 12*1024*1024) {
+    status.textContent = 'Bestand groter dan 12 MB.';
+    return;
+  }
+  status.textContent = 'Foto voorbereiden…';
+  try {
+    if (!window.RitReceiptScanner) throw new Error('Bonscanner niet geladen. Vernieuw de app en probeer opnieuw.');
+    const loadedCanvas = await loadArchiveCameraCanvas(file);
+    if (cancelArchiveCamera.sequence !== requestSequence) return;
+    ARCHIVE_CAMERA_SOURCE = loadedCanvas;
+    ARCHIVE_CAMERA_FILE = file;
+    ARCHIVE_CAMERA_EDITOR = window.RitReceiptScanner.createCornerEditor(
+      ARCHIVE_CAMERA_SOURCE,
+      document.getElementById('archiveCameraPreview')
+    );
+    document.getElementById('archiveUseStraightened').disabled = true;
+    document.getElementById('archiveCameraReview').hidden = false;
+    status.textContent = 'Versleep de mintgroene hoeken naar de randen van de bon.';
+  } catch (error) {
+    if (cancelArchiveCamera.sequence !== requestSequence) return;
+    cancelArchiveCamera();
+    status.textContent = error.message;
+  }
+}
+
+function straightenArchiveCamera() {
+  try {
+    if (!ARCHIVE_CAMERA_SOURCE || !ARCHIVE_CAMERA_EDITOR) {
+      throw new Error('Maak eerst een foto van de bon.');
+    }
+    ARCHIVE_CAMERA_STRAIGHTENED = window.RitReceiptScanner.straightenReceipt(
+      ARCHIVE_CAMERA_SOURCE,
+      ARCHIVE_CAMERA_EDITOR.getCorners()
+    );
+    const preview = document.getElementById('archiveCameraPreview');
+    preview.replaceChildren(ARCHIVE_CAMERA_STRAIGHTENED);
+    ARCHIVE_CAMERA_STRAIGHTENED.style.width = '100%';
+    ARCHIVE_CAMERA_STRAIGHTENED.style.height = 'auto';
+    ARCHIVE_CAMERA_STRAIGHTENED.style.display = 'block';
+    document.getElementById('archiveUseStraightened').disabled = false;
+    document.getElementById('archiveStatus').textContent = 'Bon rechtgezet. Gebruik de gecorrigeerde afbeelding of kies de originele foto.';
+  } catch (error) {
+    document.getElementById('archiveStatus').textContent = error.message;
+  }
+}
+
+function archiveCameraCanvasFile(canvas, originalFile) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (!blob) {
+        reject(new Error('De gecorrigeerde foto kan niet worden opgeslagen.'));
+        return;
+      }
+      const name = originalFile.name.replace(/\.[^.]*$/, '') + '.jpg';
+      resolve(new File([blob], name, {type:'image/jpeg', lastModified:Date.now()}));
+    }, 'image/jpeg', 0.94);
+  });
+}
+
+async function useStraightenedArchiveCamera() {
+  if (!ARCHIVE_CAMERA_STRAIGHTENED || !ARCHIVE_CAMERA_FILE) return;
+  const requestSequence = cancelArchiveCamera.sequence;
+  try {
+    const file = await archiveCameraCanvasFile(
+      ARCHIVE_CAMERA_STRAIGHTENED,
+      ARCHIVE_CAMERA_FILE
+    );
+    if (cancelArchiveCamera.sequence !== requestSequence) return;
+    cancelArchiveCamera();
+    await prepareArchiveReceipt([file]);
+  } catch (error) {
+    if (cancelArchiveCamera.sequence === requestSequence) {
+      document.getElementById('archiveStatus').textContent = error.message;
+    }
+  }
+}
+
+async function useOriginalArchiveCamera() {
+  if (!ARCHIVE_CAMERA_FILE) return;
+  const file = ARCHIVE_CAMERA_FILE;
+  cancelArchiveCamera();
+  await prepareArchiveReceipt([file]);
+}
+
+function cancelArchiveCamera() {
+  cancelArchiveCamera.sequence = (cancelArchiveCamera.sequence || 0) + 1;
+  ARCHIVE_PREPARE_SEQUENCE += 1;
+  ARCHIVE_BUSY = false;
+  ARCHIVE_PDF = null;
+  const draft = document.getElementById('archiveDraft');
+  if (draft) draft.hidden = true;
+  const status = document.getElementById('archiveStatus');
+  if (status) status.textContent = '';
+  const filename = document.getElementById('archiveFilename');
+  if (filename) filename.value = '';
+  const recognized = document.getElementById('archiveRecognized');
+  if (recognized) recognized.textContent = '';
+  const details = document.getElementById('archiveDetails');
+  if (details) details.replaceChildren();
+  ARCHIVE_CAMERA_FILE = null;
+  ARCHIVE_CAMERA_SOURCE = null;
+  ARCHIVE_CAMERA_EDITOR = null;
+  ARCHIVE_CAMERA_STRAIGHTENED = null;
+  const review = document.getElementById('archiveCameraReview');
+  if (review) review.hidden = true;
+  const preview = document.getElementById('archiveCameraPreview');
+  if (preview) preview.replaceChildren();
 }
 
 async function openReceiptArchive() {
@@ -61,6 +234,7 @@ async function openReceiptArchive() {
   document.getElementById('archiveStatus').textContent = '';
   document.getElementById('archiveCamera').value = '';
   document.getElementById('archiveFiles').value = '';
+  cancelArchiveCamera();
   document.getElementById('archiveSearch').value = '';
   await refreshArchiveRows();
 }
@@ -156,6 +330,7 @@ async function prepareArchiveReceipt(selection) {
   if (ARCHIVE_BUSY) return;
   const files = Array.from(selection || []);
   if (!files.length) return;
+  const requestSequence = ++ARCHIVE_PREPARE_SEQUENCE;
   const status = document.getElementById('archiveStatus');
   const draft = document.getElementById('archiveDraft');
   draft.hidden = true;
@@ -172,16 +347,92 @@ async function prepareArchiveReceipt(selection) {
       if (file.size > 12*1024*1024) throw new Error('Bestand groter dan 12 MB.');
       const pdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
       upload.push({data_url: pdf ? await fileDataUrl(file) : await imageAsJpeg(file)});
+      if (ARCHIVE_PREPARE_SEQUENCE !== requestSequence) return;
     }
     const result = await api('api/receipt-archive/prepare', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({files:upload})
     });
+    if (ARCHIVE_PREPARE_SEQUENCE !== requestSequence) return;
     ARCHIVE_PDF = result.pdf_data_url;
     document.getElementById('archiveFilename').value = result.suggested_filename;
     const x = result.recognized || {};
     const labels = [['Datum', x.date], ['Tankstation', x.station], ['Plaats', x.place], ['Totaalbedrag', x.total]];
     document.getElementById('archiveRecognized').textContent = labels.map(([key,val]) => key+': '+(val || 'niet herkend')).join(' · ');
+    const details = result.recognized_details || {};
+    const fields = [
+      ['Tankstation', 'station'],
+      ['Plaats', 'place'],
+      ['Adres', 'address'],
+      ['Datum', 'date'],
+      ['Tijd', 'time'],
+      ['Brandstof', 'fuel_type'],
+      ['Pomp', 'pump'],
+      ['Liters', 'liters'],
+      ['Prijs per liter', 'price_per_liter'],
+      ['Totaal', 'total'],
+      ['Btw-percentage', 'vat_rate'],
+      ['Btw-bedrag', 'vat_amount']
+    ];
+
+    const parent = document.getElementById('archiveDetails');
+    parent.replaceChildren();
+
+    const heading = document.createElement('h3');
+    heading.textContent = 'Controleer de herkende bongegevens';
+    parent.append(heading);
+
+    for (const [label, key] of fields) {
+      const wrap = document.createElement('div');
+      wrap.className = 'field';
+
+      const title = document.createElement('label');
+      title.htmlFor = 'review-' + key;
+      title.textContent = label;
+
+      const input = document.createElement('input');
+      input.id = 'review-' + key;
+      input.dataset.reviewKey = key;
+      input.value = details[key] || '';
+      input.maxLength = 150;
+      input.autocomplete = 'off';
+
+      if (['liters', 'price_per_liter', 'total',
+           'vat_amount'].includes(key)) {
+        input.inputMode = 'decimal';
+      }
+
+      const fieldStatus = details.status?.[key];
+      if (fieldStatus && fieldStatus !== 'herkend') {
+        const note = document.createElement('small');
+        note.textContent = 'Controle vereist: ' + fieldStatus;
+        wrap.append(title, input, note);
+      } else {
+        wrap.append(title, input);
+      }
+      parent.append(wrap);
+    }
+
+    if ((details.warnings || []).length) {
+      const warning = document.createElement('p');
+      warning.setAttribute('role', 'alert');
+      warning.textContent = details.warnings.join(' · ');
+      parent.append(warning);
+    }
+
+    const reviewLabel = document.createElement('label');
+    const reviewCheck = document.createElement('input');
+    reviewCheck.type = 'checkbox';
+    reviewCheck.id = 'archiveReviewConfirm';
+    reviewCheck.checked = false;
+    reviewLabel.append(
+      reviewCheck,
+      document.createTextNode(
+        ' Ik heb de bongegevens gecontroleerd en wil ze bij de PDF bewaren.'
+      )
+    );
+    parent.append(reviewLabel);
+
     const duplicate = (result.duplicates || []).length > 0;
     document.getElementById('archiveDuplicate').hidden = !duplicate;
     document.getElementById('archiveConfirmLabel').hidden = !duplicate;
@@ -189,11 +440,15 @@ async function prepareArchiveReceipt(selection) {
     draft.hidden = false;
     status.textContent = 'PDF gereed. Pas ontbrekende of onjuiste gegevens in de bestandsnaam zelf aan.';
   } catch(e) {
-    status.textContent = e.message;
+    if (ARCHIVE_PREPARE_SEQUENCE === requestSequence) {
+      status.textContent = e.message;
+    }
   } finally {
-    ARCHIVE_BUSY = false;
-    document.getElementById('archiveCamera').value = '';
-    document.getElementById('archiveFiles').value = '';
+    if (ARCHIVE_PREPARE_SEQUENCE === requestSequence) {
+      ARCHIVE_BUSY = false;
+      document.getElementById('archiveCamera').value = '';
+      document.getElementById('archiveFiles').value = '';
+    }
   }
 }
 
@@ -208,11 +463,26 @@ async function saveArchiveReceipt() {
   ARCHIVE_BUSY = true;
   document.getElementById('archiveSave').disabled = true;
   try {
+    const reviewChecked =
+      document.getElementById('archiveReviewConfirm')?.checked === true;
+    const reviewedFields = {};
+    if (reviewChecked) {
+      document.querySelectorAll(
+        '#archiveDetails input[data-review-key]'
+      ).forEach(input => {
+        reviewedFields[input.dataset.reviewKey] = input.value.trim();
+      });
+    }
+
     const result = await api('api/receipt-archive/save', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({pdf_data_url:ARCHIVE_PDF,
                            filename:document.getElementById('archiveFilename').value,
-                           confirm_duplicate:confirm})
+                           confirm_duplicate:confirm,
+                           ...(reviewChecked ? {
+                             reviewed_fields:reviewedFields,
+                             review_confirmed:true
+                           } : {})})
     });
     ARCHIVE_PDF = null;
     document.getElementById('archiveDraft').hidden = true;

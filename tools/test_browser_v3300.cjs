@@ -28,6 +28,38 @@ const completed={ok:true,trip:{id:8,status:'completed',km:41,business_km:41,stop
  {odometer:25271,location_address:HOME,location_label:HOME,date_label:'7 oktober 2026',time_label:'10:00'}
 ]}};
 const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6,relative_difference:4.6/41,start_odometer:25230,end_odometer:25271,gps_incomplete:false};
+async function waitForTripSheetScrollSettled(page){
+  await page.waitForFunction(async()=>{
+    const sheet=document.querySelector('#tripModal .sheet');
+    const started=performance.now();
+    let last=sheet.scrollTop,stableSince=started;
+    while(performance.now()-started<3000){
+      await new Promise(requestAnimationFrame);
+      const current=sheet.scrollTop,now=performance.now();
+      if(Math.abs(current-last)>=0.5)stableSince=now;
+      last=current;
+      if(now-started>=700&&now-stableSince>=250)return true;
+    }
+    return false;
+  },null,{timeout:5000});
+}
+async function waitForTripSheetAtBottom(page){
+  await page.waitForFunction(async()=>{
+    const sheet=document.querySelector('#tripModal .sheet');
+    let previous=null,stableFrames=0;
+    for(let frame=0;frame<60;frame++){
+      await new Promise(requestAnimationFrame);
+      const current={top:sheet.scrollTop,height:sheet.scrollHeight,client:sheet.clientHeight};
+      const atBottom=current.top+current.client>=current.height-1;
+      const stable=previous&&Math.abs(current.top-previous.top)<0.5&&
+        current.height===previous.height&&current.client===previous.client;
+      stableFrames=atBottom&&stable?stableFrames+1:0;
+      if(stableFrames>=15)return true;
+      previous=current;
+    }
+    return false;
+  },null,{timeout:5000});
+}
 (async()=>{
  fs.mkdirSync(output,{recursive:true});
  for(const [engine,type] of Object.entries({chromium,webkit})){
@@ -58,6 +90,11 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
       if(frame===page.mainFrame())trace('navigation',{url:frame.url()});
     });
     await page.addInitScript(({top,bottom})=>{
+      const nativeSetInterval=window.setInterval;
+      window.setInterval=function(callback,delay,...args){
+        if(delay===2000&&callback?.name==='checkStopPrompt')return 0;
+        return nativeSetInterval.call(this,callback,delay,...args);
+      };
       addEventListener('DOMContentLoaded',()=>{
         const modal=document.getElementById('tripModal');
         if(modal){modal.style.setProperty('--trip-safe-top',top+'px');modal.style.setProperty('--trip-safe-bottom',bottom+'px')}
@@ -65,6 +102,7 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
     },{top:safeTop,bottom:safeBottom});
     page.on('pageerror',e=>{
       errors.push(e.message);
+      console.error('33.00 pageerror stack',engine,device,e.stack);
       trace('pageerror',{message:e.message,document:page.url()});
     });
     await page.route('**/*',async route=>{
@@ -194,13 +232,11 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
         await page.waitForFunction(()=>typeof DATA!=='undefined');
         await page.evaluate(mode=>openTripPoint(mode),mode);
         await page.locator('#tripModal').waitFor({state:'visible'});
-        // Allow the existing delayed initial input scroll to finish before choosing an extreme.
-        await page.waitForTimeout(150);
+        // Wait for the delayed initial input scroll to settle before choosing an extreme.
+        await waitForTripSheetScrollSettled(page);
         await page.locator('#tripModal .sheet').evaluate((el,bottom)=>{el.scrollTop=bottom?el.scrollHeight:0},atBottom);
-        await page.waitForFunction(bottom=>{
-          const el=document.querySelector('#tripModal .sheet');
-          return bottom?el.scrollTop+el.clientHeight>=el.scrollHeight-1:el.scrollTop<=1;
-        },atBottom,{timeout:5000});
+        if(atBottom)await waitForTripSheetAtBottom(page);
+        else await page.waitForFunction(()=>document.querySelector('#tripModal .sheet').scrollTop<=1,null,{timeout:5000});
         const close=page.getByRole('button',{name:'Sluiten',exact:true});
         assert.equal(await close.isVisible(),true);
         const m=await close.evaluate(el=>{
@@ -358,6 +394,7 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
     await page.waitForFunction(()=>typeof DATA!=='undefined'&&DATA?.business?.active_trip);
     await page.evaluate(()=>openTripPoint('stop'));
     await page.waitForFunction(()=>document.getElementById('physicalTripValue').value.length>0);
+    await waitForTripSheetScrollSettled(page);
     assert.equal(await page.locator('#tripSaveButton').textContent(),'Locatie opslaan');
     const closeMetrics=await page.locator('#tripModal .close').evaluate(el=>{
       const r=el.getBoundingClientRect(),s=el.closest('.sheet').getBoundingClientRect();
@@ -371,11 +408,10 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
       engine+' '+device+' close inside viewport');
 
     // Release 33.02 regression: at the very bottom, the Tussenstop close bar stays sticky and clickable.
-    await page.locator('#tripModal .sheet').evaluate(el=>{el.scrollTop=el.scrollHeight});
-    await page.waitForFunction(()=>{
-      const sheet=document.querySelector('#tripModal .sheet');
-      return sheet.scrollTop+sheet.clientHeight>=sheet.scrollHeight-1;
-    },null,{timeout:5000});
+    await page.locator('#tripModal .sheet').evaluate(el=>{
+      el.scrollTo({top:el.scrollHeight,behavior:'instant'});
+    });
+    await waitForTripSheetAtBottom(page);
     const stickyClose=await page.locator('#tripModal .close').evaluate(el=>{
       const r=el.getBoundingClientRect(),sheet=el.closest('.sheet'),head=el.closest('.sheethead');
       const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
@@ -393,6 +429,7 @@ const discrepancy={significant:true,gps_km:36.4,odometer_km:41,difference_km:4.6
     await page.locator('#tripModal').waitFor({state:'hidden'});
     await page.evaluate(()=>openTripPoint('stop'));
     await page.waitForFunction(()=>document.getElementById('physicalTripValue').value.length>0);
+    await waitForTripSheetScrollSettled(page);
     await page.locator('#physicalGpsDetails summary').click();
     await page.locator('#physicalGpsDetails').scrollIntoViewIfNeeded();
     const stopSpacing=await page.evaluate(()=>{
