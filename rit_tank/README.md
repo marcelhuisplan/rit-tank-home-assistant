@@ -1,4 +1,4 @@
-# Rit & Tank 34.00
+# Rit & Tank 34.01
 
 ## Slimme boncontrole (33.17)
 
@@ -6,7 +6,7 @@
 - Herkende bongegevens worden als voorstel getoond en pas na expliciete controle bevestigd. De bon wordt als PDF gearchiveerd.
 - Bestaande ritten, kilometerstanden, tankbeurten en PDF-bonnen worden niet automatisch gewijzigd.
 
-## Verbeteringen in 34.00
+## Verbeteringen in 34.01
 
 - Tankbeurt: **Datum & tijd** staat als laatste stap, na kilometerstand, liters, literprijs, tankstation en notitie. De datum/tijd staat standaard op nu; opslaan blijft een afzonderlijke bewuste handeling.
 - Tussenstop: **📍 Gebruik huidige locatie** toont BAG-adressen bij de GPS-locatie. Staat het huisnummer er niet bij, typ dan alleen het huisnummer (bijvoorbeeld `7` of `7a`); de resultaten blijven beperkt tot de herkende straat en woonplaats. Selecteer het adres expliciet en bevestig de tussenstop met **Opslaan**. Bij onherkenbare GPS-straat of voor een andere straat/plaats gebruik je **Andere straat of plaats zoeken**.
@@ -114,7 +114,7 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **34.00**.
+- Huidige release: **34.01**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
 - Volgende release: **nog niet vastgesteld**.
