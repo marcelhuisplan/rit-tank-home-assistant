@@ -1,9 +1,15 @@
-# Rit & Tank 33.17
+# Rit & Tank 34.00
+
+## Verbeteringen in 34.00
+
+- Tankbeurt: **Datum & tijd** staat als laatste stap, na kilometerstand, liters, literprijs, tankstation en notitie. De datum/tijd staat standaard op nu; opslaan blijft een afzonderlijke bewuste handeling.
+- Tussenstop: **📍 Gebruik huidige locatie** toont BAG-adressen bij de GPS-locatie. Staat het huisnummer er niet bij, typ dan alleen het huisnummer (bijvoorbeeld `7` of `7a`); de resultaten blijven beperkt tot de herkende straat en woonplaats. Selecteer het adres expliciet en bevestig de tussenstop met **Opslaan**. Bij onherkenbare GPS-straat of voor een andere straat/plaats gebruik je **Andere straat of plaats zoeken**.
+- De huisnummerzoekcontext verloopt automatisch; een nieuwe GPS- of adreszoekactie maakt oude resultaten ongeldig. Bestaande ritten, tankbeurten, kilometerstanden en bonnen worden niet automatisch aangepast.
 
 ## Toetsenbordnavigatie tankformulier (33.16)
 
-- **Volgende** op het iPhone-/iPad-toetsenbord: kilometerstand → datum/tijd → liters → literprijs → tankstation → notitie.
-- Bij het native datum/tijdveld staat ook **Volgende → Liters**, omdat iOS daar niet altijd een toetsenbord-Volgende biedt.
+- **Volgende** op het iPhone-/iPad-toetsenbord: kilometerstand → liters → literprijs → tankstation → notitie → datum/tijd.
+- Datum & tijd is de laatste stap; opslaan gebeurt uitsluitend met de aparte knop **Tankbeurt opslaan**.
 - **Gereed** in het notitieveld sluit het toetsenbord. Zonder notitie kun je direct **Tankbeurt opslaan** kiezen.
 - Scrollcorrecties vinden alleen plaats als het volgende veld buiten het zichtbare scherm raakt. De automatische komma, ritten, bonnen en kilometerconflictcontrole blijven ongewijzigd.
 
