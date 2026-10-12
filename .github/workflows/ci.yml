@@ -85,6 +85,7 @@ jobs:
           node tools/test_browser_v3317_corners.cjs
           node tools/test_browser_v3317_straighten.cjs
           node tools/test_browser_v3317_review.cjs
+          node tools/test_browser_v3317_cancel.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -90,7 +90,10 @@ TO TAAL € 6 3 . 8 0"""
 
         result = self.prepare_text(text)
 
-        self.assertEqual(result["recognized_details"]["place"], "")
+        self.assertEqual(result["recognized_details"]["place"], "Maarsbergen")
+        self.assertEqual(
+            result["recognized_details"]["status"]["place"], "herkend"
+        )
         self.assertEqual(result["recognized"]["place"], "Maarsbergen")
         self.assertEqual(
             result["suggested_filename"],

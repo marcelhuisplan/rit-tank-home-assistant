@@ -7,6 +7,7 @@ let ARCHIVE_CAMERA_FILE = null;
 let ARCHIVE_CAMERA_SOURCE = null;
 let ARCHIVE_CAMERA_EDITOR = null;
 let ARCHIVE_CAMERA_STRAIGHTENED = null;
+let ARCHIVE_PREPARE_SEQUENCE = 0;
 
 function mountReceiptArchive() {
   const style = document.createElement('style');
@@ -177,15 +178,19 @@ function archiveCameraCanvasFile(canvas, originalFile) {
 
 async function useStraightenedArchiveCamera() {
   if (!ARCHIVE_CAMERA_STRAIGHTENED || !ARCHIVE_CAMERA_FILE) return;
+  const requestSequence = cancelArchiveCamera.sequence;
   try {
     const file = await archiveCameraCanvasFile(
       ARCHIVE_CAMERA_STRAIGHTENED,
       ARCHIVE_CAMERA_FILE
     );
+    if (cancelArchiveCamera.sequence !== requestSequence) return;
     cancelArchiveCamera();
     await prepareArchiveReceipt([file]);
   } catch (error) {
-    document.getElementById('archiveStatus').textContent = error.message;
+    if (cancelArchiveCamera.sequence === requestSequence) {
+      document.getElementById('archiveStatus').textContent = error.message;
+    }
   }
 }
 
@@ -198,6 +203,19 @@ async function useOriginalArchiveCamera() {
 
 function cancelArchiveCamera() {
   cancelArchiveCamera.sequence = (cancelArchiveCamera.sequence || 0) + 1;
+  ARCHIVE_PREPARE_SEQUENCE += 1;
+  ARCHIVE_BUSY = false;
+  ARCHIVE_PDF = null;
+  const draft = document.getElementById('archiveDraft');
+  if (draft) draft.hidden = true;
+  const status = document.getElementById('archiveStatus');
+  if (status) status.textContent = '';
+  const filename = document.getElementById('archiveFilename');
+  if (filename) filename.value = '';
+  const recognized = document.getElementById('archiveRecognized');
+  if (recognized) recognized.textContent = '';
+  const details = document.getElementById('archiveDetails');
+  if (details) details.replaceChildren();
   ARCHIVE_CAMERA_FILE = null;
   ARCHIVE_CAMERA_SOURCE = null;
   ARCHIVE_CAMERA_EDITOR = null;
@@ -312,6 +330,7 @@ async function prepareArchiveReceipt(selection) {
   if (ARCHIVE_BUSY) return;
   const files = Array.from(selection || []);
   if (!files.length) return;
+  const requestSequence = ++ARCHIVE_PREPARE_SEQUENCE;
   const status = document.getElementById('archiveStatus');
   const draft = document.getElementById('archiveDraft');
   draft.hidden = true;
@@ -328,11 +347,13 @@ async function prepareArchiveReceipt(selection) {
       if (file.size > 12*1024*1024) throw new Error('Bestand groter dan 12 MB.');
       const pdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
       upload.push({data_url: pdf ? await fileDataUrl(file) : await imageAsJpeg(file)});
+      if (ARCHIVE_PREPARE_SEQUENCE !== requestSequence) return;
     }
     const result = await api('api/receipt-archive/prepare', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({files:upload})
     });
+    if (ARCHIVE_PREPARE_SEQUENCE !== requestSequence) return;
     ARCHIVE_PDF = result.pdf_data_url;
     document.getElementById('archiveFilename').value = result.suggested_filename;
     const x = result.recognized || {};
@@ -419,11 +440,15 @@ async function prepareArchiveReceipt(selection) {
     draft.hidden = false;
     status.textContent = 'PDF gereed. Pas ontbrekende of onjuiste gegevens in de bestandsnaam zelf aan.';
   } catch(e) {
-    status.textContent = e.message;
+    if (ARCHIVE_PREPARE_SEQUENCE === requestSequence) {
+      status.textContent = e.message;
+    }
   } finally {
-    ARCHIVE_BUSY = false;
-    document.getElementById('archiveCamera').value = '';
-    document.getElementById('archiveFiles').value = '';
+    if (ARCHIVE_PREPARE_SEQUENCE === requestSequence) {
+      ARCHIVE_BUSY = false;
+      document.getElementById('archiveCamera').value = '';
+      document.getElementById('archiveFiles').value = '';
+    }
   }
 }
 

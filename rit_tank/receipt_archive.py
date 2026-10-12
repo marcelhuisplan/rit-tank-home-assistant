@@ -259,13 +259,14 @@ def prepare(items: list[dict], con: sqlite3.Connection) -> dict:
         ocr_text, maxsplit=1, flags=re.I
     )[0]
     legacy_place = recognize_filename_fields(location_text)['place']
+    if details['status']['place'] == 'ontbreekt' and legacy_place:
+        details['place'] = legacy_place
+        details['status']['place'] = 'herkend'
     fields['place'] = details['place'] or legacy_place
     name = suggested_filename(fields)
     return {'pdf_data_url': 'data:application/pdf;base64,'+base64.b64encode(pdf).decode('ascii'),
             'suggested_filename': name, 'recognized': fields, 'recognized_details': details,
             'duplicates': duplicates(con, hashlib.sha256(pdf).hexdigest(), name)}
-
-
 def decode_pdf(data_url: str) -> bytes:
     if not str(data_url).startswith('data:application/pdf;base64,'):
         raise ValueError('Er is geen voorbereide PDF ontvangen.')
