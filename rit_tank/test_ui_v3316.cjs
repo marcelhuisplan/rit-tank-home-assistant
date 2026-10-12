@@ -3,7 +3,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs');
 const html=fs.readFileSync(__dirname+'/app.py','utf8');
 const modal=html.slice(html.indexOf('<div class="modal" id="fuelModal">'),html.indexOf('<div class="modal" id="kmModal">'));
-for(const [id,hint] of [['fuelOdo','next'],['fuelLitersInput','next'],['fuelPriceInput','next'],['fuelStation','next'],['fuelNote','done']]){
+for(const [id,hint] of [['fuelOdo','next'],['fuelLitersInput','next'],['fuelPriceInput','next'],['fuelStation','next'],['fuelNote','next']]){
  const el=modal.match(new RegExp('<input id="'+id+'"[^>]*>'));
  assert.ok(el,id+' is present');
  assert.ok(el[0].includes('enterkeyhint="'+hint+'"'),id+' keyboard hint');
