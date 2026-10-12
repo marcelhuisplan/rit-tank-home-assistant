@@ -66,7 +66,7 @@ const pdf='data:application/pdf;base64,'+Buffer.from('%PDF-1.4\n%%EOF').toString
    assert.equal(await page.locator('#fuelReceiptExistingSelect option').count(),3,'legacy image cannot be selected');
    await page.locator('#fuelReceiptExistingSelect').selectOption('1');
    await page.locator('#fuelReceiptSave').tap();
-   await page.waitForFunction(()=>document.querySelector('#history a[href="api/receipt-archive/1"]'));
+   await page.waitForFunction(()=>document.querySelector('#history button[onclick*="showFuelReceipt('archive', '1')"]'));
    assert.equal(sent.length,1);
    assert.deepEqual(sent[0],{archive_id:1});
    assert.equal(await page.locator('#history a[href="api/receipt-archive/1?download=1"]').count(),1);
@@ -79,7 +79,7 @@ const pdf='data:application/pdf;base64,'+Buffer.from('%PDF-1.4\n%%EOF').toString
    assert.equal(sent.length,1,name+' cancellation must not replace');
    page.once('dialog',dialog=>dialog.accept());
    await page.locator('#fuelReceiptSave').tap();
-   await page.waitForFunction(()=>document.querySelector('#history a[href="api/receipt-archive/2"]'));
+   await page.waitForFunction(()=>document.querySelector('#history button[onclick*="showFuelReceipt('archive', '2')"]'));
    assert.equal(sent[1].archive_id,2);
    assert.equal(sent[1].confirm_replace,true);
    await action.tap();
@@ -89,7 +89,7 @@ const pdf='data:application/pdf;base64,'+Buffer.from('%PDF-1.4\n%%EOF').toString
    await page.locator('#fuelReceiptNew').waitFor({state:'visible'});
    page.once('dialog',dialog=>dialog.accept());
    await page.locator('#fuelReceiptSave').tap();
-   await page.waitForFunction(()=>document.querySelector('#history a[href="api/receipt-archive/3"]'));
+   await page.waitForFunction(()=>document.querySelector('#history button[onclick*="showFuelReceipt('archive', '3')"]'));
    assert.equal(sent[2].pdf_data_url,pdf);
    assert.equal(sent[2].filename,'Nieuwe.pdf');
    assert.equal(sent[2].confirm_replace,true);
