@@ -73,7 +73,7 @@ const gps={address:'GPSstraat 7, 7461 AA Rijssen',latitude:52.31,longitude:6.52,
     await page.locator('#tripAddressChoices button').waitFor();await page.locator('#tripAddressChoices button').click();
     assert.equal(await page.locator('#tripManualAddress').inputValue(),gps.address);
 
-    await page.locator('#tripManualAddress').fill('Oud adres');
+    await page.locator('#tripOtherAddressButton').click();await page.locator('#tripManualAddress').fill('Oud adres');
     for(let i=0;i<60&&!delayedPlaces;i++)await page.waitForTimeout(20);
     assert.ok(delayedPlaces,engine+' '+device+' delayed Places request');
     await schoolBtn.click();await page.waitForFunction(a=>document.getElementById('tripManualAddress').value===a,SCHOOL);
@@ -81,7 +81,7 @@ const gps={address:'GPSstraat 7, 7461 AA Rijssen',latitude:52.31,longitude:6.52,
     await page.waitForTimeout(30);assert.equal(await page.locator('#tripManualAddress').inputValue(),SCHOOL);
 
     await page.screenshot({path:path.join(output,engine+'-'+device+'-locations.png'),fullPage:false});
-    await page.setViewportSize({width,height:360});await page.locator('#tripManualAddress').focus();
+    await page.setViewportSize({width,height:360});await page.locator('#tripOtherAddressButton').click();await page.locator('#tripManualAddress').focus();
     await page.waitForFunction(()=>window.visualViewport.height<=361&&document.getElementById('tripModal').getBoundingClientRect().height<=361);
     assert.equal(await page.locator('#tripModal .sheet').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
     assert.equal(await page.locator('.trip-location-actions').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
