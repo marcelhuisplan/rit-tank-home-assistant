@@ -41,7 +41,7 @@ class UpdateTests(unittest.TestCase):
                 self.assertEqual(app.get_settings()['location_fallback_entity'], '')
 
     def test_address_selection_keeps_real_street_and_deduplicates(self):
-        doc = {'openbareruimte_id': '123', 'straatnaam': 'Teststraat', 'weergavenaam': 'Teststraat 7A, Teststad', 'centroide_ll': 'POINT(5.0 52.0)', 'huis_nlt': '7A'}
+        doc = {'openbareruimte_id': '123', 'straatnaam': 'Teststraat', 'woonplaatsnaam': 'Teststad', 'weergavenaam': 'Teststraat 7A, Teststad', 'centroide_ll': 'POINT(5.0 52.0)', 'huis_nlt': '7A'}
         other = dict(doc, openbareruimte_id='456', weergavenaam='Andere straat 8')
         with patch.object(app, 'http_json', side_effect=[{'response': {'docs': [doc]}}, {'response': {'docs': [doc, doc, other]}}]) as fetch:
             r = app.nearby_house_numbers(52, 5)
