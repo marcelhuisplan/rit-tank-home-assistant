@@ -56,7 +56,7 @@ single('savedLocationFallback');single('migrateLocationFallback');single('loadLo
  assert(script.includes("$('tripPurpose').value='klantbezoek'"));
  // Address confirmation scrolls immediately, even while a suggestion is pending.
  let target;ctx.guideTo=id=>target=id;ctx.TRIP_MODE='start';ctx.TRIP_SEGMENT_TYPE='';
- ctx.TRIP_SEARCH_TIMER=null;ctx.TRIP_ADDRESS_REQUEST=0;ctx.TRIP_ROUTE_PREVIEW_REQUEST=0;
+ ctx.TRIP_SEARCH_TIMER=null;ctx.TRIP_ADDRESS_REQUEST=0;ctx.TRIP_ROUTE_PREVIEW_REQUEST=0;ctx.resetTripHouseLookup=()=>{}; // Isolated confirmation fixture
  single('advanceTripAfterLocation');section('async function confirmTripAddress(', 'async function selectTripHome(');
  await ctx.confirmTripAddress('Voorbeeldstraat 4',{latitude:52,longitude:5});
  assert.equal(target,'tripSaveButton');
