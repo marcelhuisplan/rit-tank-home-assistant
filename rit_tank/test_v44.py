@@ -131,7 +131,7 @@ class AutonomyTests(unittest.TestCase):
         self.assertTrue((root / 'DOCS.md').read_text(encoding='utf-8').startswith(f'# Rit & Tank {version}'))
         readme = (root / 'README.md').read_text(encoding='utf-8')
         self.assertIn('Huidige release: **34.00**.', readme)
-        self.assertIn('Volgende release: **34.00**.', readme)
+        self.assertIn('Volgende release: **nog niet vastgesteld**.', readme)
         ci = (root.parent / '.github' / 'workflows' / 'ci.yml').read_text(encoding='utf-8')
         self.assertEqual(ci.count("app.APP_VERSION == '34.00'"), 2)
         self.assertIn('BUILD_VERSION=34.00', ci)
