@@ -1,5 +1,10 @@
 # Changelog
 
+## 34.02
+- Tankformulier krijgt ↑ Vorig en ↓ Volgend in de vaste kop bij invoerfocus als betrouwbare aanvulling op iOS Safari's onbestuurbare standaardpijltjes bij scrollbare formulieren.
+- Scrollen naar actieve velden, voorwaartse/achterwaartse focus, Enter/Volgende en selectie van bestaande waarden worden met gerichte regressietests bewaakt.
+- Releaseversie en documentatie bijgewerkt, zonder wijziging van opslag, schema, GPS, bonnen of berekeningen.
+
 ## 34.01
 - Patchrelease: PDOK-huisnummerzoeken gebruikt maximaal 100 resultaten per pagina (PR #51); geen wijzigingen aan opslag of administratie.
 
