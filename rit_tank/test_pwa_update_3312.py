@@ -5,17 +5,17 @@ import app
 
 class PwaUpdate3312Tests(unittest.TestCase):
     def test_versioned_receipt_script_and_network_first_worker(self):
-        self.assertEqual(app.APP_VERSION, '34.01')
-        self.assertIn('<script src="receipt-scanner.js?v=34.01"></script>', app.APP_HTML)
-        self.assertIn('<script src="receipt-archive.js?v=34.01"></script>', app.APP_HTML)
+        self.assertEqual(app.APP_VERSION, '34.02')
+        self.assertIn('<script src="receipt-scanner.js?v=34.02"></script>', app.APP_HTML)
+        self.assertIn('<script src="receipt-archive.js?v=34.02"></script>', app.APP_HTML)
         self.assertLess(
-            app.APP_HTML.index('receipt-scanner.js?v=34.01'),
-            app.APP_HTML.index('receipt-archive.js?v=34.01')
+            app.APP_HTML.index('receipt-scanner.js?v=34.02'),
+            app.APP_HTML.index('receipt-archive.js?v=34.02')
         )
         worker = app.SERVICE_WORKER.decode('utf-8')
-        self.assertIn('const CACHE = "rit-tank-shell-34.01";', worker)
-        self.assertIn('"receipt-scanner.js?v=34.01"', worker)
-        self.assertIn('"receipt-archive.js?v=34.01"', worker)
+        self.assertIn('const CACHE = "rit-tank-shell-34.02";', worker)
+        self.assertIn('"receipt-scanner.js?v=34.02"', worker)
+        self.assertIn('"receipt-archive.js?v=34.02"', worker)
         self.assertIn('url.pathname.endsWith("/receipt-scanner.js")', worker)
         self.assertIn(
             'url.pathname.endsWith("/receipt-scanner.js") || '

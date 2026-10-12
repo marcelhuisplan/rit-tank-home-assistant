@@ -1,4 +1,10 @@
-# Rit & Tank 34.01
+# Rit & Tank 34.02
+
+## iPhone-toetsenbordnavigatie (34.02)
+
+- Zodra je een tankinvoerveld aanraakt, verschijnen **↑ Vorig** en **↓ Volgend** in de vaste kop. Hiermee navigeer je in beide richtingen langs kilometerstand, liters, prijs per liter, tankstation, notitie en datum en tijd.
+- Op het eerste/laatste veld is de betreffende knop uitgeschakeld; Enter/Volgende, waardeselectie en scrollcorrectie blijven intact. Safari-systeempijlen zijn niet via JavaScript onderschepbaar; er is een WebKit-beperking met scrollbare formulieren. Controle op echte iOS Safari/PWA is nog vereist.
+- Geen wijzigingen in database, opgeslagen administratie of automatische opslag; geen installatie in Home Assistant.
 
 ## Verbeteringen in 34.01
 

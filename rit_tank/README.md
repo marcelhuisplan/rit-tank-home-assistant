@@ -1,4 +1,10 @@
-# Rit & Tank 34.01
+# Rit & Tank 34.02
+
+## iPhone-toetsenbordnavigatie tankformulier (34.02)
+
+- Tijdens invoeren verschijnen in de vaste kop **↑ Vorig** en **↓ Volgend**. Deze knoppen doorlopen kilometerstand, liters, literprijs, tankstation, notitie en datum/tijd, vooruit én achteruit; het actieve veld wordt binnen het formulier boven het toetsenbord zichtbaar.
+- Safari's eigen pijltjes zijn niet vanuit JavaScript bestuurbaar. Sommige iOS-versies herkennen velden buiten beeld in scrollbare vensters niet. Gebruik in dat geval de knoppen in het formulier. Controle op een echte iPhone, zowel in Safari als de geïnstalleerde PWA, is nog nodig.
+- Enter/Volgende, selectie van bestaande getallen en expliciet opslaan zijn behouden; bestaande ritten, tankbeurten en bonnen blijven ongemoeid.
 
 ## Slimme boncontrole (33.17)
 
@@ -114,7 +120,7 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **34.01**.
+- Huidige release: **34.02**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
 - Volgende release: **nog niet vastgesteld**.

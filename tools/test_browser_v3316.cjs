@@ -92,7 +92,10 @@ async function fuelFailureDiagnostics(page,scenario){
      };
      for(const [id,hint] of [['fuelOdo','next'],['fuelLitersInput','next'],['fuelPriceInput','next'],['fuelStation','next'],['fuelNote','next']])
        assert.equal(await page.locator('#'+id).getAttribute('enterkeyhint'),hint,id+' keyboard hint');
+     assert.equal(await page.locator('#fuelKeyboardNav').isHidden(),true,'navigation hidden before editing');
      await odo.click();
+     assert.equal(await page.locator('#fuelKeyboardNav').isVisible(),true,'navigation visible while editing');
+     assert.equal(await page.locator('#fuelKeyboardPrev').isDisabled(),true,'first field has no previous');
      await odo.pressSequentially('26200',{delay:3});
      assert.equal(await odo.inputValue(),'26200');
      assert.match(await page.locator('#fuelDate').inputValue(),/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/,'local date defaults to now');
@@ -121,6 +124,24 @@ async function fuelFailureDiagnostics(page,scenario){
      await note.fill('Notitie test');
      await note.press('Enter');
      await visibleFocused('fuelDate');
+     assert.equal(await page.locator('#fuelKeyboardNext').isDisabled(),true,'last field cannot focus save');
+     // Actual visible controls: reverse and advance through every field with a simulated iOS keyboard.
+     // Native Safari accessory-bar buttons cannot be operated through Playwright.
+     for(const id of ['fuelNote','fuelStation','fuelPriceInput','fuelLitersInput','fuelOdo']){
+       await page.locator('#fuelKeyboardPrev').click();
+       await visibleFocused(id);
+     }
+     assert.equal(await page.locator('#fuelKeyboardPrev').isDisabled(),true);
+     const selected=await page.evaluate(()=>{const x=document.getElementById('fuelOdo');return x.selectionStart===0&&x.selectionEnd===x.value.length});
+     assert.equal(selected,true,'existing numeric value selected when navigating backwards');
+     for(const id of ['fuelLitersInput','fuelPriceInput','fuelStation','fuelNote','fuelDate']){
+       await page.locator('#fuelKeyboardNext').click();
+       await visibleFocused(id);
+     }
+     assert.equal(await page.locator('#fuelKeyboardNext').isDisabled(),true);
+     assert.equal(await odo.inputValue(),'26200','odometer preserved');
+     assert.equal(await liters.inputValue(),'43,00','liters preserved');
+     assert.equal(await price.inputValue(),'2,400','price preserved');
      await page.locator('#fuelDate').fill('2026-10-10T15:30');
      await page.locator('#fuelDate').press('Enter');
      assert.notEqual(await page.evaluate(()=>document.activeElement?.id),'fuelSaveButton','Return never focuses save');
