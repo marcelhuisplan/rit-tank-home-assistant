@@ -334,10 +334,10 @@ def search_street_house_number(context: str, house_number: str, *, dependencies:
     expected = re.sub(r'\s+', '', number).casefold()
     matches, seen = [], set()
     # BAG house number is indexed separately from house letter/addition. No 10-nearest cap.
-    for offset in range(0, 1000, 200):
+    for offset in range(0, 1000, 100):
         data = _provider(dependencies, 'http_json')(_PDOK_BASE + 'free?' + urlencode({
             'q': '*:*', 'fq': f'type:adres AND openbareruimte_id:{street_id} AND huisnummer:{numeric}',
-            'rows': 200, 'start': offset, 'fl': _PDOK_FIELDS,
+            'rows': 100, 'start': offset, 'fl': _PDOK_FIELDS,
         }), timeout=10).get('response', {})
         docs = data.get('docs', [])
         for doc in docs:
@@ -354,7 +354,7 @@ def search_street_house_number(context: str, house_number: str, *, dependencies:
             latitude, longitude = point
             matches.append({'address': label, 'house_number': str(doc.get('huis_nlt') or ''),
                             'latitude': latitude, 'longitude': longitude})
-        if len(docs) < 200:
+        if len(docs) < 100:
             break
     else:
         raise ValueError('Te veel BAG-adressen voor dit nummer. Gebruik de vrije adreszoekfunctie.')
