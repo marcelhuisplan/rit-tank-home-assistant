@@ -750,6 +750,8 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             (destination, end_lines, end_offset, (244, 67, 54)),
         ):
             baseline = y_top - offset
+            if stop.get('fuel_event_id'):
+                page.text('Tankbeurt', ADDRESS_X, baseline + 9, 7.2, bold=True, rgb=palette['muted'])
             page.circle(147, baseline + 3, 4.3, rgb=color)
             for idx, line in enumerate(lines):
                 page.text(line, ADDRESS_X, baseline - idx * 12, 9.5, rgb=palette['text'])
