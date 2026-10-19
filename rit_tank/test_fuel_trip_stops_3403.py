@@ -87,6 +87,28 @@ class FuelTripStopTests(unittest.TestCase):
         with app.db() as con:
             self.assertEqual(con.execute('SELECT COUNT(*) FROM trip_stops WHERE trip_id=?', (trip_id,)).fetchone()[0], 2)
 
+    def test_splitting_business_leg_does_not_add_kilometers_or_reimbursement(self):
+        from decimal import Decimal
+        from pdf_report import build_business_report_rows
+        trip_id = self.start_trip()
+        app.add_fuel(self.payload())
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO trip_stops(trip_id,sequence_no,created_at,odometer,manual_label,segment_trip_type) "
+                "VALUES(?,2,'2026-10-19T09:45:00+02:00',120,'Eindstraat 20, 7461 AA Rijssen','business')",
+                (trip_id,),
+            )
+        trip, stops = app.business_trips_raw()[0]
+        enriched = app.enrich_business_trip(trip, stops, resolve=False)
+        self.assertEqual(enriched['km'], 20)
+        self.assertEqual(enriched['business_km'], 20)
+        rows = build_business_report_rows([enriched], Decimal('0.25'))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(sum(row['km'] for row in rows), 20)
+        self.assertEqual(sum((row['reimbursement'] for row in rows), Decimal(0)), Decimal('5.00'))
+        self.assertEqual(rows[0]['destination']['fuel_event_id'], stops[1]['fuel_event_id'])
+
+
 
 if __name__ == '__main__':
     unittest.main()
