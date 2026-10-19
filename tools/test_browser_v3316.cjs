@@ -152,7 +152,8 @@ async function fuelFailureDiagnostics(page,scenario){
      assert.equal(await page.locator('#fuelDate').inputValue(),'2026-10-10T15:30');
      assert.equal(await station.inputValue(),'Testpomp');assert.equal(await note.inputValue(),'Notitie test');
      await page.evaluate(()=>window.__keyboard(window.innerHeight,0));
-     await page.locator('#fuelSaveButton').click();
+     await page.locator('#fuelAddress').fill('Stationsstraat 12, 7461 AA Rijssen');
+      await page.locator('#fuelSaveButton').click();
      await page.waitForFunction(()=>!document.querySelector('#fuelModal').classList.contains('show'));
      assert.equal(sent.length,1);assert.equal(sent[0].odometer,26200);
      assert.equal(sent[0].liters,43);assert.equal(sent[0].price_per_liter,2.4);

@@ -19,7 +19,8 @@ class FuelInput3315Tests(unittest.TestCase):
                 first = app.add_fuel({
                     'odometer': 26199, 'liters': 24.80,
                     'price_per_liter': 1.899, 'created_at': '2026-10-09T12:00:00+02:00',
-                    'station': 'Bestaand', 'full_tank': True
+                    'station': 'Bestaand',
+                'fuel_address': 'Stationsstraat 12, 7461 AA Rijssen', 'full_tank': True
                 })
                 with app.db() as con:
                     before = tuple(con.execute(
@@ -28,7 +29,8 @@ class FuelInput3315Tests(unittest.TestCase):
                 second = app.add_fuel({
                     'odometer': 26200, 'liters': 43.00,
                     'price_per_liter': 2.400, 'created_at': '2026-10-10T15:30:00+02:00',
-                    'station': 'Nieuwe pomp', 'full_tank': True
+                    'station': 'Nieuwe pomp',
+                'fuel_address': 'Stationsstraat 12, 7461 AA Rijssen', 'full_tank': True
                 })
                 self.assertEqual(second['cost'], 103.20)
                 with app.db() as con:
