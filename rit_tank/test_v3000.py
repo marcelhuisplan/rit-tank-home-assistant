@@ -280,7 +280,7 @@ class Reset3000Tests(unittest.TestCase):
     def test_restart_does_not_reapply_old_initial_odometer(self):
         self.reset();app.init_db();self.assert_clean()
     def test_fuel_entry_works_after_reset(self):
-        self.reset();result=app.add_fuel({**self.point(64610,1),'liters':10,'price_per_liter':2,'station':'Nieuw'})
+        self.reset();result=app.add_fuel({**self.point(64610,1),'liters':10,'price_per_liter':2,'station':'Nieuw','fuel_address':'Stationsstraat 12, 7461 AA Rijssen'})
         self.assertTrue(result['ok']);self.assertEqual(app.stats_for_period('day')['fuel_count'],1)
     def test_reset_waits_for_background_processing(self):
         entered=threading.Event();release=threading.Event();done=threading.Event()
