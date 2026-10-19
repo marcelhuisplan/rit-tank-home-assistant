@@ -2269,6 +2269,9 @@ def delete_event(event_id: int) -> None:
             if row['source_kind'] == 'administration_baseline':
                 raise ValueError('Het startpunt van de administratie kan niet worden verwijderd.')
             snapshot=dict(row); receipt=str(snapshot.get('receipt_path') or '')
+            # Explicitly deleting the fuel entry must not leave a phantom stop.
+            if row['type'] == 'fuel':
+                con.execute('DELETE FROM trip_stops WHERE fuel_event_id=?', (event_id,))
             con.execute('DELETE FROM events WHERE id=?',(event_id,)); audit('delete','event',event_id,snapshot,con=con); con.commit()
             if receipt:
                 try: (RECEIPT_DIR/Path(receipt).name).unlink(missing_ok=True)
@@ -3765,7 +3768,7 @@ function openFuel(){
  initFuelInputs();$('fuelKeyboardNav').hidden=true;openModal('fuelModal');fitPhysicalViewport();
 }
 FUEL_FOCUS_ORDER.forEach(id=>$(id).addEventListener('focus',()=>{fuelSyncKeyboardNav();scheduleFuelInputReveal()}));
-$('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
+$('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;$('fuelAddress').value='';PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
 function setLocationStatus(msg,kind=''){$('locationStatus').textContent=msg;$('locationStatus').className='location-status '+kind}
 function browserLocation(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Browser-GPS wordt hier niet ondersteund.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser'}),e=>reject(new Error(e.message||'Locatie niet beschikbaar.')),{enableHighAccuracy:true,timeout:9000,maximumAge:30000})})}
 function savedLocationFallback(){if(DATA?.settings&&Object.prototype.hasOwnProperty.call(DATA.settings,'location_fallback_entity'))return DATA.settings.location_fallback_entity||'';try{return localStorage.getItem('rit_tank_location_entity')||''}catch(e){return ''}}
