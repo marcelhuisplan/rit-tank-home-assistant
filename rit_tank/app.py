@@ -376,7 +376,8 @@ def init_db() -> None:
             ('business_trip_stop_id', 'INTEGER'),
             ('receipt_path', 'TEXT'),
             ('receipt_archive_id', 'INTEGER'),
-            ('kilometer_conflict', 'INTEGER NOT NULL DEFAULT 0')
+            ('kilometer_conflict', 'INTEGER NOT NULL DEFAULT 0'),
+            ('fuel_address', 'TEXT')
         ):
             if col not in cols:
                 con.execute(f'ALTER TABLE events ADD COLUMN {col} {sql_type}')
@@ -398,10 +399,13 @@ def init_db() -> None:
             ('original_destination_address', 'TEXT'),
             ('original_destination_distance_m', 'REAL'),
             ('destination_distance_source', 'TEXT'),
-            ('destination_manually_corrected', 'INTEGER DEFAULT 0')
+            ('destination_manually_corrected', 'INTEGER DEFAULT 0'),
+            ('fuel_event_id', 'INTEGER')
         ):
             if col not in stop_cols:
                 con.execute(f'ALTER TABLE trip_stops ADD COLUMN {col} {sql_type}')
+
+        con.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_trip_stops_fuel_event ON trip_stops(fuel_event_id) WHERE fuel_event_id IS NOT NULL')
 
         place_cols = {r['name'] for r in con.execute('PRAGMA table_info(known_places)')}
         for col, sql_type in (
@@ -1145,6 +1149,9 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
         lon = None
     note = str(payload.get('note') or '').strip()[:200]
     full_tank = 1 if bool(payload.get('full_tank', True)) else 0
+    fuel_address = pdf_report._full_address(payload.get('fuel_address'))
+    if not fuel_address:
+        raise ValueError('Vul het volledige tankstationadres in: straat, huisnummer, postcode en plaats.')
 
     with DB_LOCK, db() as con:
         hard_error = _fuel_odometer_hard_error(created, odo)
@@ -1175,17 +1182,43 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
         cur = con.execute("""
             INSERT INTO events(
                 created_at,type,odometer,liters,price_per_liter,station,full_tank,note,
-                place_id,latitude,longitude,location_accuracy,location_source,kilometer_conflict
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                place_id,latitude,longitude,location_accuracy,location_source,kilometer_conflict,fuel_address
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (created, 'fuel', odo, liters, price, station, full_tank, note,
-              place_id or None, lat, lon, accuracy, location_source or None, int(bool(conflicts))))
+              place_id or None, lat, lon, accuracy, location_source or None, int(bool(conflicts)), fuel_address))
         rid = int(cur.lastrowid)
+        # Reuse the fuel event as the odometer event for this stop.
+        active = con.execute(
+            "SELECT id,trip_type FROM business_trips WHERE status='active' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if active and not conflicts:
+            previous = con.execute(
+                'SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no DESC LIMIT 1',
+                (active['id'],),
+            ).fetchone()
+            if previous and created >= str(previous['created_at']):
+                if odo < float(previous['odometer']):
+                    raise ValueError('Tankkilometerstand ligt vóór de laatste ritstop.')
+                segment = str(previous['segment_trip_type'] or active['trip_type'] or '')
+                if segment not in ('business', 'private'):
+                    segment = None
+                con.execute(
+                    """INSERT INTO trip_stops(
+                        trip_id,sequence_no,created_at,odometer,latitude,longitude,
+                        location_accuracy,location_source,place_id,manual_label,note,
+                        event_id,fuel_event_id,segment_trip_type,segment_classification_source
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (active['id'], int(previous['sequence_no']) + 1, created, odo,
+                     lat, lon, accuracy, location_source or None, place_id or None,
+                     fuel_address, 'Tankbeurt', rid, rid, segment, 'fuel-stop'),
+                )
         receipt_name = save_receipt_data(str(payload.get('receipt_data_url') or ''), rid)
         if receipt_name:
             con.execute('UPDATE events SET receipt_path=? WHERE id=?', (receipt_name, rid))
         audit('create', 'fuel', rid, {
             'odometer': odo, 'liters': liters, 'price_per_liter': price,
-            'station': station or place_id, 'kilometer_conflict': bool(conflicts),
+            'station': station or place_id, 'fuel_address': fuel_address,
+            'kilometer_conflict': bool(conflicts),
             'conflicts': conflicts,
         }, con=con)
         if receipt_name:
