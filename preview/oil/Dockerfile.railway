@@ -1,0 +1,13 @@
+# Railway-specific synthetic preview only. The build context MUST be repo root.
+# Separate from rit_tank/Dockerfile used by the real Home Assistant add-on.
+FROM python:3.14-alpine
+
+WORKDIR /app
+COPY rit_tank/ /app/
+COPY preview/oil/start.py /preview/start.py
+
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-nld tesseract-ocr-data-eng poppler-utils \
+    && pip install --no-cache-dir websocket-client==1.8.0 cryptography google-api-python-client google-auth pillow==12.0.0
+
+EXPOSE 8099
+CMD ["python3", "-B", "/preview/start.py"]
