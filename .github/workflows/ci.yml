@@ -33,11 +33,19 @@ jobs:
       - name: Run Python tests
         working-directory: rit_tank
         run: python -m unittest discover -p 'test_*.py' -v
+      - name: Fetch immutable pre-feature runtime for isolated rollback test
+        uses: actions/checkout@v4
+        with:
+          ref: 8a4b991bd7a81f59c866bcf46cf188167ddb6acd
+          path: legacy-34-02
+          persist-credentials: false
+      - name: Verify old 34.02 runtime opens an oil-enabled test database intact
+        run: python tools/test_oil_legacy_rollback.py legacy-34-02/rit_tank/app.py
       - name: Compile runtime modules
         run: python -m py_compile rit_tank/app.py rit_tank/pdf_report.py rit_tank/report_validation.py rit_tank/google_places.py rit_tank/routing.py rit_tank/home_assistant.py rit_tank/trips.py rit_tank/assistant.py rit_tank/odometer_control.py rit_tank/receipt_archive.py rit_tank/receipt_recognition.py
       - name: Smoke-test runtime imports
         working-directory: rit_tank
-        run: python -c "import app, pdf_report, report_validation, google_places, routing, home_assistant, trips, assistant, odometer_control, receipt_recognition; assert app.APP_VERSION == '34.02'; print('runtime imports OK')"
+        run: python -c "import app, pdf_report, report_validation, google_places, routing, home_assistant, trips, assistant, odometer_control, receipt_recognition; assert app.APP_VERSION == '34.03'; print('runtime imports OK')"
       - name: Check whitespace errors
         run: git diff --check HEAD^ HEAD
 
@@ -49,13 +57,39 @@ jobs:
         with:
           fetch-depth: 2
       - name: Build production image
-        run: docker build --build-arg BUILD_VERSION=34.02 --build-arg BUILD_ARCH=amd64 -t rit-tank-ci ./rit_tank
+        run: docker build --build-arg BUILD_VERSION=34.03 --build-arg BUILD_ARCH=amd64 -t rit-tank-ci ./rit_tank
       - name: Verify packaged runtime files
         run: docker run --rm --entrypoint /bin/sh rit-tank-ci -c 'test -f /app/app.py && test -f /app/report_validation.py && test -f /app/pdf_report.py && test -f /app/google_places.py && test -f /app/routing.py && test -f /app/home_assistant.py && test -f /app/trips.py && test -f /app/assistant.py && test -f /app/odometer_control.py && test -f /app/receipt_archive.py && test -f /app/receipt_archive.js && test -f /app/receipt_scanner.js && test -f /app/receipt_recognition.py && test -f /app/run.sh'
       - name: Smoke-test runtime imports in production image
-        run: docker run --rm --entrypoint python rit-tank-ci -c "import app, pdf_report, report_validation, google_places, routing, home_assistant, trips, assistant, odometer_control, receipt_recognition; assert app.APP_VERSION == '34.02'; print('runtime imports OK')"
+        run: docker run --rm --entrypoint python rit-tank-ci -c "import app, pdf_report, report_validation, google_places, routing, home_assistant, trips, assistant, odometer_control, receipt_recognition; assert app.APP_VERSION == '34.03'; print('runtime imports OK')"
       - name: Check whitespace errors
         run: git diff --check HEAD^ HEAD
+
+
+      - name: Package tracked local add-on files as a 34.03 release candidate
+        run: |
+          git archive --format=zip --output=rit-tank-34.03-local-addon.zip HEAD rit_tank
+          python - <<'PY'
+          from zipfile import ZipFile
+          name = 'rit-tank-34.03-local-addon.zip'
+          with ZipFile(name) as package:
+              paths = package.namelist()
+              required = ('rit_tank/config.yaml', 'rit_tank/Dockerfile',
+                          'rit_tank/app.py', 'rit_tank/oil_history.py',
+                          'rit_tank/oil_history.js')
+              assert all(item in paths for item in required), 'Add-on is incomplete'
+              assert not any(p.endswith(('.db', '.sqlite', '.rtbackup'))
+                             or p.startswith(('rit_tank/receipts/', 'rit_tank/receipt_archive/'))
+                             or p.endswith('/options.json') for p in paths), 'Unexpected private data'
+              print(f'{name}: {len(paths)} tracked entries, no user data')
+          PY
+      - name: Store local add-on candidate ZIP for later approved installation
+        uses: actions/upload-artifact@v4
+        with:
+          name: rit-tank-34.03-local-addon-candidate
+          path: rit-tank-34.03-local-addon.zip
+          if-no-files-found: error
+          retention-days: 14
 
   mobile-ui:
     name: Mobile browser validation
@@ -87,8 +121,50 @@ jobs:
           node tools/test_browser_v3317_review.cjs
           node tools/test_browser_v3317_cancel.cjs
           node tools/test_browser_street_house.cjs
+          node tools/test_browser_oil_history.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: release-33-mobile-ui
           path: test-results/
+
+  release-preflight-3403:
+    name: Check 34.03 release permissions and package (NO PUBLISH)
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 56 && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Confirm unchanged approved feature and main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPROVED=af15c7ba6f75503b3e1999758601a627d49f0a12
+          git merge-base --is-ancestor "$APPROVED" HEAD
+          test "$(git rev-parse "$APPROVED:rit_tank")" = "$(git rev-parse HEAD:rit_tank)"
+          test "$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')" = 8a4b991bd7a81f59c866bcf46cf188167ddb6acd
+          git diff --name-only "$APPROVED" HEAD > release-diff.txt
+          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3403[.]yml)|tools/release_3403[.]py)$' release-diff.txt; then
+            echo 'Unexpected change to approved candidate'; exit 1
+          fi
+      - name: Verify exact 34.03 package with no data (NO PUBLISH)
+        run: python3 tools/release_3403.py --verify-only
+      - name: Verify tag does not exist and test token write access WITHOUT creating a tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --tags origin refs/tags/v34.03 | grep -q .; then
+            echo 'Release tag already exists'; exit 1
+          fi
+          # A real GitHub permission check with zero ref mutation.
+          # The actual release REST API still cannot be guaranteed without publishing.
+          git push --dry-run origin af15c7ba6f75503b3e1999758601a627d49f0a12:refs/tags/v34.03
+          echo 'Dry-run push accepted; no tag, release or Home Assistant state changed'

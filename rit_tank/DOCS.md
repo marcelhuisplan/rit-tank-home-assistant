@@ -1,4 +1,14 @@
-# Rit & Tank 34.02
+# Rit & Tank 34.03
+
+## Onderhoudshistorie motorolie (34.03 — releasekandidaat)
+
+- **Motorolie** in het bestaande voertuigoverzicht: kies **Bijvullen** of **Verversen** en leg datum/tijd, olietype, exact aantal milliliters, onderhoudstellerstand en optionele notitie vast.
+- In het overzicht kun je opgeslagen oliebeurten lezen en, na bevestiging, corrigeren of verwijderen.
+- De losse database-tabel `oil_maintenance` wordt bij het starten additief aangemaakt. Ze raakt de huidige `events`, ritten, tankbeurten, tankbonscans, kilometervergoeding en PDF-/CSV-ritrapportages niet.
+- **Home Assistant heeft nu nog 34.02.** De branch is een niet-gemergde kandidaat 34.03. Voor live-gebruik moet het goedgekeurde pakket eerst op de bestaande lokale add-on worden geplaatst en moet Home Assistant de bestaande add-on bijwerken; alleen een GitHub-release of nieuw versienummer in GitHub biedt geen automatische lokale update.
+- Vóór installatie: bevestig de volledige back-up met **Rit & Tank inclusief gegevens**, **lokale apps-map**, **Home Assistant-instellingen**, een externe kopie en de herstelsleutel. Stop bij ontbrekende of afwijkende installatiepaden.
+- **Fysieke iPhone-acceptatie volgt na installatie** in Safari en de bestaande PWA. Gebruik echte onderhoudsgegevens, geen fictieve kilometerstanden op productie.
+- Bij uitsluitend een codeprobleem mag de oude 34.02-appcode na het stoppen worden hersteld terwijl de huidige database behouden blijft. Herstellen van een oude databaseback-up kan latere mutaties wissen.
 
 ## iPhone-toetsenbordnavigatie (34.02)
 
