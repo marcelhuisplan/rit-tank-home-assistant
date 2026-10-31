@@ -1,9 +1,9 @@
 # Rit & Tank PR #56 — veilige Home Assistant-releasevoorbereiding
 
 **Datum voorbereiding:** 31 oktober 2026
-**Status:** vrijgavevoorbereiding; nog **NIET** mergen, installeren of releasen.
+**Status:** releasekandidaat **34.03** op de Draft featurebranch; nog **NIET** mergen, installeren of releasen.
 **PR:** https://github.com/marcelhuisplan/rit-tank-home-assistant/pull/56
-**Laatst bevestigde bronstand vóór dit besluitvoorstel:** `f9be3f4aae2bdfc7211d9132d434cefe4cc0d756` (volledige CI geslaagd; zie onder).
+**Laatst volledig getest vóór versieophoging:** `f9be3f4aae2bdfc7211d9132d434cefe4cc0d756` (volledige CI geslaagd; nieuwe 34.03-CI moet opnieuw groen zijn).
 **Basis main:** `8a4b991bd7a81f59c866bcf46cf188167ddb6acd`; runtimeversie `34.02`.
 **CI:** https://github.com/marcelhuisplan/rit-tank-home-assistant/actions/runs/41240527592 (Python, Docker, mobiele regressies geslaagd).
 
@@ -13,23 +13,23 @@
 - **Geen** Railway, andere hosting, extra accounts, nieuwe live preview of noodzaak voor Codespaces/VS Code/terminalgebruik door de eigenaar.
 - De eerder voorbereide externe hosting-preview is op verzoek van de eigenaar uit de ontwikkelbranch gehaald. De productie-add-on wordt uitsluitend uit `rit_tank/` samengesteld.
 - PR #54 en #55 blijven buiten deze release tenzij afzonderlijk goedgekeurd. PR #56 staat nog op Draft en is niet gemerged.
-- De huidige 34.02-releaseversie blijft onveranderd tot expliciete toestemming om een releaseversie te kiezen en te publiceren. Het versienummer wordt pas bij releasevrijgave gelijktijdig bijgewerkt in de applicatie, add-onconfiguratie, documentatie, tests, CI en PWA-caches.
+- **34.03 is door de eigenaar goedgekeurd als versienummer voor de releasekandidaat van PR #56.** De branch krijgt consistente runtime-, add-on-, documentatie-, test- en CI-versies; productie en `main` blijven 34.02 zolang geen merge en Home Assistant-update zijn goedgekeurd.
 - **Geen acties in de echte Home Assistant-installatie zonder nieuwe, afzonderlijke toestemming.**
 
-## Voorstel releasevolgorde (besluit van eigenaar nog vereist)
+## Releasevolgorde — keuze eigenaar bevestigd, alleen voorbereid
 
-**Aanbevolen:** olieonderhoud uit Draft PR #56 als **34.03** als de eerstvolgende wijzigingsrelease. De ongepubliceerde PR #55 is alleen in de **titel** aangeduid als 34.03: in zijn eigen `app.py` en `config.yaml` staat nog **34.02**. Er is dus nog geen officieel tweede 34.03-pakket. PR #55 blijft volledig ongemoeid.
+**Vastgesteld voor de voorbereiding:** olieonderhoud uit Draft PR #56 is releasekandidaat **34.03**. De ongepubliceerde PR #55 wordt later afzonderlijk voorbereid voor **34.04**, onder voorbehoud van nieuwe toestemming. Zijn eigen code en titel worden nu niet aangeraakt; hij bevat nog runtimeversie **34.02**.
 
-- **Route A — voorkeur wegens gewenste snelheid:** eerst olieonderhoud **34.03** uit PR #56; pas later, na afzonderlijke toetsing en toestemming, automatische tankstops uit PR #55 als eerstvolgende vrije release (naar verwachting **34.04**). De WIP-titel en versietoekenning van PR #55 mogen **pas met afzonderlijke toestemming** worden aangepast, niet in deze opdracht.
+- **Gekozen route A:** olieonderhoud eerst als **34.03**; daarna automatische tankstops uit PR #55 als **34.04**, mits een volgende afzonderlijke vrijgave wordt goedgekeurd. De WIP-titel en versie van PR #55 blijven nu ongewijzigd.
 - **Route B — alternatief:** eerst automatische tankstops uit PR #55 definitief als **34.03**; olieonderhoud uit PR #56 pas daarna als **34.04**. Dit vertraagt de gewenste olieonderhoudsfunctie en vereist een nieuwe integratievergelijking.
-- **Geen 34.03-reservering of definitieve nummering zonder akkoord.** De actieve `APP_VERSION`, Home Assistant `config.yaml`, documentatie, tests en CI blijven nu **34.02**. Ook geen PR-merge, tag, release of Home Assistant-update.
+- **34.03 uitsluitend als releasekandidaat op deze branch:** de actieve `APP_VERSION`, Home Assistant `config.yaml`, documentatie, huidige-versietests en CI gebruiken 34.03. De oude 34.02-code blijft vastgepind voor terugvaltests. Nog geen PR-merge, tag, GitHub-release of Home Assistant-update.
 - PR #54 (bonviewer) blijft afzonderlijk Draft en mag niet stilzwijgend meeliften.
 
-### Exacte releasevoorbereidingschecklist na nummeringsakkoord
+### Definitieve 34.03-versievoorbereiding en controles
 
-1. **Vastpinnen bron**: vergelijk de exact vrij te geven PR #56-HEAD met `main`; bij wijzigingen of een eerdere merge van PR #54/#55 eerst opnieuw toetsen en niet stilzwijgend combineren. Alleen bestanden uit `rit_tank/` vormen de bestaande lokale Home Assistant-add-on.
-2. **Versienummer in één wijzigingsset**: zet `APP_VERSION` in `rit_tank/app.py`, `version` in `rit_tank/config.yaml`, de releasekoppen van `rit_tank/README.md` en `rit_tank/DOCS.md`, de nieuwe changelogsectie in `rit_tank/CHANGELOG.md`, en de expliciete versiecontroles in `.github/workflows/ci.yml` op exact dezelfde, door de eigenaar goedgekeurde release.
-3. **Tests afstemmen, geen historie herschrijven**: huidige-versieasserties staan onder meer in `test_700.py`, `test_v44.py`, `test_v3300.py`, `test_v3200.py`, `test_pwa_update_3312.py`, `test_release_recovery_3309.py`, `test_receipt_archive.py` en `test_fuel_receipt_link_3311.py`. Pas alleen actuele-versieasserties aan; behoud historische testscenario's en hun labels.
+1. **Vastpinnen bron**: vergelijk de exact vrij te geven PR #56-HEAD met `main`; bij wijzigingen of een eerdere merge van PR #54/#55 eerst opnieuw toetsen en niet stilzwijgend combineren. Alleen bestanden uit `rit_tank/` vormen de bestaande lokale Home Assistant-add-on. De CI produceert een ZIP met alleen versioned/tracked `rit_tank/`-bestanden zonder lokale data.
+2. **Versienummer in één wijzigingsset**: `APP_VERSION` in `rit_tank/app.py`, `version` in `rit_tank/config.yaml`, de releasekoppen van `rit_tank/README.md` en `rit_tank/DOCS.md`, de changelogsectie in `rit_tank/CHANGELOG.md`, en de expliciete versiecontroles in `.github/workflows/ci.yml` staan in de kandidaat op 34.03.
+3. **Tests afstemmen, geen historie herschrijven**: huidige-versieasserties zijn aangepast in `test_700.py`, `test_v44.py`, `test_v3300.py`, `test_v3200.py`, `test_pwa_update_3312.py`, `test_release_recovery_3309.py`, `test_receipt_archive.py` en `test_fuel_receipt_link_3311.py`. Historische scenario's, labels en de echte oude 34.02-runtime blijven ongemoeid.
 4. **PWA-caches**: bevestig dat de nieuw afgeleide `SERVICE_WORKER`-cachenaam en de versieparameters voor `oil-history.js`, `receipt-scanner.js` en `receipt-archive.js` overeenstemmen met de goedgekeurde runtimeversie. De oude, vastgepinde **34.02-code-only rollbacktest** in `tools/test_oil_legacy_rollback.py` blijft expres op 34.02 gericht.
 5. **Volledige officiële CI**: Python, Home Assistant-Docker-build en mobiele Chromium/WebKit-regressies op de laatste releasecommit; elke fout herstellen voordat de owner release toestemming geeft.
 6. **Geen verborgen productieacties**: een succesvolle Draft PR-CI is geen installatie; sluit PR #56 niet af, merge niet en publiceer geen GitHub-release zonder nieuwe expliciete toestemming.
@@ -70,6 +70,13 @@ Officiële richtlijn: https://www.home-assistant.io/common-tasks/general/backups
 4. Maak het vrijgavepakket **uitsluitend** uit `rit_tank/`. Bij de daadwerkelijke lokale add-onupdate moeten zowel code als de door Home Assistant herkende `config.yaml`-versie consistent zijn; alleen bestanden in GitHub publiceren installeert niets op het apparaat.
 5. Merge, release of pakketoverdracht pas na **afzonderlijke** toestemming.
 
+## Home Assistant: distributie en update-aanbod
+
+- Dit is een **lokale Home Assistant-app/add-on** onder `/addons/rit_tank` (in actuele Home Assistant-termen de lokale apps-map). Er is **geen zelfstandige automatische GitHub-naar-Home Assistant-deploy** in deze repository. Het verhogen van `config.yaml` en het publiceren van een GitHub-release alleen maken op het toestel **nog geen** 34.03-update beschikbaar.
+- De gewone route na een afzonderlijke vrijgave: het in CI geproduceerde `rit-tank-34.03-local-addon.zip` bevat uitsluitend broncode onder `rit_tank/`. Laat een bevoegd beheermiddel deze map in de **bestaande** lokale apps-map plaatsen, zonder `/data` te vervangen. Vernieuw daarna de lokale Home Assistant-appstore (Updates controleren) en werk de bestaande Rit & Tank-app bij. Niet verwijderen of met een nieuwe slug installeren.
+- Het GitHub Actions-artifact is tijdelijk en is **geen GitHub-release** en **geen live installatie**. De huidige ChatGPT-GitHub-koppeling kan GitHub-code beheren, maar geeft **geen** directe Home Assistant-bestands-/Supervisor-toegang. Als de bestaande toegang geen veilige bestandsoverdracht biedt, moet vóór installatie één minimale gebruikershandeling of een afzonderlijk geautoriseerde HA-koppeling worden vastgesteld. **Geen** installatiepretentie zonder feitelijke toegang.
+- Home Assistant bewaart de appdatamap afzonderlijk van de bronmap, maar de daadwerkelijke Supervisor-update en het behoud van de actuele `/data` moeten op het doelapparaat na update nog worden gecontroleerd. Bij afwijkingen: **STOP**. De eigenaar heeft een back-up met lokale apps-map, HA-instellingen en Rit & Tank-data bevestigd, maar er is geen echte restore uitgevoerd.
+
 ## Na afzonderlijke toestemming: gecontroleerde lokale update
 
 1. Een laatste gecontroleerde back-up maken en de bestaande add-on stoppen; zorg dat een actieve rit afgerond is.
@@ -94,5 +101,5 @@ Officiële herstelrichtlijn: https://www.home-assistant.io/common-tasks/general/
 - **Fictieve migratie-, versleutelde herstel-, oude-runtime-, Docker- en mobiele regressietests:** afgerond en groen op eerdere commits.
 - **Back-up in de echte HA-installatie:** door eigenaar gemeld als afgerond met bevestigde selectie, externe kopie en herstelsleutel; technische inhouds- en herstelcontrole niet uitgevoerd.
 - **HA-versie:** 34.02 en draaiend vastgesteld op eigenaarsscreenshot (31 oktober); back-upinhoud, actuele administratie en versie direct vóór installatie nog te controleren.
-- **Nieuwe releaseversie, merge, installatie, HA-reset en rollback:** NIET uitgevoerd.
-- **Volgende noodzakelijke stap:** eigenaar kiest expliciet tussen releasevolgorde A (olieonderhoud eerst, voorgesteld 34.03) of B (automatische tankstops eerst, olieonderhoud later 34.04). Pas na dat nummeringsbesluit een releasekandidaat met versieophoging maken; voor merge, releasepublicatie en daadwerkelijke Home Assistant-update is daarna afzonderlijk akkoord vereist.
+- **Nieuwe kandidaat-releaseversie:** 34.03 op deze featurebranch voorbereid; merge, releasepublicatie, daadwerkelijke HA-installatie, reset en herstel op productie NIET uitgevoerd.
+- **Volgende noodzakelijke stap:** alle CI-jobs groen bevestigen op de exacte definitieve 34.03-commit; daarna afzonderlijke toestemming vragen voor merge en releasepublicatie. Voor daadwerkelijke HA-update daarna opnieuw expliciet akkoord en back-upstopcontrole, plus toegang tot de echte Home Assistant-installatie.

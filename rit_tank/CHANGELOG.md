@@ -1,5 +1,13 @@
 # Changelog
 
+## 34.03 — motorolieonderhoud (releasekandidaat PR #56)
+
+- Nieuw onderdeel **Motorolie** voor afzonderlijke oliebeurten: bijvullen/verversen met datum, olietype, milliliters, onderhoudstellerstand en notitie.
+- Onderhoudshistorie met expliciete gebruikersbevestiging bij wijzigen of verwijderen, plus validatie en authenticatie in backend en iPhone-formulier.
+- Additieve tabel `oil_maintenance` in de bestaande SQLite-database, los van ritten, tankbeurten, declaratieberekeningen, kilometerteller en bestaande bonnen.
+- CI bevat regressies voor schema/data-isolatie, herstel met fictieve administratie, oude 34.02-runtime, Docker-verpakking en mobiele Chromium/WebKit-weergave.
+- Aparte Draft PR #55 (automatische tankstops) is niet opgenomen. De echte iPhone-acceptatie en Home Assistant-installatie zijn nog niet uitgevoerd.
+
 ## 34.02
 - Tankformulier krijgt ↑ Vorig en ↓ Volgend in de vaste kop bij invoerfocus als betrouwbare aanvulling op iOS Safari's onbestuurbare standaardpijltjes bij scrollbare formulieren.
 - Scrollen naar actieve velden, voorwaartse/achterwaartse focus, Enter/Volgende en selectie van bestaande waarden worden met gerichte regressietests bewaakt.
