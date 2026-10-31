@@ -1,0 +1,41 @@
+# Alleen een afzonderlijke, synthetische testcontainer — GEEN automatische deployment.
+# Zonder een uniek wachtwoord van minstens 20 tekens start deze service niet.
+services:
+  oil-preview:
+    build:
+      context: ../../rit_tank
+      args:
+        BUILD_VERSION: "34.02"
+        BUILD_ARCH: amd64
+    command: ["python3", "-B", "/preview/start.py"]
+    environment:
+      RIT_TANK_PREVIEW_PASSWORD: "${RIT_TANK_PREVIEW_PASSWORD:?Set a unique private preview password of at least 20 characters}"
+      SUPERVISOR_TOKEN: ""
+      HASSIO_TOKEN: ""
+    volumes:
+      - oil_preview_data:/data
+      - ./start.py:/preview/start.py:ro
+    ports:
+      # Alleen bereikbaar vanaf de host. NOOIT direct publiek maken.
+      # Externe iPhone-test vereist apart goedgekeurde HTTPS-proxy.
+      - "127.0.0.1:18099:8099"
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8099/health',timeout=3).status==200"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  oil_preview_data:
+    # No HA /data mount, no host bind to real production directories.
+    name: rit-tank-oil-synthetic-preview-only
