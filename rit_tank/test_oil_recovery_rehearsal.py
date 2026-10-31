@@ -108,6 +108,8 @@ class IsolatedOilRecoveryRehearsal(unittest.TestCase):
                     sha256 TEXT NOT NULL, created_at TEXT NOT NULL
                 );
                 INSERT INTO settings VALUES('vehicle_name','Fictieve testauto');
+                INSERT INTO settings VALUES('fuel_type','Benzine');
+                INSERT INTO settings VALUES('currency','€');
                 INSERT INTO settings VALUES('km_reimbursement_rate','0.25');
                 INSERT INTO settings VALUES('license_plate','TEST-123');
                 INSERT INTO events(id,created_at,type,odometer) VALUES
