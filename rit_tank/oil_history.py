@@ -61,8 +61,10 @@ def validate(payload: dict[str, Any]) -> dict[str, Any]:
     oil_type = payload.get('oil_type')
     if not isinstance(oil_type, str):
         raise ValueError('Vul het olietype of de productspecificatie in.')
+    if any(ord(c) < 32 for c in oil_type):
+        raise ValueError('Olietype mag geen regelafbrekingen of stuurtekens bevatten.')
     oil_type = oil_type.strip()
-    if not oil_type or len(oil_type) > 120 or any(ord(c) < 32 for c in oil_type):
+    if not oil_type or len(oil_type) > 120:
         raise ValueError('Vul een olietype in (maximaal 120 tekens, één regel).')
     return {
         'performed_on': raw_date,
