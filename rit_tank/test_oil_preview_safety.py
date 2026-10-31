@@ -7,6 +7,7 @@ from contextlib import closing
 import http.client
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -74,13 +75,32 @@ class OilPreviewSafetyTests(unittest.TestCase):
         with sqlite3.connect(self.folder / 'rit_tank.db') as con:
             self.assertEqual(con.execute("SELECT count(*) FROM events").fetchone()[0], 3)
 
+    def test_preview_never_trusts_ingress_and_rejects_ha_tokens(self):
+        # Unlike the real HA add-on, the external preview must always use login.
+        self.assertFalse(preview.PreviewHandler._is_ingress(object()))
+        with patch.dict(os.environ, {
+            'RIT_TANK_PREVIEW_PASSWORD': PASSWORD,
+            'SUPERVISOR_TOKEN': 'SYNTHETIC-FAKE-HA-TOKEN'
+        }):
+            with self.assertRaisesRegex(RuntimeError, 'Home Assistant-tokens'):
+                preview.serve()
+
+    def test_railway_dockerfile_is_isolated_from_real_addon(self):
+        path = Path(__file__).resolve().parents[1] / 'preview' / 'oil' / 'Dockerfile.railway'
+        dockerfile = path.read_text(encoding='utf-8')
+        self.assertIn('COPY rit_tank/ /app/', dockerfile)
+        self.assertIn('COPY preview/oil/start.py /preview/start.py', dockerfile)
+        self.assertIn('CMD ["python3", "-B", "/preview/start.py"]', dockerfile)
+        self.assertNotIn('rit_tank.db', dockerfile)
+        self.assertNotIn('SUPERVISOR_TOKEN=', dockerfile)
+
     def test_authenticated_real_backend_oil_flow_and_odometer_isolation(self):
         preview.prepare_data(self.folder, PASSWORD)
         with patch.object(app, 'DATA_DIR', self.folder), \
              patch.object(app, 'DB_PATH', self.folder / 'rit_tank.db'), \
              patch.object(app, 'OPTIONS_PATH', self.folder / 'options.json'), \
              patch.object(app, 'RECEIPT_DIR', self.folder / 'receipts'):
-            with ThreadingHTTPServer(('127.0.0.1', 0), app.Handler) as server:
+            with ThreadingHTTPServer(('127.0.0.1', 0), preview.PreviewHandler) as server:
                 worker = threading.Thread(target=server.serve_forever, daemon=True)
                 worker.start()
                 self.addCleanup(server.shutdown)
