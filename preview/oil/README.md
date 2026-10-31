@@ -11,6 +11,24 @@
 - Sensorpublicatie, achtergrond-GPS, zones, meldingen en Drive-back-ups starten **niet** in deze aparte previewserver; geen Home Assistant Supervisor-token of externe API-sleutels.
 - Een markercontrole weigert een al gevulde, onbekende datamap. Geen automatische migratie of import van bestaande administratie.
 
+## Voorkeursroute: Railway Free (voorbereid, niet geactiveerd)
+
+Railway heeft Dockerhosting, een klein persistent volume en een gratis automatisch HTTPS-adres. De Free-proef geeft volgens de Railway-documentatie 30 dagen of $5 eenmalig tegoed, daarna een Free-abonnement met $1 gebruikstegoed per maand; grenzen en mogelijke onderbreking blijven van toepassing. Ga **niet** zonder afzonderlijke toestemming naar Hobby of een ander betaald abonnement.
+
+De Railway-app in ChatGPT kan na jouw expliciete koppeling gebruikt worden om beschikbare deployacties vanuit ChatGPT uit te voeren. Tot die koppeling is geen Railway-account of project toegankelijk.
+
+De bestaande `compose.yaml` is bedoeld voor een losse testhost. Railway gebruikt in plaats daarvan:
+- Bronrepository: `marcelhuisplan/rit-tank-home-assistant`.
+- Expliciete bronbranch: `feature/oil-maintenance-history-20261031` (niet `main`).
+- Repository-root als build context, en **uitsluitend** `preview/oil/Dockerfile.railway` als Dockerfile. Laat Railway beslist niet het productie-Dockerfile of het reguliere `run.sh` starten.
+- Eén replica en één afzonderlijk Railway-volume op `/data` (Free: maximaal 0,5 GB). Een volume is verplicht voor SQLite-persistentie.
+- Variabelen: `RIT_TANK_PREVIEW_PASSWORD` = privé, uniek wachtwoord van minimaal 20 tekens; `PORT=8099`; `SUPERVISOR_TOKEN` en `HASSIO_TOKEN` **niet invullen**.
+- Public networking pas activeren **nadat** het testvolume, wachtwoord, authenticatie en niet-verbonden HA-controles correct zijn. Daarna `Generate Domain` voor een afzonderlijk `https://<unieke-host>.up.railway.app`-adres. De loginpagina is daarmee publiek bereikbaar, maar de appgegevens zijn zonder wachtwoord niet toegankelijk.
+- Zet automatische GitHub-deployments uit nadat de dienst is gekoppeld, zodat volgende commits aan Draft PR #56 geen onverwachte updates van de testomgeving veroorzaken.
+- Na de iPhone-test: eerst publiek domein uitschakelen, daarna service/project en het **uitsluitend fictieve Railway-testvolume** verwijderen. Controleer dat nergens een productievolume is geselecteerd.
+
+**Status:** Deze repository bevat alleen de voorbereide Railway-Dockerfile en tests. Er is géén Railway-project, volume, wachtwoord, URL, hostingrekening of deployment aangemaakt. Niet op de productieserver installeren.
+
 ## Beveiliging bij latere plaatsing
 
 De Docker Compose-configuratie bindt de backend alleen aan **127.0.0.1:18099** op de testhost. Dat is **geen openbare URL en nog geen iPhone-URL**.
