@@ -127,3 +127,44 @@ jobs:
         with:
           name: release-33-mobile-ui
           path: test-results/
+
+  release-preflight-3403:
+    name: Check 34.03 release permissions and package (NO PUBLISH)
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 56 && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Confirm unchanged approved feature and main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPROVED=af15c7ba6f75503b3e1999758601a627d49f0a12
+          git merge-base --is-ancestor "$APPROVED" HEAD
+          test "$(git rev-parse "$APPROVED:rit_tank")" = "$(git rev-parse HEAD:rit_tank)"
+          test "$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')" = 8a4b991bd7a81f59c866bcf46cf188167ddb6acd
+          git diff --name-only "$APPROVED" HEAD > release-diff.txt
+          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3403[.]yml)|tools/release_3403[.]py)$' release-diff.txt; then
+            echo 'Unexpected change to approved candidate'; exit 1
+          fi
+      - name: Verify exact 34.03 package with no data (NO PUBLISH)
+        run: python3 tools/release_3403.py --verify-only
+      - name: Verify tag does not exist and test token write access WITHOUT creating a tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --tags origin refs/tags/v34.03 | grep -q .; then
+            echo 'Release tag already exists'; exit 1
+          fi
+          # A real GitHub permission check with zero ref mutation.
+          # The actual release REST API still cannot be guaranteed without publishing.
+          git push --dry-run origin af15c7ba6f75503b3e1999758601a627d49f0a12:refs/tags/v34.03
+          echo 'Dry-run push accepted; no tag, release or Home Assistant state changed'
