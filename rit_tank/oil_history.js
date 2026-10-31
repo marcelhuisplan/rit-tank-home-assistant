@@ -86,9 +86,21 @@ async function saveOilEntry(event) {
   el('oilHistorySave').disabled = true;
   el('oilHistoryError').textContent = '';
   try {
-    await api('api/maintenance/oil' + (id ? '/' + encodeURIComponent(id) : ''), {
+    const save = () => api('api/maintenance/oil' + (id ? '/' + encodeURIComponent(id) : ''), {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
     });
+    try {
+      await save();
+    } catch (error) {
+      if (error.code !== 'OIL_ODOMETER_CONFIRMATION_REQUIRED') throw error;
+      if (!confirm(error.message + '\n\nDeze afwijkende stand toch alleen in de onderhoudshistorie opslaan?')) {
+        el('oilHistoryError').textContent = 'Opslaan geannuleerd. Controleer de tellerstand.';
+        el('oilHistorySave').disabled = false;
+        return;
+      }
+      payload.confirm_odometer_anomaly = true;
+      await save();
+    }
     closeModal('oilHistoryModal');
     await loadOilHistory();
     toast('Oliebeurt opgeslagen');
