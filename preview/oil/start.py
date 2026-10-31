@@ -137,8 +137,22 @@ def prepare_data(folder: Path, password: str) -> dict[str, object]:
         return {'reused': False, 'database': str(dbfile)}
 
 
+class PreviewHandler(app.Handler):
+    """Standalone login is mandatory; no trusted Home Assistant ingress bypass."""
+
+    def _is_ingress(self) -> bool:
+        return False
+
+
+def _disabled_ha(*_args, **_kwargs):
+    raise ValueError('Home Assistant-koppeling is uitgeschakeld in deze fictieve testapp.')
+
+
 def serve() -> None:
     password = os.environ.pop('RIT_TANK_PREVIEW_PASSWORD', '')
+    # Do not permit HA credentials in a public-facing synthetic preview.
+    if any(os.environ.get(key) for key in ('SUPERVISOR_TOKEN', 'HASSIO_TOKEN')):
+        raise RuntimeError('Preview mag nooit met Home Assistant-tokens starten.')
     folder = Path('/data')
     prepare_data(folder, password)
     # Deliberately no app.main(): avoid HA sensors, GPS tracking, zones,
@@ -149,8 +163,11 @@ def serve() -> None:
     app.RECEIPT_DIR = folder / 'receipts'
     app.publish_sensors_async = lambda: None
     app.start_assistant_threads = lambda: None
+    app.ha_get = _disabled_ha
+    app.ha_post_state = _disabled_ha
+    app.ha_ws_command = _disabled_ha
     print('Fictieve oliepreview gereed; alleen via aparte HTTPS-proxy bereikbaar.', flush=True)
-    ThreadingHTTPServer(('0.0.0.0', app.PORT), app.Handler).serve_forever()
+    ThreadingHTTPServer(('0.0.0.0', app.PORT), PreviewHandler).serve_forever()
 
 
 if __name__ == '__main__':
