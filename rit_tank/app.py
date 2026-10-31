@@ -2860,7 +2860,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 #fuelModal .fuel-date-next{width:100%;min-height:48px;margin-top:10px;touch-action:manipulation}
 #fuelModal #fuelSaveButton{min-height:58px}
 @media(min-width:768px){#fuelModal .fuel-number{height:80px;font-size:40px}}
-#oilHistoryCard .oil-hint{color:var(--muted);font-size:12px;line-height:1.5;margin:5px 0 12px}#oilHistoryCard .event-actions{display:flex;gap:6px}#oilHistoryCard button{min-height:44px;touch-action:manipulation}#oilHistoryModal input,#oilHistoryModal select{min-height:52px;font-size:16px}#oilHistoryModal .sheet{max-height:calc(100dvh - env(safe-area-inset-top) - 12px);overflow-y:auto;padding-bottom:calc(20px + env(safe-area-inset-bottom))}#oilHistoryModal #oilHistoryError{color:#ffabb4;font-size:13px}
+#oilHistoryCard .oil-hint{color:var(--muted);font-size:12px;line-height:1.5;margin:5px 0 12px}#oilHistoryCard .event-actions{display:flex;gap:6px}#oilHistoryCard button{min-height:44px;touch-action:manipulation}#oilHistoryModal input,#oilHistoryModal select{min-height:52px;font-size:16px}#oilHistoryModal .sheet{max-height:calc(100dvh - env(safe-area-inset-top) - 12px);overflow-y:auto;padding-bottom:calc(20px + env(safe-area-inset-bottom))}#oilHistoryModal #oilHistoryError{color:#ffabb4;font-size:13px}#oilHistoryModal .sheethead{position:sticky;top:0;z-index:5;background:#14191e;padding-bottom:10px}#oilHistoryModal .close{flex:0 0 48px;min-width:48px;min-height:48px;background:#50eec7;color:#05251d;border:0;border-radius:14px;font-size:27px;font-weight:900;touch-action:manipulation}
 </style>
 </head>
 <body>
