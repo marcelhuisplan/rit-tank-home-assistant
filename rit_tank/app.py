@@ -364,6 +364,7 @@ def init_db() -> None:
         );
         ''')
         receipt_archive.init_schema(con)
+        oil_history.init_schema(con)
         # V2 database migration. Existing V1 data remains untouched.
         cols = {r['name'] for r in con.execute('PRAGMA table_info(events)')}
         for col, sql_type in (
@@ -524,7 +525,7 @@ def reset_administration(payload: dict[str, Any]) -> dict[str, Any]:
                     os.fsync(handle.fileno())
                 if RECEIPT_DIR.exists():
                     RECEIPT_DIR.rename(backup / 'receipts')
-                for table in ('assistant_arrivals', 'trip_stops', 'business_trips', 'events',
+                for table in ('oil_maintenance', 'assistant_arrivals', 'trip_stops', 'business_trips', 'events',
                               'audit_log', 'route_memory', 'distance_calibration', 'report_addresses'):
                     con.execute(f'DELETE FROM {table}')
                 # Backup status is technical state; GPS, proposals and diagnostics are old data.
@@ -2168,11 +2169,12 @@ def business_trips_for_period(period: str) -> list[dict[str, Any]]:
     return trips.business_trips_for_period(period, dependencies=_trips_dependencies())
 
 try:
-    from . import pdf_report, report_validation, receipt_archive
+    from . import pdf_report, report_validation, receipt_archive, oil_history
 except ImportError:
     import pdf_report
     import receipt_archive
     import report_validation
+    import oil_history
 
 _pdf_text = pdf_report._pdf_text
 _pdf_escape = pdf_report._pdf_escape
@@ -2665,7 +2667,7 @@ def pwa_manifest() -> bytes:
 
 
 SERVICE_WORKER = f'''const CACHE = "rit-tank-shell-{APP_VERSION}";
-const SHELL = ["./", "manifest.webmanifest", "huisplan-icon-180.png", "huisplan-icon-192.png", "huisplan-icon-512.png", "captur-2014.png", "receipt-scanner.js?v={APP_VERSION}", "receipt-archive.js?v={APP_VERSION}"];
+const SHELL = ["./", "manifest.webmanifest", "huisplan-icon-180.png", "huisplan-icon-192.png", "huisplan-icon-512.png", "captur-2014.png", "receipt-scanner.js?v={APP_VERSION}", "receipt-archive.js?v={APP_VERSION}", "oil-history.js?v={APP_VERSION}"];
 self.addEventListener("install", event => {{
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 }});
@@ -2858,6 +2860,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 #fuelModal .fuel-date-next{width:100%;min-height:48px;margin-top:10px;touch-action:manipulation}
 #fuelModal #fuelSaveButton{min-height:58px}
 @media(min-width:768px){#fuelModal .fuel-number{height:80px;font-size:40px}}
+#oilHistoryCard .oil-hint{color:var(--muted);font-size:12px;line-height:1.5;margin:5px 0 12px}#oilHistoryCard .event-actions{display:flex;gap:6px}#oilHistoryCard button{min-height:44px;touch-action:manipulation}#oilHistoryModal input,#oilHistoryModal select{min-height:52px;font-size:16px}#oilHistoryModal .sheet{max-height:calc(100dvh - env(safe-area-inset-top) - 12px);overflow-y:auto;padding-bottom:calc(20px + env(safe-area-inset-bottom))}#oilHistoryModal #oilHistoryError{color:#ffabb4;font-size:13px}
 </style>
 </head>
 <body>
@@ -2896,6 +2899,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
     <section class="card"><div class="cardhead"><h3>Verloop</h3><div class="seg"><button class="active" data-metric="km">km</button><button data-metric="liters">L</button><button data-metric="cost">€</button><button data-metric="l100">L/100</button></div></div><div class="chart-scroll"><div class="chart" id="chart"></div></div></section>
     <section class="card"><div class="cardhead"><h3>📍 Tankstations</h3><span style="color:var(--muted);font-size:12px" id="stationCount"></span></div><div class="station-list" id="stationStats"></div></section>
     <section class="card"><div class="cardhead"><h3>Recente registraties</h3><span style="color:var(--muted);font-size:12px" id="eventCount"></span></div><div class="history" id="history"></div></section>
+    <section class="card" id="oilHistoryCard"><div class="cardhead"><h3>🛢️ Onderhoud · motorolie</h3><button type="button" class="linkbtn" onclick="openOilEntry()">＋ Oliebeurt</button></div><p class="oil-hint">Olie bijvullen en verversen voor deze auto. Heeft geen invloed op ritten of tellerstand.</p><div class="history" id="oilHistoryList"><div class="empty">Onderhoudshistorie laden…</div></div></section>
   </div>
 
   <div class="view" id="view-business">
@@ -2938,6 +2942,8 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <button class="save" type="button" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button><div id="fuelConflictWarning" hidden role="alert" style="margin-top:14px;padding:14px;border:2px solid #b97517;border-radius:12px;background:#fff4db;color:#37260b"><strong>⚠️ Kilometerconflict — historische tankbon</strong><p>De ingevoerde kilometerstand botst met de volgende registratie(s):</p><ul id="fuelConflictDetails" style="padding-left:22px"></ul><p>Je kunt deze tankbon bewust opslaan. Hij wordt gemarkeerd als kilometerconflict; onbetrouwbare afstanden en verbruikscycli worden niet meegerekend. De actuele tellerstand verandert niet.</p><button class="save" type="button" onclick="saveFuelConfirmed()">Ja, ondanks kilometerconflict opslaan</button><button class="linkbtn" type="button" onclick="clearFuelConflictWarning()">Terug naar tankbon</button></div>
 <div class="guide-section" id="fuelStepScan"><button type="button" class="scan-card" onclick="openReceiptArchive()">📷 <b>Tankbon scannen</b></button><p>Bon apart bewaren als PDF; vult geen tankgegevens in.</p><button type="button" class="linkbtn" onclick="openReceiptArchive()">🗂️ Bonnenarchief</button></div>
 </div></div>
+
+<div class="modal" id="oilHistoryModal" role="dialog" aria-modal="true" aria-labelledby="oilHistoryTitle"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2 id="oilHistoryTitle">🛢️ Oliebeurt</h2><button type="button" class="close" onclick="closeModal('oilHistoryModal')" aria-label="Sluiten">✕</button></div><form id="oilHistoryForm" onsubmit="saveOilEntry(event)"><input id="oilHistoryId" type="hidden"><div class="field"><label for="oilHistoryKind">Soort onderhoud</label><select id="oilHistoryKind" required><option value="top_up">Olie bijvullen</option><option value="change">Olie verversen</option></select></div><div class="field"><label for="oilHistoryDate">Datum</label><input id="oilHistoryDate" type="date" required></div><div class="field"><label for="oilHistoryType">Olietype / specificatie</label><input id="oilHistoryType" list="oilTypes" maxlength="120" placeholder="Bijv. 0W-20" required><datalist id="oilTypes"><option value="0W-20"><option value="5W-30"><option value="5W-40"><option value="10W-40"></datalist></div><div class="field"><label for="oilHistoryAmount">Hoeveelheid (ml)</label><input id="oilHistoryAmount" type="number" inputmode="numeric" min="1" max="20000" step="1" placeholder="Bijv. 300" required></div><div class="field"><label for="oilHistoryOdometer">Tellerstand bij onderhoud (km)</label><input id="oilHistoryOdometer" type="number" inputmode="numeric" min="0" max="9999999" step="1" required><small>Alleen voor je onderhoudshistorie; past de huidige teller niet aan.</small></div><p id="oilHistoryError" role="alert"></p><button type="submit" class="save" id="oilHistorySave">Oliebeurt opslaan</button></form></div></div>
 
 <div class="modal" id="kmModal"><div class="sheet"><div class="grab"></div><div class="sheethead"><h2>🛣️ Kilometerstand</h2><button class="close" onclick="closeModal('kmModal')">✕</button></div><input id="kmOdo" type="hidden"><div class="guide-section active" id="kmStepOdo"><div class="guide-head"><span class="step-badge">1</span><b>Nieuwe kilometerstand</b><small>Laatste stand is vooringesteld</small></div><div class="odo-wheelbox" id="kmOdoWheels"></div><div class="odo-live"><b id="kmOdoDisplay">—</b><span>km</span></div><div class="odo-last" id="kmOdoLast"></div><button class="guide-next" type="button" onclick="guideTo('kmStepRest')">Verder →</button></div><div class="guide-section" id="kmStepRest"><div class="field" style="margin-top:0"><label>Datum & tijd</label><input id="kmDate" type="datetime-local"></div><div class="field"><label>Notitie (optioneel)</label><input id="kmNote" maxlength="200" placeholder="Bijv. thuiskomst, zakelijke rit..."></div><button class="save" onclick="saveKm()">Kilometerstand opslaan</button></div></div></div>
 
@@ -3070,7 +3076,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 <div class="modal" id="administrationResetModal" role="dialog" aria-modal="true" aria-labelledby="resetTitle"><div class="sheet">
   <div class="sheethead"><h2 id="resetTitle">Nieuwe administratie starten</h2><button type="button" class="close" aria-label="Annuleren" onclick="cancelAdministrationReset()">✕</button></div>
   <p>Dit verwijdert permanent alle ritten en administratieve testgegevens. Dit kan niet ongedaan worden gemaakt.</p>
-  <p>Ook tankbeurten, tankbonnen, correcties en aangeleerde ritgegevens verdwijnen uit de administratie. Instellingen en bekende locaties blijven behouden.</p>
+  <p>Ook tankbeurten, tankbonnen, olie-onderhoudshistorie, correcties en aangeleerde ritgegevens verdwijnen uit de administratie. Instellingen en bekende locaties blijven behouden.</p>
   <p>Vóór het wissen wordt een private lokale herstelback-up gemaakt. Deze bevat de oude gegevens en is niet via de app beschikbaar. Eerder gedownloade bestanden en Google Drive-archieven blijven bestaan.</p>
   <div class="field"><label for="resetConfirmation">Typ exact RESET</label><input id="resetConfirmation" autocomplete="off" autocapitalize="characters" spellcheck="false" oninput="updateAdministrationReset()"></div>
   <div id="resetOdometerStep" hidden>
@@ -3891,10 +3897,13 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshVi
 </script>
 <script src="receipt-scanner.js"></script>
 <script src="receipt-archive.js"></script>
+<script src="oil-history.js"></script>
 </body></html>'''
 # Refresh the external JS even under a still-active older PWA worker.
 APP_HTML = APP_HTML.replace('<script src="receipt-archive.js"></script>',
                             f'<script src="receipt-archive.js?v={APP_VERSION}"></script>')
+APP_HTML = APP_HTML.replace('<script src="oil-history.js"></script>',
+                            f'<script src="oil-history.js?v={APP_VERSION}"></script>')
 APP_HTML = APP_HTML.replace('<script src="receipt-scanner.js"></script>',
                             f'<script src="receipt-scanner.js?v={APP_VERSION}"></script>')
 
@@ -4038,6 +4047,15 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if path == '/oil-history.js':
+            data = Path(__file__).with_name('oil_history.js').read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/javascript; charset=utf-8')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == '/receipt-archive.js':
             data = Path(__file__).with_name('receipt_archive.js').read_bytes()
             self.send_response(200)
@@ -4093,6 +4111,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._auth_status()
         if not self._authorize_api():
             return
+        if path == '/api/maintenance/oil':
+            with DB_LOCK, db() as con:
+                return json_response(self, {'entries': oil_history.list_entries(con)})
+        oil_match = re.fullmatch(r'/api/maintenance/oil/(\d+)', path)
+        if oil_match:
+            try:
+                with DB_LOCK, db() as con:
+                    return json_response(self, {'entry': oil_history.get_entry(con, int(oil_match.group(1)))})
+            except oil_history.OilEntryNotFound as exc:
+                return json_response(self, {'error': str(exc)}, 404)
         if path == '/api/receipt-archive':
             with DB_LOCK, db() as con:
                 return json_response(self, {'receipts': receipt_archive.archive_rows(con)})
@@ -4343,6 +4371,18 @@ class Handler(BaseHTTPRequestHandler):
             if fuel_receipt_match:
                 return json_response(self, link_existing_fuel_receipt(
                     int(fuel_receipt_match.group(1)), payload), 201)
+            oil_match = re.fullmatch(r'/api/maintenance/oil/(\d+)', path)
+            if path == '/api/maintenance/oil' or oil_match:
+                try:
+                    with DB_LOCK, db() as con:
+                        stamp = iso_local()
+                        if oil_match:
+                            entry = oil_history.update_entry(con, int(oil_match.group(1)), payload, stamp)
+                        else:
+                            entry = oil_history.create_entry(con, payload, stamp)
+                    return json_response(self, {'entry': entry}, 200 if oil_match else 201)
+                except oil_history.OilEntryNotFound as exc:
+                    return json_response(self, {'error': str(exc)}, 404)
             if path == '/api/fuel':
                 return json_response(self, add_fuel(payload), 201)
             if path == '/api/odometer':
@@ -4408,6 +4448,17 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {'ok': True})
             except Exception:
                 return json_response(self, {'error': 'Zakelijke rit verwijderen mislukt.'}, 500)
+        oil_match = re.fullmatch(r'/api/maintenance/oil/(\d+)', path)
+        if oil_match:
+            try:
+                with DB_LOCK, db() as con:
+                    oil_history.delete_entry(con, int(oil_match.group(1)),
+                                             confirmed=self.headers.get('X-Confirm-Delete') == 'yes')
+                return json_response(self, {'ok': True})
+            except oil_history.OilEntryNotFound as exc:
+                return json_response(self, {'error': str(exc)}, 404)
+            except ValueError as exc:
+                return json_response(self, {'error': str(exc)}, 400)
         m = re.fullmatch(r'/api/events/(\d+)', path)
         if not m:
             return json_response(self, {'error': 'Niet gevonden'}, 404)
