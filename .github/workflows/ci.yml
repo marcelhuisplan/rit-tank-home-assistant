@@ -33,6 +33,14 @@ jobs:
       - name: Run Python tests
         working-directory: rit_tank
         run: python -m unittest discover -p 'test_*.py' -v
+      - name: Fetch immutable pre-feature runtime for isolated rollback test
+        uses: actions/checkout@v4
+        with:
+          ref: 8a4b991bd7a81f59c866bcf46cf188167ddb6acd
+          path: legacy-34-02
+          persist-credentials: false
+      - name: Verify old 34.02 runtime opens an oil-enabled test database intact
+        run: python tools/test_oil_legacy_rollback.py legacy-34-02/rit_tank/app.py
       - name: Compile runtime modules
         run: python -m py_compile rit_tank/app.py rit_tank/pdf_report.py rit_tank/report_validation.py rit_tank/google_places.py rit_tank/routing.py rit_tank/home_assistant.py rit_tank/trips.py rit_tank/assistant.py rit_tank/odometer_control.py rit_tank/receipt_archive.py rit_tank/receipt_recognition.py
       - name: Smoke-test runtime imports
