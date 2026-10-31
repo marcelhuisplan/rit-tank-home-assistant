@@ -83,6 +83,23 @@ jobs:
             http://127.0.0.1:18099/api/maintenance/oil)
           test "$code" = "401"
           docker exec rit-oil-preview-ci python3 -B -c "import sqlite3,pathlib; p=pathlib.Path('/data'); c=sqlite3.connect(p/'rit_tank.db'); assert (p/'.synthetic-oil-preview-only').exists(); assert c.execute('SELECT COUNT(*) FROM events').fetchone()[0]==3; assert c.execute('SELECT amount_ml FROM oil_maintenance').fetchone()[0]==4200; print('isolated synthetic backend PASS')"
+      - name: Build Railway synthetic preview image from repository root
+        run: docker build -f preview/oil/Dockerfile.railway -t rit-oil-railway-ci .
+      - name: Smoke-test the exact Railway preview image without public hosting
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/rit-oil-railway-ci"
+          docker run -d --rm --name rit-oil-railway-preview-ci -e RIT_TANK_PREVIEW_PASSWORD=CI_ONLY_RAILWAY_SYNTHETIC_PASSWORD_2026 -e SUPERVISOR_TOKEN= -e HASSIO_TOKEN= -v "$RUNNER_TEMP/rit-oil-railway-ci:/data" -p 127.0.0.1:18100:8099 rit-oil-railway-ci
+          trap 'docker rm -f rit-oil-railway-preview-ci >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for attempt in {1..25}; do
+            if curl -fsS http://127.0.0.1:18100/health >/dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then docker logs rit-oil-railway-preview-ci; exit 1; fi
+          code=$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'X-Forwarded-Proto: https' -H 'X-Ingress-Path: /fake-ingress' http://127.0.0.1:18100/api/maintenance/oil)
+          test "$code" = "401"
+          docker exec rit-oil-railway-preview-ci python3 -B -c "import sqlite3,pathlib; p=pathlib.Path('/data'); c=sqlite3.connect(p/'rit_tank.db'); assert (p/'.synthetic-oil-preview-only').exists(); assert c.execute('SELECT amount_ml FROM oil_maintenance').fetchone()[0]==4200; print('Railway synthetic preview image PASS')"
       - name: Verify packaged runtime files
         run: docker run --rm --entrypoint /bin/sh rit-tank-ci -c 'test -f /app/app.py && test -f /app/report_validation.py && test -f /app/pdf_report.py && test -f /app/google_places.py && test -f /app/routing.py && test -f /app/home_assistant.py && test -f /app/trips.py && test -f /app/assistant.py && test -f /app/odometer_control.py && test -f /app/receipt_archive.py && test -f /app/receipt_archive.js && test -f /app/receipt_scanner.js && test -f /app/receipt_recognition.py && test -f /app/run.sh'
       - name: Smoke-test runtime imports in production image
