@@ -3,9 +3,9 @@
 **Datum voorbereiding:** 31 oktober 2026
 **Status:** vrijgavevoorbereiding; nog **NIET** mergen, installeren of releasen.
 **PR:** https://github.com/marcelhuisplan/rit-tank-home-assistant/pull/56
-**Gecontroleerde functionele commit:** `69301eb051696b6d47cc0954074b2117df06e5a1` (volledige CI geslaagd; zie onder).
+**Laatst bevestigde bronstand vóór dit besluitvoorstel:** `f9be3f4aae2bdfc7211d9132d434cefe4cc0d756` (volledige CI geslaagd; zie onder).
 **Basis main:** `8a4b991bd7a81f59c866bcf46cf188167ddb6acd`; runtimeversie `34.02`.
-**CI:** https://github.com/marcelhuisplan/rit-tank-home-assistant/actions/runs/41237473135 (Python, Docker, mobiele regressies geslaagd).
+**CI:** https://github.com/marcelhuisplan/rit-tank-home-assistant/actions/runs/41240527592 (Python, Docker, mobiele regressies geslaagd).
 
 ## Scope en autorisatie
 
@@ -15,6 +15,24 @@
 - PR #54 en #55 blijven buiten deze release tenzij afzonderlijk goedgekeurd. PR #56 staat nog op Draft en is niet gemerged.
 - De huidige 34.02-releaseversie blijft onveranderd tot expliciete toestemming om een releaseversie te kiezen en te publiceren. Het versienummer wordt pas bij releasevrijgave gelijktijdig bijgewerkt in de applicatie, add-onconfiguratie, documentatie, tests, CI en PWA-caches.
 - **Geen acties in de echte Home Assistant-installatie zonder nieuwe, afzonderlijke toestemming.**
+
+## Voorstel releasevolgorde (besluit van eigenaar nog vereist)
+
+**Aanbevolen:** olieonderhoud uit Draft PR #56 als **34.03** als de eerstvolgende wijzigingsrelease. De ongepubliceerde PR #55 is alleen in de **titel** aangeduid als 34.03: in zijn eigen `app.py` en `config.yaml` staat nog **34.02**. Er is dus nog geen officieel tweede 34.03-pakket. PR #55 blijft volledig ongemoeid.
+
+- **Route A — voorkeur wegens gewenste snelheid:** eerst olieonderhoud **34.03** uit PR #56; pas later, na afzonderlijke toetsing en toestemming, automatische tankstops uit PR #55 als eerstvolgende vrije release (naar verwachting **34.04**). De WIP-titel en versietoekenning van PR #55 mogen **pas met afzonderlijke toestemming** worden aangepast, niet in deze opdracht.
+- **Route B — alternatief:** eerst automatische tankstops uit PR #55 definitief als **34.03**; olieonderhoud uit PR #56 pas daarna als **34.04**. Dit vertraagt de gewenste olieonderhoudsfunctie en vereist een nieuwe integratievergelijking.
+- **Geen 34.03-reservering of definitieve nummering zonder akkoord.** De actieve `APP_VERSION`, Home Assistant `config.yaml`, documentatie, tests en CI blijven nu **34.02**. Ook geen PR-merge, tag, release of Home Assistant-update.
+- PR #54 (bonviewer) blijft afzonderlijk Draft en mag niet stilzwijgend meeliften.
+
+### Exacte releasevoorbereidingschecklist na nummeringsakkoord
+
+1. **Vastpinnen bron**: vergelijk de exact vrij te geven PR #56-HEAD met `main`; bij wijzigingen of een eerdere merge van PR #54/#55 eerst opnieuw toetsen en niet stilzwijgend combineren. Alleen bestanden uit `rit_tank/` vormen de bestaande lokale Home Assistant-add-on.
+2. **Versienummer in één wijzigingsset**: zet `APP_VERSION` in `rit_tank/app.py`, `version` in `rit_tank/config.yaml`, de releasekoppen van `rit_tank/README.md` en `rit_tank/DOCS.md`, de nieuwe changelogsectie in `rit_tank/CHANGELOG.md`, en de expliciete versiecontroles in `.github/workflows/ci.yml` op exact dezelfde, door de eigenaar goedgekeurde release.
+3. **Tests afstemmen, geen historie herschrijven**: huidige-versieasserties staan onder meer in `test_700.py`, `test_v44.py`, `test_v3300.py`, `test_v3200.py`, `test_pwa_update_3312.py`, `test_release_recovery_3309.py`, `test_receipt_archive.py` en `test_fuel_receipt_link_3311.py`. Pas alleen actuele-versieasserties aan; behoud historische testscenario's en hun labels.
+4. **PWA-caches**: bevestig dat de nieuw afgeleide `SERVICE_WORKER`-cachenaam en de versieparameters voor `oil-history.js`, `receipt-scanner.js` en `receipt-archive.js` overeenstemmen met de goedgekeurde runtimeversie. De oude, vastgepinde **34.02-code-only rollbacktest** in `tools/test_oil_legacy_rollback.py` blijft expres op 34.02 gericht.
+5. **Volledige officiële CI**: Python, Home Assistant-Docker-build en mobiele Chromium/WebKit-regressies op de laatste releasecommit; elke fout herstellen voordat de owner release toestemming geeft.
+6. **Geen verborgen productieacties**: een succesvolle Draft PR-CI is geen installatie; sluit PR #56 niet af, merge niet en publiceer geen GitHub-release zonder nieuwe expliciete toestemming.
 
 ## STOP-gate 1: vaststellen wat werkelijk geïnstalleerd is
 
@@ -29,7 +47,7 @@ De eigenaar heeft op 31 oktober 2026 een screenshot gedeeld waarop de Home Assis
 
 ## STOP-gate 2: herstelbare back-up, VÓÓR release of installatie
 
-De eigenaar heeft op 31 oktober 2026 gemeld dat een Home Assistant-back-up is gemaakt. **De inhoud en externe bewaring van die back-up zijn nog NIET onafhankelijk gecontroleerd.** Een screenshot is **niet** verplicht; een korte bevestiging van de geselecteerde onderdelen en bewaarde herstelgegevens volstaat als eigenaarattestatie, maar blijft geen technische herstelproef.
+De eigenaar heeft op 31 oktober 2026 gemeld dat een Home Assistant-back-up is gemaakt en **op verzoek bevestigd** dat deze Rit & Tank inclusief gegevens, de lokale apps-map en Home Assistant-instellingen bevat, met een externe kopie en benodigde herstelsleutel. **Dit is een eigenaarverklaring; wij hebben de back-upinhoud, leesbaarheid en daadwerkelijke Home Assistant-terugzetting niet zelfstandig geverifieerd.** Een screenshot is niet vereist, maar vóór de werkelijke update moet de herstelsituatie nogmaals gecontroleerd worden.
 
 In Home Assistant **Instellingen → Systeem → Back-ups → Back-up nu → Handmatige back-up**:
 
@@ -74,7 +92,7 @@ Officiële herstelrichtlijn: https://www.home-assistant.io/common-tasks/general/
 
 - **GitHub-analyse:** gedaan.
 - **Fictieve migratie-, versleutelde herstel-, oude-runtime-, Docker- en mobiele regressietests:** afgerond en groen op eerdere commits.
-- **Back-up in de echte HA-installatie:** door eigenaar gemeld als afgerond; inhoud, externe kopie en herstelbaarheid niet technisch geverifieerd.
+- **Back-up in de echte HA-installatie:** door eigenaar gemeld als afgerond met bevestigde selectie, externe kopie en herstelsleutel; technische inhouds- en herstelcontrole niet uitgevoerd.
 - **HA-versie:** 34.02 en draaiend vastgesteld op eigenaarsscreenshot (31 oktober); back-upinhoud, actuele administratie en versie direct vóór installatie nog te controleren.
 - **Nieuwe releaseversie, merge, installatie, HA-reset en rollback:** NIET uitgevoerd.
-- **Volgende noodzakelijke stap:** één korte tekstbevestiging van eigenaar dat de back-up **Rit & Tank inclusief data, lokale apps-map en Home Assistant-instellingen** bevat en buiten de HA-host toegankelijk is, inclusief benodigde herstelsleutel. Geen screenshot vereist. Een afzonderlijk expliciet akkoord blijft nodig voor merge, versieverhoging, release en daadwerkelijke Home Assistant-update.
+- **Volgende noodzakelijke stap:** eigenaar kiest expliciet tussen releasevolgorde A (olieonderhoud eerst, voorgesteld 34.03) of B (automatische tankstops eerst, olieonderhoud later 34.04). Pas na dat nummeringsbesluit een releasekandidaat met versieophoging maken; voor merge, releasepublicatie en daadwerkelijke Home Assistant-update is daarna afzonderlijk akkoord vereist.
