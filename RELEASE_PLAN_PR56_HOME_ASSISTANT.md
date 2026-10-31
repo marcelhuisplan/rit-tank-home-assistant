@@ -1,10 +1,10 @@
 # Rit & Tank PR #56 — veilige Home Assistant-releasevoorbereiding
 
-**Datum voorbereiding:** 31 oktober 2026  
-**Status:** alleen voorbereidingsplan, **NIET installeren of uitvoeren**.  
-**PR:** https://github.com/marcelhuisplan/rit-tank-home-assistant/pull/56  
-**Gecontroleerde feature-HEAD:** `b7afd736849aa07d5dbb74386a5bd4f8e1135ee7` (vóór toevoeging van deze checklist)  
-**Basis main:** `8a4b991bd7a81f59c866bcf46cf188167ddb6acd`; runtimeversie `34.02`.  
+**Datum voorbereiding:** 31 oktober 2026
+**Status:** alleen voorbereidingsplan, **NIET installeren of uitvoeren**.
+**PR:** https://github.com/marcelhuisplan/rit-tank-home-assistant/pull/56
+**Gecontroleerde feature-HEAD:** `b7afd736849aa07d5dbb74386a5bd4f8e1135ee7` (vóór toevoeging van deze checklist)
+**Basis main:** `8a4b991bd7a81f59c866bcf46cf188167ddb6acd`; runtimeversie `34.02`.
 **CI:** https://github.com/marcelhuisplan/rit-tank-home-assistant/actions/runs/41233421390 (Python, Docker, mobiele regressies geslaagd).
 
 ## Scope en autorisatie
@@ -37,7 +37,7 @@ In Home Assistant **Instellingen → Systeem → Back-ups → Back-up nu → Han
 4. Alleen wanneer reeds geconfigureerd: maak aanvullend een Rit & Tank `.rtbackup` op de bekende Drive-locatie. Dit archief bevat database en tankbonbestanden, maar **niet** het volledige HA-systeem en **niet** `options.json`: dus nooit als enige terugvalroute beschouwen.
 5. Controleer dat de belangrijkste paden onder de bestaande add-on-dataopslag worden meegenomen: `rit_tank.db` (inclusief SQLite WAL), `options.json`, `receipts/`, `receipt_archive/`, `administration_backups/`, `backups/` en benodigde sessie-/configuratiebestanden. Bevestig ook de broncode in de lokale apps-map.
 
-**Geen back-up, geen bevestigde inhoud, geen ontsleutelingssleutel of onvoldoende opslagruimte: STOP, niet installeren.**  
+**Geen back-up, geen bevestigde inhoud, geen ontsleutelingssleutel of onvoldoende opslagruimte: STOP, niet installeren.**
 Een daadwerkelijke hersteltest op de echte Home Assistant-installatie of een tweede HA OS-apparaat is nog **niet** uitgevoerd. Fictieve SQLite-/rtbackup-tests zijn eerder geslaagd, maar vormen geen bewijs van een succesvolle Supervisor-herstelprocedure.
 
 Officiële richtlijn: https://www.home-assistant.io/common-tasks/general/backups/
