@@ -65,7 +65,7 @@ const oilJs = fs.readFileSync(path.join(root,'rit_tank/oil_history.js'),'utf8');
           await page.locator('#oilHistoryList .empty').waitFor({state:'visible'});
           const title=page.locator('#oilHistoryCard h3');
           assert.match(await title.textContent(),/Onderhoud/);
-          await page.locator('#oilHistoryCard button').click();
+          await page.locator('#oilHistoryCard .cardhead button').click();
           const modal=page.locator('#oilHistoryModal');
           await modal.waitFor({state:'visible'});
           const close = await page.locator('#oilHistoryModal .close').evaluate(el => {
@@ -88,7 +88,7 @@ const oilJs = fs.readFileSync(path.join(root,'rit_tank/oil_history.js'),'utf8');
           assert.match(await page.locator('#oilHistoryList').textContent(),/0W-20/);
 
           // Earlier, full change is listed second.
-          await page.locator('#oilHistoryCard button').click();
+          await page.locator('#oilHistoryCard .cardhead button').click();
           await page.locator('#oilHistoryKind').selectOption('change');
           await page.locator('#oilHistoryDate').fill('2026-02-14');
           await page.locator('#oilHistoryType').fill('5W-30');
