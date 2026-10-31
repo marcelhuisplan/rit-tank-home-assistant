@@ -135,6 +135,7 @@ class OilMaintenanceTests(unittest.TestCase):
 
     def test_backup_round_trip_and_old_schema_compatibility(self):
         oil.create_entry(self.connection, self.payload(), '2026-10-31T12:00:00')
+        self.connection.commit()  # SQLite backup must read a committed source, not its own write transaction.
         target_path = Path(self.tmp.name) / 'backup.db'
         with sqlite3.connect(target_path) as target:
             self.connection.backup(target)
