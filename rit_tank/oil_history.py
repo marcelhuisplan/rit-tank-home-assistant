@@ -15,6 +15,10 @@ class OilEntryNotFound(ValueError):
     """A requested maintenance entry does not exist in the current vehicle."""
 
 
+class OilOdometerConfirmationRequired(ValueError):
+    """An unusual but possibly correct historic odometer needs approval."""
+
+
 def init_schema(con: sqlite3.Connection) -> None:
     """Additive, repeatable migration; never alters or rewrites existing tables."""
     con.executescript("""
@@ -25,7 +29,7 @@ def init_schema(con: sqlite3.Connection) -> None:
             kind TEXT NOT NULL CHECK(kind IN ('top_up', 'change')),
             oil_type TEXT NOT NULL,
             amount_ml INTEGER NOT NULL CHECK(amount_ml BETWEEN 1 AND 20000),
-            odometer INTEGER NOT NULL CHECK(odometer BETWEEN 0 AND 9999999),
+            odometer INTEGER NOT NULL CHECK(odometer BETWEEN 0 AND 999999),
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -71,7 +75,7 @@ def validate(payload: dict[str, Any]) -> dict[str, Any]:
         'kind': kind,
         'oil_type': oil_type,
         'amount_ml': _integer(payload.get('amount_ml'), 'Hoeveelheid (ml)', 1, 20000),
-        'odometer': _integer(payload.get('odometer'), 'Kilometerstand', 0, 9999999),
+        'odometer': _integer(payload.get('odometer'), 'Kilometerstand', 0, 999999),
     }
 
 
@@ -98,8 +102,43 @@ def get_entry(con: sqlite3.Connection, entry_id: int) -> dict[str, Any]:
     return _row(row)
 
 
-def create_entry(con: sqlite3.Connection, payload: dict[str, Any], stamp: str) -> dict[str, Any]:
+def _check_odometer(con: sqlite3.Connection, clean: dict[str, Any], payload: dict[str, Any],
+                    entry_id: int | None, registered_odometer: float | None) -> None:
+    """Read-only plausibility checks: never update the vehicle's real odometer.
+
+    A mismatch is a warning, not a forced correction: a later maintenance
+    reading may be real even when the user has not entered a new trip yet.
+    """
+    km, day = clean['odometer'], clean['performed_on']
+    messages = []
+    if registered_odometer is not None and km > registered_odometer:
+        messages.append(f'{km} km ligt boven de laatst geregistreerde voertuigstand '
+                        f'({registered_odometer:g} km).')
+    older = con.execute(
+        "SELECT MAX(odometer) FROM oil_maintenance "
+        "WHERE vehicle_key='primary' AND performed_on < ? AND id != ?",
+        (day, entry_id or -1),
+    ).fetchone()[0]
+    newer = con.execute(
+        "SELECT MIN(odometer) FROM oil_maintenance "
+        "WHERE vehicle_key='primary' AND performed_on > ? AND id != ?",
+        (day, entry_id or -1),
+    ).fetchone()[0]
+    if older is not None and km < older:
+        messages.append('De stand is lager dan bij een eerdere oliebeurt.')
+    if newer is not None and km > newer:
+        messages.append('De stand is hoger dan bij een latere oliebeurt.')
+    if messages and payload.get('confirm_odometer_anomaly') is not True:
+        raise OilOdometerConfirmationRequired(
+            'Controleer de kilometerstand bij deze oliebeurt: '
+            + ' '.join(messages) + ' De voertuigkilometerstand wordt niet aangepast.'
+        )
+
+
+def create_entry(con: sqlite3.Connection, payload: dict[str, Any], stamp: str,
+                 registered_odometer: float | None = None) -> dict[str, Any]:
     clean = validate(payload)
+    _check_odometer(con, clean, payload, None, registered_odometer)
     cur = con.execute(
         """INSERT INTO oil_maintenance
            (vehicle_key, performed_on, kind, oil_type, amount_ml, odometer, created_at, updated_at)
@@ -111,8 +150,12 @@ def create_entry(con: sqlite3.Connection, payload: dict[str, Any], stamp: str) -
 
 
 def update_entry(con: sqlite3.Connection, entry_id: int, payload: dict[str, Any],
-                 stamp: str) -> dict[str, Any]:
+                 stamp: str, registered_odometer: float | None = None) -> dict[str, Any]:
     clean = validate(payload)
+    if not con.execute("SELECT 1 FROM oil_maintenance WHERE id=? AND vehicle_key='primary'",
+                       (entry_id,)).fetchone():
+        raise OilEntryNotFound('Oliebeurt niet gevonden.')
+    _check_odometer(con, clean, payload, entry_id, registered_odometer)
     cur = con.execute(
         """UPDATE oil_maintenance
            SET performed_on=?, kind=?, oil_type=?, amount_ml=?, odometer=?, updated_at=?
