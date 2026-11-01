@@ -1,5 +1,13 @@
 # Changelog
 
+## 34.04 — automatische tankstop (concept PR #55)
+- Nieuwe tankbeurten tijdens een actieve rit krijgen één gekoppelde ⛽-tussenstop met de daadwerkelijk ingevoerde kilometerstand, tijd, stationnaam en bekend adres.
+- Rittenoverzicht en ritrapportage (PDF/CSV) markeren de tankstop; ontbrekende gegevens worden niet verzonnen.
+- Geen fictieve ritten/extra vergoedingen bij tanken buiten een rit.
+- Tankbeurten blijven behouden na verwijderen van de gekoppelde rit; additieve SQLite-migraties bewaren de bestaande administratie.
+- Alle olieonderhoudfunctionaliteit van 34.03 blijft behouden.
+- Nog niet officieel gemerged of gepubliceerd.
+
 ## 34.03 — motorolieonderhoud (releasekandidaat PR #56)
 
 - Nieuw onderdeel **Motorolie** voor afzonderlijke oliebeurten: bijvullen/verversen met datum, olietype, milliliters, onderhoudstellerstand en notitie.

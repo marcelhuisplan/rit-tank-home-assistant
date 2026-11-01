@@ -1,11 +1,19 @@
-# Rit & Tank 34.03
+# Rit & Tank 34.04
 
-## Motorolie bijvullen en verversen (34.03 — releasekandidaat)
+## 34.04 — automatische tankstops tijdens actieve rit
+
+- ⛽ Bij een nieuwe tankbeurt tijdens een actieve rit wordt één gekoppelde tussenstop gemaakt met de werkelijk ingevulde kilometerstand en datum/tijd.
+- Stationnaam en het beschikbare adres verschijnen in het rittenoverzicht en in de ritrapportage (PDF en CSV); ontbrekende adressen worden niet verzonnen en zijn corrigeerbaar.
+- Zonder actieve rit blijft tanken een gewone tankbeurt zonder fictieve zakelijke kilometervergoeding.
+- Ritten verwijderen laat de afzonderlijke tankbeurt intact; bestaande olieonderhoudsregistraties blijven volledig behouden.
+- De update naar 34.04 kan pas na goedgekeurde merge en officiële release via dezelfde Home Assistant-repository als bij 34.03 worden aangeboden.
+
+## Motorolie bijvullen en verversen (sinds 34.03)
 
 - Op het voertuigoverzicht is **Motorolie** beschikbaar: leg afzonderlijk olie bijvullen of volledig verversen vast, met datum/tijd, vrij olietype (bijvoorbeeld 0W-20 of 5W-30), exacte hoeveelheid in ml, tellerstand en opmerking.
 - Bekijk de onderhoudshistorie, wijzig foutieve vermeldingen en verwijder alleen na expliciete bevestiging.
 - Onderhoud staat in een aparte toevoegende SQLite-tabel `oil_maintenance` en verandert geen ritten, tankbeurten, fysieke tellerstand, kilometervergoeding, bonnen of PDF/CSV-ritrapportages.
-- **Dit is nog een Draft releasekandidaat.** Home Assistant draait op dit moment nog **34.02**; versie 34.03 is pas beschikbaar na afzonderlijke merge-/release-/installatietoestemming.
+- **34.04 is een conceptversie in Draft PR #55.** De huidige Home Assistant-installatie is 34.03; publicatie en installatie vereisen afzonderlijke toestemming.
 - Voor installatie: controleer een volledige Home Assistant-back-up inclusief lokale apps-map, Rit & Tank-gegevens, externe back-upkopie en herstelsleutel. Gebruik vervolgens de bestaande lokale Home Assistant-add-onupdate; GitHub-publicatie alleen werkt de lokale add-on niet bij.
 - Automatische tankstops (Draft PR #55) zijn **niet** inbegrepen; daarvoor is een latere afzonderlijke release voorzien.
 
@@ -129,7 +137,7 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Huidige release: **34.03**. Releasekandidaat op PR #56; productie blijft 34.02 tot installatie.
+- Releasekandidaat: **34.04**, nog niet gepubliceerd. Huidige geïnstalleerde versie: **34.03**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
 - Volgende release: **nog niet vastgesteld**.
