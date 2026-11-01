@@ -3,7 +3,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs');
 const html=fs.readFileSync(__dirname+'/app.py','utf8');
 const modal=html.slice(html.indexOf('<div class="modal" id="fuelModal">'),html.indexOf('<div class="modal" id="kmModal">'));
-for(const [id,hint] of [['fuelOdo','next'],['fuelLitersInput','next'],['fuelPriceInput','next'],['fuelStation','next'],['fuelNote','next']]){
+for(const [id,hint] of [['fuelOdo','next'],['fuelLitersInput','next'],['fuelPriceInput','next'],['fuelStation','next'],['fuelAddress','next'],['fuelNote','next']]){
  const el=modal.match(new RegExp('<input id="'+id+'"[^>]*>'));
  assert.ok(el,id+' is present');
  assert.ok(el[0].includes('enterkeyhint="'+hint+'"'),id+' keyboard hint');
@@ -17,7 +17,7 @@ for(const [id,step] of [['fuelStepOdo','1'],['fuelStepLiters','2'],['fuelStepPri
  const section=modal.slice(modal.indexOf('id="'+id+'"'),modal.indexOf('id="'+id+'"')+130);
  assert.ok(section.includes('step-badge">'+step+'</span>'),id+' number');
 }
-for(const [id,next] of [['fuelOdo','fuelLitersInput'],['fuelLitersInput','fuelPriceInput'],['fuelPriceInput','fuelStation'],['fuelStation','fuelNote'],['fuelNote','fuelDate']]){
+for(const [id,next] of [['fuelOdo','fuelLitersInput'],['fuelLitersInput','fuelPriceInput'],['fuelPriceInput','fuelStation'],['fuelStation','fuelAddress'],['fuelAddress','fuelNote'],['fuelNote','fuelDate']]){
  assert.match(modal,new RegExp('id="'+id+'"[^>]*onkeydown="fuelAdvance\\(event,\\x27'+next+'\\x27\\)"'),id+' Enter transition');
 }
 assert.ok(modal.includes('id="fuelDate" type="datetime-local" enterkeyhint="done" onkeydown="fuelAdvance(event)"'));

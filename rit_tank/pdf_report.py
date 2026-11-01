@@ -291,6 +291,13 @@ def report_stop_address(stop: dict[str, Any], *, dependencies: Mapping[str, Call
     address = _full_address(stop.get('manual_label'))
     if address:
         return address
+    # Fuel address entered by the user may have no postcode; never invent one.
+    if stop.get('fuel_event_id'):
+        raw = ' '.join(str(stop.get('manual_label') or '').split())
+        if raw != 'Adres tankstop nog niet bevestigd' and re.fullmatch(
+            r'[^,]*[^\W\d_][^,]*\s+\d+[A-Za-z]?,\s*[^,\d][^,]*', raw
+        ):
+            return raw
     address = _full_address(stop.get('location_address'))
     if address:
         return address
@@ -750,6 +757,14 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
             (destination, end_lines, end_offset, (244, 67, 54)),
         ):
             baseline = y_top - offset
+            if stop.get('fuel_event_id'):
+                # Tiny vector fuel-pump pictogram: standard PDF fonts cannot draw ⛽.
+                pump_x, pump_y = ADDRESS_X, baseline + 6
+                page.rect(pump_x, pump_y - 2, 5, 7, rgb=palette['muted'])
+                page.rect(pump_x + 1, pump_y + 1, 3, 2, rgb=(255, 255, 255))
+                page.line(pump_x + 5, pump_y + 2, pump_x + 7, pump_y, 0.6, rgb=palette['muted'])
+                page.text(str(stop.get('note') or 'Tankbeurt')[:38], ADDRESS_X + 10, baseline + 9,
+                          7.2, bold=True, rgb=palette['muted'])
             page.circle(147, baseline + 3, 4.3, rgb=color)
             for idx, line in enumerate(lines):
                 page.text(line, ADDRESS_X, baseline - idx * 12, 9.5, rgb=palette['text'])

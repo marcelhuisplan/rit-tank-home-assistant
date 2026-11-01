@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '34.03'
+APP_VERSION = '34.04'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -377,7 +377,8 @@ def init_db() -> None:
             ('business_trip_stop_id', 'INTEGER'),
             ('receipt_path', 'TEXT'),
             ('receipt_archive_id', 'INTEGER'),
-            ('kilometer_conflict', 'INTEGER NOT NULL DEFAULT 0')
+            ('kilometer_conflict', 'INTEGER NOT NULL DEFAULT 0'),
+            ('fuel_address', 'TEXT')
         ):
             if col not in cols:
                 con.execute(f'ALTER TABLE events ADD COLUMN {col} {sql_type}')
@@ -399,10 +400,13 @@ def init_db() -> None:
             ('original_destination_address', 'TEXT'),
             ('original_destination_distance_m', 'REAL'),
             ('destination_distance_source', 'TEXT'),
-            ('destination_manually_corrected', 'INTEGER DEFAULT 0')
+            ('destination_manually_corrected', 'INTEGER DEFAULT 0'),
+            ('fuel_event_id', 'INTEGER')
         ):
             if col not in stop_cols:
                 con.execute(f'ALTER TABLE trip_stops ADD COLUMN {col} {sql_type}')
+
+        con.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_trip_stops_fuel_event ON trip_stops(fuel_event_id) WHERE fuel_event_id IS NOT NULL')
 
         place_cols = {r['name'] for r in con.execute('PRAGMA table_info(known_places)')}
         for col, sql_type in (
@@ -1146,6 +1150,9 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
         lon = None
     note = str(payload.get('note') or '').strip()[:200]
     full_tank = 1 if bool(payload.get('full_tank', True)) else 0
+    # Preserve the user's address exactly; unknown details remain unknown.
+    # Missing address must not block a normal fuel registration.
+    fuel_address = ' '.join(str(payload.get('fuel_address') or '').split())[:220]
 
     with DB_LOCK, db() as con:
         hard_error = _fuel_odometer_hard_error(created, odo)
@@ -1176,17 +1183,45 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
         cur = con.execute("""
             INSERT INTO events(
                 created_at,type,odometer,liters,price_per_liter,station,full_tank,note,
-                place_id,latitude,longitude,location_accuracy,location_source,kilometer_conflict
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                place_id,latitude,longitude,location_accuracy,location_source,kilometer_conflict,fuel_address
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (created, 'fuel', odo, liters, price, station, full_tank, note,
-              place_id or None, lat, lon, accuracy, location_source or None, int(bool(conflicts))))
+              place_id or None, lat, lon, accuracy, location_source or None, int(bool(conflicts)), fuel_address))
         rid = int(cur.lastrowid)
+        # Reuse the fuel event as the odometer event for this stop.
+        active = con.execute(
+            "SELECT id,trip_type FROM business_trips WHERE status='active' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if active and not conflicts:
+            previous = con.execute(
+                'SELECT * FROM trip_stops WHERE trip_id=? ORDER BY sequence_no DESC LIMIT 1',
+                (active['id'],),
+            ).fetchone()
+            if previous and parse_dt(created) >= parse_dt(str(previous['created_at'])):
+                if odo < float(previous['odometer']):
+                    raise ValueError('Tankkilometerstand ligt vóór de laatste ritstop.')
+                segment = str(previous['segment_trip_type'] or active['trip_type'] or '')
+                if segment not in ('business', 'private'):
+                    segment = None
+                con.execute(
+                    """INSERT INTO trip_stops(
+                        trip_id,sequence_no,created_at,odometer,latitude,longitude,
+                        location_accuracy,location_source,place_id,manual_label,note,
+                        event_id,fuel_event_id,segment_trip_type,segment_classification_source
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (active['id'], int(previous['sequence_no']) + 1, created, odo,
+                     lat, lon, accuracy, location_source or None, place_id or None,
+                     fuel_address or 'Adres tankstop nog niet bevestigd',
+                     ('Tankbeurt bij ' + (station or 'onbekend tankstation'))[:200],
+                     rid, rid, segment, 'fuel-stop'),
+                )
         receipt_name = save_receipt_data(str(payload.get('receipt_data_url') or ''), rid)
         if receipt_name:
             con.execute('UPDATE events SET receipt_path=? WHERE id=?', (receipt_name, rid))
         audit('create', 'fuel', rid, {
             'odometer': odo, 'liters': liters, 'price_per_liter': price,
-            'station': station or place_id, 'kilometer_conflict': bool(conflicts),
+            'station': station or place_id, 'fuel_address': fuel_address,
+            'kilometer_conflict': bool(conflicts),
             'conflicts': conflicts,
         }, con=con)
         if receipt_name:
@@ -2238,6 +2273,9 @@ def delete_event(event_id: int) -> None:
             if row['source_kind'] == 'administration_baseline':
                 raise ValueError('Het startpunt van de administratie kan niet worden verwijderd.')
             snapshot=dict(row); receipt=str(snapshot.get('receipt_path') or '')
+            # Explicitly deleting the fuel entry must not leave a phantom stop.
+            if row['type'] == 'fuel':
+                con.execute('DELETE FROM trip_stops WHERE fuel_event_id=?', (event_id,))
             con.execute('DELETE FROM events WHERE id=?',(event_id,)); audit('delete','event',event_id,snapshot,con=con); con.commit()
             if receipt:
                 try: (RECEIPT_DIR/Path(receipt).name).unlink(missing_ok=True)
@@ -2936,7 +2974,8 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <div class="guide-section" id="fuelStepPrice"><div class="guide-head"><span class="step-badge">3</span><b>Prijs per liter</b><small>3 decimalen</small></div><div class="fuel-number-row"><label class="fuel-number-label" for="fuelPriceInput">€ per liter</label><input id="fuelPriceInput" class="fuel-number" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" autocorrect="off" spellcheck="false" onfocus="fuelSelectAll(this)" onclick="fuelSelectAll(this)" onbeforeinput="fuelBeforeInput(event,'price')" oninput="fuelInput(event,'price')" onkeydown="fuelAdvance(event,'fuelStation')"><button type="button" class="fuel-clear" onclick="fuelClear('price')">Wissen</button></div><small class="fuel-hint">2400 wordt € 2,400. Tik om het voorstel te vervangen.</small></div>
   <div class="fuel-total-card" aria-live="polite"><span>Berekend totaalbedrag</span><strong id="fuelTotal">€ 0,00</strong><small>Alleen eindbedrag afgerond op centen</small></div>
   <p id="fuelInputError" class="fuel-input-error" role="alert"></p>
-  <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">4</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" enterkeyhint="next" onkeydown="fuelAdvance(event,'fuelNote')" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div></div>
+  <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">4</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" enterkeyhint="next" onkeydown="fuelAdvance(event,'fuelAddress')" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div></div>
+  <div class="field"><label for="fuelAddress">Tankstationadres (straat, huisnummer, plaats; postcode indien beschikbaar)</label><input id="fuelAddress" maxlength="220" enterkeyhint="next" onkeydown="fuelAdvance(event,'fuelNote')" placeholder="Straat 12, 1234 AB Plaats" autocomplete="street-address"><small>Controleer straat, huisnummer en plaats. Onbekende gegevens worden niet ingevuld; corrigeer zo nodig bij de rit.</small></div>
   <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">5</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" enterkeyhint="next" onkeydown="fuelAdvance(event,'fuelDate')" placeholder="Bijv. snelweg, vakantie..."></div></div>
   <div class="guide-section guide-date" id="fuelStepDate"><div class="guide-head"><span class="step-badge">6</span><b>Datum & tijd</b><small>Staat standaard op nu; wijzig zo nodig</small></div><div class="field" style="margin-top:0"><label for="fuelDate">Datum & tijd van deze tankbeurt</label><input id="fuelDate" type="datetime-local" enterkeyhint="done" onkeydown="fuelAdvance(event)"></div></div>
   <button class="save" type="button" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button><div id="fuelConflictWarning" hidden role="alert" style="margin-top:14px;padding:14px;border:2px solid #b97517;border-radius:12px;background:#fff4db;color:#37260b"><strong>⚠️ Kilometerconflict — historische tankbon</strong><p>De ingevoerde kilometerstand botst met de volgende registratie(s):</p><ul id="fuelConflictDetails" style="padding-left:22px"></ul><p>Je kunt deze tankbon bewust opslaan. Hij wordt gemarkeerd als kilometerconflict; onbetrouwbare afstanden en verbruikscycli worden niet meegerekend. De actuele tellerstand verandert niet.</p><button class="save" type="button" onclick="saveFuelConfirmed()">Ja, ondanks kilometerconflict opslaan</button><button class="linkbtn" type="button" onclick="clearFuelConflictWarning()">Terug naar tankbon</button></div>
@@ -3178,7 +3217,7 @@ async function saveAssistantArrival(){
     closeModal('assistantModal');toast('Gecontroleerde aankomst opgeslagen');ASSISTANT_ITEM=null;await reloadData();
   });
 }
-function renderBusinessHistory(arr){let box=$('businessHistory');box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">Nog geen ritten in deze periode.</div>';return}arr.forEach(t=>{let d=document.createElement('div');d.className='trip-card';let stops=(t.stops||[]).map((x,i)=>{let icon=i===0?'●':(i===t.stops.length-1&&t.status==='completed'?'🏁':'•');let map=x.google_maps_uri?`<a target="_blank" rel="noopener" href="${escAttr(x.google_maps_uri)}">📍</a>`:'';return `<div class="trip-stop"><div class="dot">${icon}</div><div><b>${esc(x.location_address||x.location_label||'Adres nog niet beschikbaar')}</b><small>${x.date_label} ${x.time_label} · ${fmt(x.odometer,0)} km${i?` · +${fmt(x.segment_km,1)} km`:''}${i&&x.segment_trip_type_label?` <span class="leg-pill ${x.segment_trip_type}">${esc(x.segment_trip_type_label)}</span>`:''}${x.note?'<br>'+esc(x.note):''}</small></div>${map}</div>`}).join(''),type=t.trip_type||'business';d.innerHTML=`<div class="trip-top"><div><strong>${esc(t.purpose||t.trip_type_label||'Rit')}${t.client?' · '+esc(t.client):''}</strong><small>${t.started_label||''}${t.status==='active'?' · ACTIEF':''}</small><span class="trip-type-pill ${type}">${esc(t.trip_type_label||'Zakelijk')}</span></div><div class="trip-km">${fmt(t.km||0,1)} km</div></div>${t.deviating_route?`<div class="tax-note">Afwijkende route: ${esc(t.deviating_route)}</div>`:''}<div class="trip-route">${stops}</div><div class="trip-actions"><button class="editbtn" onclick="openTripEdit(${t.id})">✏️</button><button class="trash" onclick="removeBusinessTrip(${t.id})">🗑️</button></div>`;box.appendChild(d)})}
+function renderBusinessHistory(arr){let box=$('businessHistory');box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">Nog geen ritten in deze periode.</div>';return}arr.forEach(t=>{let d=document.createElement('div');d.className='trip-card';let stops=(t.stops||[]).map((x,i)=>{let icon=x.fuel_event_id?'⛽':(i===0?'●':(i===t.stops.length-1&&t.status==='completed'?'🏁':'•'));let map=x.google_maps_uri?`<a target="_blank" rel="noopener" href="${escAttr(x.google_maps_uri)}">📍</a>`:'';return `<div class="trip-stop"><div class="dot">${icon}</div><div><b>${esc(x.location_address||x.location_label||'Adres nog niet beschikbaar')}</b><small>${x.date_label} ${x.time_label} · ${fmt(x.odometer,0)} km${i?` · +${fmt(x.segment_km,1)} km`:''}${i&&x.segment_trip_type_label?` <span class="leg-pill ${x.segment_trip_type}">${esc(x.segment_trip_type_label)}</span>`:''}${x.fuel_event_id?' · ⛽ Tankbeurt':''}${x.note?'<br>'+esc(x.note):''}</small></div>${map}</div>`}).join(''),type=t.trip_type||'business';d.innerHTML=`<div class="trip-top"><div><strong>${esc(t.purpose||t.trip_type_label||'Rit')}${t.client?' · '+esc(t.client):''}</strong><small>${t.started_label||''}${t.status==='active'?' · ACTIEF':''}</small><span class="trip-type-pill ${type}">${esc(t.trip_type_label||'Zakelijk')}</span></div><div class="trip-km">${fmt(t.km||0,1)} km</div></div>${t.deviating_route?`<div class="tax-note">Afwijkende route: ${esc(t.deviating_route)}</div>`:''}<div class="trip-route">${stops}</div><div class="trip-actions"><button class="editbtn" onclick="openTripEdit(${t.id})">✏️</button><button class="trash" onclick="removeBusinessTrip(${t.id})">🗑️</button></div>`;box.appendChild(d)})}
 function renderAudit(arr){let box=$('auditHistory');if(!box)return;box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">Nog geen wijzigingen.</div>';return}arr.forEach(a=>{let d=document.createElement('div');d.className='audit-row';d.innerHTML=`<b>${esc(a.label||a.action)} · ${esc(a.entity_type||'')}</b><small>${esc(a.date_label||'')} ${a.entity_id?`· #${a.entity_id}`:''}</small>`;box.appendChild(d)})}
 async function removeBusinessTrip(id){if(!confirm('Deze rit en de gekoppelde kilometerpunten verwijderen? De verwijdering wordt in het logboek vastgelegd.'))return;try{await api(`api/business/${id}`,{method:'DELETE'});toast('Rit verwijderd');reloadData()}catch(e){toast(e.message,true)}}
 let EDIT_STOPS=[],EDIT_REQUEST=0,EDIT_ADDRESS_STATE=new Map();
@@ -3674,7 +3713,7 @@ function fuelInput(event,kind){fuelSetDigits(kind,event.currentTarget.value)}
 function fuelClear(kind){fuelSetDigits(kind,'');const input=$(FUEL_INPUT_RULES[kind].id);input.focus();input.setSelectionRange(input.value.length,input.value.length)}
 function fuelDone(){if($('fuelModal').contains(document.activeElement))document.activeElement.blur()}
 // Limit focus scrolling to the newly focused fuel field inside its scrollable sheet.
-const FUEL_FOCUS_ORDER=['fuelOdo','fuelLitersInput','fuelPriceInput','fuelStation','fuelNote','fuelDate'];
+const FUEL_FOCUS_ORDER=['fuelOdo','fuelLitersInput','fuelPriceInput','fuelStation','fuelAddress','fuelNote','fuelDate'];
 let FUEL_FOCUS_FRAME=0;
 function fuelRevealFocused(){
  const modal=$('fuelModal'),input=document.activeElement;
@@ -3730,14 +3769,14 @@ function initFuelInputs(){
 }
 function openFuel(){
  clearFuelConflictWarning();$('fuelSaveButton').disabled=false;FUEL_LOCATION=null;FUEL_PLACE=null;PLACE_RESULTS=[];
- $('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';
+ $('fuelDate').value=localInputNow();$('fuelNote').value='';$('fuelAddress').value='';$('fuelFull').checked=true;$('fuelStation').value=DATA.latest_fuel?.station||'';
  $('stations').innerHTML=(DATA.recent_stations||[]).map(s=>'<option value="'+escAttr(s)+'">').join('');
  $('stationResults').innerHTML='';$('googleAttrib').style.display='none';
  setLocationStatus('Tik op 📍 om tankstations in de buurt te zoeken.');
  initFuelInputs();$('fuelKeyboardNav').hidden=true;openModal('fuelModal');fitPhysicalViewport();
 }
 FUEL_FOCUS_ORDER.forEach(id=>$(id).addEventListener('focus',()=>{fuelSyncKeyboardNav();scheduleFuelInputReveal()}));
-$('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
+$('fuelStation').addEventListener('input',()=>{if(FUEL_PLACE){FUEL_PLACE=null;$('fuelAddress').value='';PLACE_RESULTS=[];$('stationResults').innerHTML='';$('googleAttrib').style.display='none';setLocationStatus(FUEL_LOCATION?'GPS-locatie blijft opgeslagen; tankstation wordt handmatig ingevoerd.':'Tankstation wordt handmatig ingevoerd.','ok')}});
 function setLocationStatus(msg,kind=''){$('locationStatus').textContent=msg;$('locationStatus').className='location-status '+kind}
 function browserLocation(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Browser-GPS wordt hier niet ondersteund.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser'}),e=>reject(new Error(e.message||'Locatie niet beschikbaar.')),{enableHighAccuracy:true,timeout:9000,maximumAge:30000})})}
 function savedLocationFallback(){if(DATA?.settings&&Object.prototype.hasOwnProperty.call(DATA.settings,'location_fallback_entity'))return DATA.settings.location_fallback_entity||'';try{return localStorage.getItem('rit_tank_location_entity')||''}catch(e){return ''}}
@@ -3745,7 +3784,7 @@ async function migrateLocationFallback(){if(Object.prototype.hasOwnProperty.call
 async function resolveLocation(){try{return await browserLocation()}catch(first){let entity=savedLocationFallback();if(!entity)throw new Error('GPS kon niet worden gebruikt. Kies in ⚙️ een Home Assistant locatie-fallback.');let d=await api(`api/location/entity?entity_id=${encodeURIComponent(entity)}`);return d}}
 async function findStations(){setLocationStatus('📍 Huidige locatie bepalen...');$('stationResults').innerHTML='';$('googleAttrib').style.display='none';try{let loc=await resolveLocation();FUEL_LOCATION=loc;setLocationStatus(`Locatie gevonden${loc.accuracy?` · ±${Math.round(loc.accuracy)} m`:''}. Tankstations zoeken...`,'ok');let r=await api('api/places/nearby',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:loc.latitude,longitude:loc.longitude})});PLACE_RESULTS=r.places||[];renderPlaceChoices();setLocationStatus(`${PLACE_RESULTS.length} tankstation${PLACE_RESULTS.length===1?'':'s'} gevonden binnen ${r.radius_m} m.`,'ok')}catch(e){setLocationStatus(e.message,'err');toast(e.message,true)}}
 function renderPlaceChoices(){let box=$('stationResults');box.innerHTML='';PLACE_RESULTS.forEach((p,i)=>{let b=document.createElement('button');b.type='button';b.className='station-choice';b.onclick=()=>selectPlace(i);let dist=p.distance_m==null?'':` · ${p.distance_m<1000?p.distance_m+' m':fmt(p.distance_m/1000,1)+' km'}`;b.innerHTML=`<b>${esc(p.name)}${dist}</b><small>${esc(p.address||'')}</small>`;box.appendChild(b)});$('googleAttrib').style.display=PLACE_RESULTS.length?'block':'none'}
-function selectPlace(i){let p=PLACE_RESULTS[i];if(!p)return;FUEL_PLACE=p;$('fuelStation').value=p.name;$('stationResults').innerHTML='';$('googleAttrib').style.display='block';setLocationStatus(`✓ ${p.name} geselecteerd`,'ok');}
+function selectPlace(i){let p=PLACE_RESULTS[i];if(!p)return;FUEL_PLACE=p;$('fuelStation').value=p.name;$('fuelAddress').value=p.address||'';$('stationResults').innerHTML='';$('googleAttrib').style.display='block';setLocationStatus(`✓ ${p.name} geselecteerd`,'ok');}
 let FUEL_CONFLICT_PAYLOAD=null;
 function clearFuelConflictWarning(){FUEL_CONFLICT_PAYLOAD=null;let panel=$('fuelConflictWarning');if(panel)panel.hidden=true}
 function showFuelConflictWarning(error,payload){
@@ -3783,7 +3822,8 @@ async function saveFuel(){
  $('fuelInputError').textContent='';
  const v=fuelValues(),payload={
   odometer:odo,created_at:date,liters:v.liters,price_per_liter:v.price,
-  station:FUEL_PLACE?'':$('fuelStation').value,place_id:FUEL_PLACE?.place_id||'',
+  station:$('fuelStation').value,place_id:FUEL_PLACE?.place_id||'',
+  fuel_address:$('fuelAddress').value.trim(),
   latitude:FUEL_LOCATION?.latitude??null,longitude:FUEL_LOCATION?.longitude??null,
   location_accuracy:FUEL_LOCATION?.accuracy??null,location_source:FUEL_LOCATION?.source||'',
   full_tank:$('fuelFull').checked,note:$('fuelNote').value
@@ -4553,12 +4593,12 @@ class Handler(BaseHTTPRequestHandler):
         km_rate = report['rate']
         rate_text = pdf_report.format_decimal_plain(km_rate)
         output=io.StringIO(); writer=csv.writer(output,delimiter=';')
-        writer.writerow(['rit_id','ritsoort_samenvatting','status','doel','klant','start_datum_tijd','eind_datum_tijd','totaal_km','zakelijk_km','prive_km','prive_omrijkm','afwijkende_route','stop_nr','stop_datum_tijd','kilometerstand','segment_km','segment_ritsoort','classificatie_bron','suggestie','suggestie_reden','latitude','longitude','google_place_id','bekende_plek','locatie_label_live','notitie','km_reimbursement_rate','reimbursement_eur'])
+        writer.writerow(['rit_id','ritsoort_samenvatting','status','doel','klant','start_datum_tijd','eind_datum_tijd','totaal_km','zakelijk_km','prive_km','prive_omrijkm','afwijkende_route','stop_nr','stop_datum_tijd','kilometerstand','segment_km','segment_ritsoort','classificatie_bron','suggestie','suggestie_reden','latitude','longitude','google_place_id','bekende_plek','locatie_label_live','notitie','km_reimbursement_rate','reimbursement_eur','tankstop'])
         for enriched in report['trips']:
             if enriched.get('trip_type') == 'business':
                 reimbursement = pdf_report.calculate_km_reimbursement(enriched.get('km'), km_rate)
                 for stop in enriched.get('stops',[]):
-                    writer.writerow([enriched['id'],enriched.get('trip_type_label') or '',enriched['status'],enriched.get('purpose') or '',enriched.get('client') or '',enriched.get('started_at') or '',enriched.get('ended_at') or '',enriched.get('km') or 0,enriched.get('business_km') or 0,enriched.get('private_km') or 0,enriched.get('private_detour_km') or 0,enriched.get('deviating_route') or '',stop.get('sequence_no'),stop.get('created_at'),stop.get('odometer'),stop.get('segment_km') or 0,stop.get('segment_trip_type_label') or '',stop.get('segment_classification_source') or '',stop.get('segment_suggested_type') or '',stop.get('segment_suggestion_reason') or '',stop.get('latitude') if stop.get('latitude') is not None else '',stop.get('longitude') if stop.get('longitude') is not None else '',stop.get('place_id') or '',stop.get('known_place_name') or '',stop.get('report_address') or '',stop.get('note') or '',rate_text,pdf_report.format_decimal_plain(reimbursement)])
+                    writer.writerow([enriched['id'],enriched.get('trip_type_label') or '',enriched['status'],enriched.get('purpose') or '',enriched.get('client') or '',enriched.get('started_at') or '',enriched.get('ended_at') or '',enriched.get('km') or 0,enriched.get('business_km') or 0,enriched.get('private_km') or 0,enriched.get('private_detour_km') or 0,enriched.get('deviating_route') or '',stop.get('sequence_no'),stop.get('created_at'),stop.get('odometer'),stop.get('segment_km') or 0,stop.get('segment_trip_type_label') or '',stop.get('segment_classification_source') or '',stop.get('segment_suggested_type') or '',stop.get('segment_suggestion_reason') or '',stop.get('latitude') if stop.get('latitude') is not None else '',stop.get('longitude') if stop.get('longitude') is not None else '',stop.get('place_id') or '',stop.get('known_place_name') or '',stop.get('report_address') or '',stop.get('note') or '',rate_text,pdf_report.format_decimal_plain(reimbursement),'⛽' if stop.get('fuel_event_id') else ''])
         data=output.getvalue().encode('utf-8-sig'); self.send_response(200); self.send_header('Content-Type','text/csv; charset=utf-8'); self.send_header('Content-Disposition','attachment; filename="zakelijke_kilometerregistratie_export.csv"'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
 
     def export_business_pdf(self, period: str = 'month', year: str | None = None, month: str | None = None,

@@ -1,0 +1,126 @@
+name: Publish Rit & Tank 34.04 (one time)
+
+# A PR never publishes. Main must first pass the full CI workflow.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  publish-34-04:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == 'marcelhuisplan/rit-tank-home-assistant' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: rit-tank-34-04-release-once
+      cancel-in-progress: false
+    steps:
+      - name: Checkout exactly the commit tested by CI
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check approved PR merge and refuse changed code or repeat release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPROVED=47734d8eced6f072418896255c6b6faf1e7d1fb4
+          OLD_MAIN=7819dba210db88a048a8dba9b50cb14a17f517c2
+          test "$(git rev-parse HEAD)" = "$TESTED_SHA"
+          test "$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')" = "$TESTED_SHA"
+          read -r parent1 parent2 extra < <(git show -s --format=%P HEAD)
+          test -z "${extra:-}"
+          test "$parent1" = "$OLD_MAIN"
+          gh api "repos/$GH_REPO/pulls/55" > approved-pr.json
+          jq -e --arg target "$TESTED_SHA" --arg source "$parent2" \
+            '(.merged == true) and (.merge_commit_sha == $target) and (.head.sha == $source)' \
+            approved-pr.json > /dev/null
+          git merge-base --is-ancestor "$APPROVED" "$parent2"
+          test "$(git rev-parse "$APPROVED:rit_tank")" = "$(git rev-parse HEAD:rit_tank)"
+          git diff --name-only "$APPROVED" "$parent2" > supplementary-files.txt
+          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3404[.]yml)|tools/(release_3404[.]py|test_browser_v3316[.]cjs))$' supplementary-files.txt; then
+            echo 'Unexpected changes since the approved 34.04 tankstop candidate'; exit 1
+          fi
+          grep -Fqx "APP_VERSION = '34.04'" <(grep '^APP_VERSION =' rit_tank/app.py)
+          grep -Fqx "version: '34.04'" <(grep '^version:' rit_tank/config.yaml)
+          if gh release view v34.04 >/dev/null 2>&1; then
+            echo 'Release v34.04 already exists. Refusing to overwrite or republish.'; exit 1
+          fi
+          if git ls-remote --tags origin refs/tags/v34.04 | grep -q .; then
+            echo 'Tag v34.04 already exists. Refusing to move or reuse.'; exit 1
+          fi
+
+      - name: Build and validate release ZIP from tested merged code
+        run: python3 tools/release_3404.py --package
+
+      - name: Publish 34.04 on GitHub only (never Home Assistant)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes-3404.md <<'NOTES'
+          Rit & Tank 34.04 — Automatische tankstops
+
+          Wanneer een nieuwe tankbeurt tijdens een actieve rit wordt vastgelegd,
+          verschijnt één gekoppelde tankstop met tankstationnaam, beschikbaar
+          adres, datum/tijd en de werkelijk ingevulde kilometerstand.
+          Onbetrouwbare adresdelen worden niet verzonnen. Zonder actieve rit
+          blijft tanken een gewone tankbeurt.
+          PDF en CSV tonen de gekoppelde stop zonder dubbele ritkilometers of
+          aanvullende fictieve kilometervergoeding.
+
+          Motorolieonderhoud uit 34.03 en alle eerdere administratie blijven
+          behouden. Additieve SQLite-migraties wijzigen geen historisch ritgegeven.
+          Dit is de normale Home Assistant add-onbron onder dezelfde slug
+          rit_tank, voor de bestaande GitHub-apprepository.
+
+          Deze GitHub-release installeert zichzelf NIET in Home Assistant.
+          Controleer vóór een update de volledige back-up en behoud /data.
+          De fysieke iPhone-praktijktest en echt restore-experiment blijven
+          afzonderlijke controles.
+          NOTES
+          gh release create v34.04 \
+            'rit-tank-34.04-local-addon.zip#Rit & Tank 34.04 — lokale Home Assistant-add-on' \
+            --target "$TESTED_SHA" \
+            --title 'Rit & Tank 34.04 — Automatische tankstops' \
+            --notes-file release-notes-3404.md \
+            --latest
+
+      - name: Confirm official release and asset are available and identical
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view v34.04 --json name,tagName,isDraft,isPrerelease,targetCommitish,assets,url > release.json
+          jq -e --arg sha "$TESTED_SHA" \
+            '.tagName == "v34.04" and (.isDraft == false) and (.isPrerelease == false) and
+             (.targetCommitish == $sha) and
+             (any(.assets[]; .name == "rit-tank-34.04-local-addon.zip" and .size > 1000))' \
+            release.json > /dev/null
+          git fetch --no-tags origin refs/tags/v34.04:refs/tags/v34.04
+          test "$(git rev-list -n 1 v34.04)" = "$TESTED_SHA"
+          mkdir -p release-download-verification
+          gh release download v34.04 --pattern 'rit-tank-34.04-local-addon.zip' --dir release-download-verification
+          cmp -s rit-tank-34.04-local-addon.zip release-download-verification/rit-tank-34.04-local-addon.zip
+          echo 'OFFICIAL_34_04_RELEASE_AND_PACKAGE_VERIFIED'
+          jq -r '.url' release.json

@@ -728,6 +728,11 @@ def edit_business_trip(
                             'latitude=?', 'longitude=?', "location_source='google_selected'"]
                 values += [selected['address'], selected['place_id'],
                            selected.get('latitude'), selected.get('longitude')]
+                if original.get('fuel_event_id'):
+                    con.execute('UPDATE events SET fuel_address=? WHERE id=? AND type=?',
+                                (selected['address'], original['fuel_event_id'], 'fuel'))
+            if original.get('fuel_event_id') and ('odometer' in change or 'created_at' in change):
+                raise ValueError('Een tankstop gebruikt de exacte tellerstand en tijd van de tankbeurt; wijzig deze niet via de rit.')
             if 'odometer' in change:
                 try:
                     odometer = float(change['odometer'])
@@ -788,7 +793,7 @@ def delete_business_trip(trip_id: int, *, dependencies: Mapping[str, Any]) -> No
         event_ids = [
             row['event_id']
             for row in con.execute(
-                'SELECT event_id FROM trip_stops WHERE trip_id=? AND event_id IS NOT NULL',
+                'SELECT event_id FROM trip_stops WHERE trip_id=? AND event_id IS NOT NULL AND fuel_event_id IS NULL',
                 (trip_id,),
             )
         ]

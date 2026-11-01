@@ -55,6 +55,7 @@ class HistoricalFuelTests(unittest.TestCase):
             'price_per_liter': 2,
             'full_tank': False,
             'station': 'Historisch tankstation',
+            'fuel_address': 'Stationsstraat 12, 7461 AA Rijssen',
         }
 
     def test_historical_fuel_is_inserted_between_same_minute_neighbors_and_recalculates(self):

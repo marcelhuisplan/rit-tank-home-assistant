@@ -1,9 +1,9 @@
-// 34.02: bidirectional focus order and fallback UI regression.
+// 34.02 navigation regression extended with the 34.04 fuel-address input.
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs');
 const source=fs.readFileSync(__dirname+'/app.py','utf8');
 const modal=source.slice(source.indexOf('<div class="modal" id="fuelModal">'),source.indexOf('<div class="modal" id="kmModal">'));
-const fields=['fuelOdo','fuelLitersInput','fuelPriceInput','fuelStation','fuelNote','fuelDate'];
+const fields=['fuelOdo','fuelLitersInput','fuelPriceInput','fuelStation','fuelAddress','fuelNote','fuelDate'];
 const order=source.match(/const FUEL_FOCUS_ORDER=\[([^\]]+)\];/);
 assert.ok(order,'explicit focus order');
 assert.deepEqual(Array.from(order[1].matchAll(/'([^']+)'/g),m=>m[1]),fields);
