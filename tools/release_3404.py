@@ -36,9 +36,9 @@ def check_archive(content):
                 raise ValueError("Private data filename: " + entry.filename)
         app = z.read("rit_tank/app.py").decode("utf-8")
         config = z.read("rit_tank/config.yaml").decode("utf-8")
-        if not re.search(r"(?m)^APP_VERSION = ['\"]34\.03['\"]$", app):
+        if not re.search(r"(?m)^APP_VERSION = ['\"]34\.04['\"]$", app):
             raise ValueError("Incorrect runtime version")
-        if not re.search(r"(?m)^version: ['\"]34\.03['\"]$", config):
+        if not re.search(r"(?m)^version: ['\"]34\.04['\"]$", config):
             raise ValueError("Incorrect Home Assistant version")
         if "oil_history.init_schema(con)" not in app or "oil-history.js?v={APP_VERSION}" not in app:
             raise ValueError("Oil maintenance backend or PWA cache missing")
