@@ -1,4 +1,4 @@
-"""34.03 fuel stops: isolated synthetic DB, never production data."""
+"""34.04 fuel stops: isolated synthetic DB, never production data."""
 import tempfile
 import unittest
 from datetime import datetime
@@ -73,11 +73,41 @@ class FuelTripStopTests(unittest.TestCase):
             self.assertEqual(con.execute('SELECT COUNT(*) FROM business_trips').fetchone()[0], 0)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM trip_stops').fetchone()[0], 0)
 
-    def test_address_without_house_number_is_rejected_without_changes(self):
-        with self.assertRaisesRegex(ValueError, 'tankstationadres'):
-            app.add_fuel(self.payload(fuel_address='Stationsstraat, Rijssen'))
+    def test_missing_address_is_saved_without_invented_details(self):
+        trip_id = self.start_trip()
+        created = app.add_fuel(self.payload(fuel_address=''))
         with app.db() as con:
-            self.assertEqual(con.execute('SELECT COUNT(*) FROM events').fetchone()[0], 0)
+            row = con.execute('SELECT fuel_address FROM events WHERE id=?', (created['id'],)).fetchone()
+            stop = con.execute('SELECT manual_label FROM trip_stops WHERE fuel_event_id=? AND trip_id=?',
+                               (created['id'], trip_id)).fetchone()
+            self.assertEqual(row['fuel_address'], '')
+            self.assertEqual(stop['manual_label'], 'Adres tankstop nog niet bevestigd')
+
+    def test_missing_address_and_no_active_trip_keeps_normal_fuel(self):
+        saved = app.add_fuel(self.payload(fuel_address=''))
+        with app.db() as con:
+            self.assertIsNotNone(con.execute('SELECT id FROM events WHERE id=?', (saved['id'],)).fetchone())
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM trip_stops').fetchone()[0], 0)
+
+    def test_deleting_trip_retains_linked_fuel_event_and_receipt(self):
+        trip_id = self.start_trip()
+        saved = app.add_fuel(self.payload())
+        app.delete_business_trip(trip_id)
+        with app.db() as con:
+            self.assertIsNotNone(con.execute('SELECT id FROM events WHERE id=?', (saved['id'],)).fetchone())
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM business_trips').fetchone()[0], 0)
+
+    def test_editing_trip_cannot_overwrite_exact_tank_odometer_or_time(self):
+        trip_id = self.start_trip()
+        saved = app.add_fuel(self.payload())
+        with app.db() as con:
+            stop_id = con.execute('SELECT id FROM trip_stops WHERE fuel_event_id=?',
+                                  (saved['id'],)).fetchone()['id']
+        with self.assertRaisesRegex(ValueError, 'exacte tellerstand'):
+            app.edit_business_trip(trip_id, {'stops': [{'id': stop_id, 'odometer': 108}]})
+        with app.db() as con:
+            self.assertEqual(con.execute('SELECT odometer FROM events WHERE id=?',
+                                         (saved['id'],)).fetchone()[0], 105)
 
     def test_duplicate_tankbeurt_has_no_duplicate_stop(self):
         trip_id = self.start_trip()
