@@ -77,6 +77,20 @@ class SmartInsightsTests(unittest.TestCase):
         self.assertEqual(result['gross_reimbursement'], 25)
         self.assertIsNone(result['balance_after_fuel'])
 
+    def test_unspecified_leg_is_not_automatically_business(self):
+        tz = ZoneInfo('Europe/Amsterdam')
+        parse = lambda s: datetime.fromisoformat(s).replace(tzinfo=tz)
+        stops = [
+            {'id': 1, 'sequence_no': 1, 'created_at': '2026-11-04T10:00:00', 'odometer': 1000},
+            {'id': 2, 'sequence_no': 2, 'created_at': '2026-11-04T11:00:00', 'odometer': 1100, 'segment_trip_type': ''},
+            {'id': 3, 'sequence_no': 3, 'created_at': '2026-11-04T12:00:00', 'odometer': 1200, 'segment_trip_type': 'business'},
+        ]
+        result = smart_insights.monthly_finances(
+            [({'trip_type': 'mixed'}, stops)], [{'km': 200, 'cost': 20}],
+            .25, parse('2026-11-01T00:00:00'), parse('2026-12-01T00:00:00'), parse
+        )
+        self.assertEqual(result['business_km'], 100)
+
     def test_financial_allocates_business_only_and_splits_boundary(self):
         tz = ZoneInfo('Europe/Amsterdam')
         parse = lambda s: datetime.fromisoformat(s).replace(tzinfo=tz)
