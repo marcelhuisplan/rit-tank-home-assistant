@@ -30,7 +30,7 @@ class SmartInsightsTests(unittest.TestCase):
             {'id': 2, 'kind': 'top_up', 'performed_on': '2026-09-22', 'amount_ml': 300, 'odometer': 11500},
             {'id': 3, 'kind': 'top_up', 'performed_on': '2026-10-13', 'amount_ml': 400, 'odometer': 13000},
         ]
-        x = smart_insights.oil_guidance(oil, [], 14000, date(2026, 10, 25))
+        x = smart_insights.oil_guidance(oil, [], 14100, date(2026, 10, 25))
         self.assertTrue(x['learned'])
         self.assertAlmostEqual(x['consumption_l_per_1000'], .233, places=3)
         self.assertTrue(x['reminder'])
