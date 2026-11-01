@@ -150,7 +150,7 @@ def finance_overview(trips: list[tuple[dict[str, Any], list[dict[str, Any]]]],
     # A future-dated anomaly must not let the navigator jump to future months.
     earliest = min(earliest, current_start)
     selected = current_start
-    if requested_month and re.fullmatch(r"\\d{4}-(0[1-9]|1[0-2])", requested_month):
+    if requested_month and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", requested_month):
         try:
             candidate = datetime.fromisoformat(requested_month + "-01").replace(tzinfo=tz)
             if earliest <= candidate <= current_start:
