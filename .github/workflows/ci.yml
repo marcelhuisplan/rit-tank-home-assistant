@@ -206,3 +206,43 @@ jobs:
           fi
           git push --dry-run origin ${{ github.event.pull_request.head.sha }}:refs/tags/v34.04
           echo 'DRY_RUN_34_04_RELEASE_WRITES_ALLOWED; no tag/release created'
+
+  release-preflight-3405:
+    name: Validate 34.05 release package and rights (NO PUBLISH)
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 57 && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact PR HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Verify approved 34.05 code and unchanged main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPROVED=d86e961aa030a59d38e35cff56fa6e383ded085a
+          OLD_MAIN=8bd51b6f45e3d739b0cc12d42acb009f7d123137
+          test "$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')" = "$OLD_MAIN"
+          git merge-base --is-ancestor "$APPROVED" HEAD
+          test "$(git rev-parse "$APPROVED:rit_tank")" = "$(git rev-parse HEAD:rit_tank)"
+          git diff --name-only "$APPROVED" HEAD > release-diff.txt
+          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3405[.]yml)|tools/release_3405[.]py)$' release-diff.txt; then
+            echo "Unexpected change to approved 34.05 code"; exit 1
+          fi
+      - name: Verify 34.05 release archive without publishing
+        run: python3 tools/release_3405.py --verify-only
+      - name: Verify v34.05 tag is unused and permissions via dry-run
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --tags origin refs/tags/v34.05 | grep -q .; then
+            echo "Release tag v34.05 already exists"; exit 1
+          fi
+          git push --dry-run origin ${{ github.event.pull_request.head.sha }}:refs/tags/v34.05
+          echo "DRY_RUN_34_05_TAG_WRITE_OK; no release or deployment performed"
