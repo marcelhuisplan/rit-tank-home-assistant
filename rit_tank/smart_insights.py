@@ -95,7 +95,7 @@ def monthly_finances(trips: list[tuple[dict[str, Any], list[dict[str, Any]]]],
             if fraction < 1:
                 prorated = True
             if specified_types:
-                share = 0.0 if current.get("segment_trip_type") == "private" else 1.0
+                share = 1.0 if current.get("segment_trip_type") == "business" else 0.0
             elif trip_type == "private":
                 share = 0.0
             elif trip_type == "mixed":
