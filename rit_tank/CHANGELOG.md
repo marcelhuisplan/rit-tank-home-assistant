@@ -1,5 +1,12 @@
 # Changelog
 
+## 34.07 — historische maandsaldi en oliepeilkeuzes (ontwikkelversie)
+- Financiële maandnavigatie onafhankelijk van Dag/Week/Maand/Jaar.
+- Jaartotaal vanaf de eerste registratie in het huidige kalenderjaar, tot vandaag.
+- Verplichte keuzelijst met zeven herkenbare oliepeiluitkomsten plus optionele toelichting.
+- Additieve oliepeilstatuskolom: bestaande controles blijven intact; geen impact op ritten of tankbeurten.
+- Geen merge, release of Home Assistant-installatie.
+
 ## 34.06 — slimme oliepeilcontrole en maandsaldo (ontwikkelversie)
 - Advies voor oliepeilcontrole op tijd en gereden kilometers, met voorzichtige patroonherkenning.
 - Zelfstandige oliepeilcontrole zonder fictieve bijvulling of tellerstandwijziging.
