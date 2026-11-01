@@ -17,6 +17,7 @@ REQUIRED_RUNTIME_MODULES = [
     'odometer_control.py',
     'receipt_archive.py',
     'oil_history.py',
+    'smart_insights.py',
 ]
 
 
