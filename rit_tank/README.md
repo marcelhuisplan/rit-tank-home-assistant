@@ -2,6 +2,8 @@
 
 ## 34.06 — slimme oliepeilcontrole en financieel maandinzicht (ontwikkelversie)
 
+Releasekandidaat: **34.06** · nog niet gemerged of gepubliceerd.
+
 - Het welkomstscherm toont een advies **Motoroliepeil controleren** op basis van kilometers en dagen. Na meerdere geldige intervallen tussen bijvullingen leert de app een conservatiever persoonlijk controle-interval. Beginwaarden: 1.500 km of 21 dagen. Dit is advies, geen vervanging van fabrieksvoorschriften.
 - Via tabblad **Olie → Peil gecontroleerd** bewaar je een daadwerkelijke controle zonder een fictieve bijvulling. De normale voertuigstand verandert niet.
 - Het dashboard toont geschat motoroliebijvulverbruik in liter per 1.000 km. Volledige olieverversingen tellen niet mee; bij onvoldoende gegevens verschijnt geen verzonnen cijfer.
