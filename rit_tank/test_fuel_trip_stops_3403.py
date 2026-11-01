@@ -109,6 +109,17 @@ class FuelTripStopTests(unittest.TestCase):
             self.assertEqual(con.execute('SELECT odometer FROM events WHERE id=?',
                                          (saved['id'],)).fetchone()[0], 105)
 
+    def test_pdf_address_accepts_house_number_without_postcode_but_not_unknown(self):
+        from pdf_report import report_stop_address
+        correct = report_stop_address(
+            {'fuel_event_id': 1, 'manual_label': 'Stationsstraat 12, Rijssen'},
+            dependencies={})
+        self.assertEqual(correct, 'Stationsstraat 12, Rijssen')
+        unknown = report_stop_address(
+            {'fuel_event_id': 1, 'manual_label': 'Stationsstraat, Rijssen'},
+            dependencies={})
+        self.assertEqual(unknown, 'Adres ontbreekt')
+
     def test_duplicate_tankbeurt_has_no_duplicate_stop(self):
         trip_id = self.start_trip()
         app.add_fuel(self.payload())
