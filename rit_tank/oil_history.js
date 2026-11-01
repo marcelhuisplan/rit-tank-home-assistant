@@ -140,6 +140,13 @@ async function removeOilEntry(id) {
 }
 document.addEventListener('DOMContentLoaded', loadOilHistory);
 
+const OIL_LEVEL_LABELS = {
+  normal: 'Peil goed', low: 'Peil laag (bij minimum)',
+  below_min: 'Onder minimum — bijvullen nodig',
+  high: 'Peil boven maximum', unreadable: 'Niet goed afleesbaar',
+  recheck: 'Controle herhalen', other: 'Overige opmerking',
+  unspecified: 'Niet gespecificeerd (oudere registratie)'
+};
 function renderOilChecks() {
   const box = document.getElementById('oilCheckHistory');
   if (!box) return;
@@ -152,6 +159,7 @@ function renderOilChecks() {
     const row = document.createElement('small');
     row.textContent = check.checked_on.split('-').reverse().join('-')+
       ' · '+Number(check.odometer).toLocaleString('nl-NL')+' km'+
+      ' · '+(OIL_LEVEL_LABELS[check.level_status]||OIL_LEVEL_LABELS.unspecified)+
       (check.note ? ' · '+check.note : '');
     box.appendChild(row);
   });
@@ -164,6 +172,7 @@ async function saveOilLevelCheck(event) {
   const payload = {
     checked_on: el('oilCheckDate').value,
     odometer: el('oilCheckOdometer').value,
+    level_status: el('oilCheckLevel').value,
     note: el('oilCheckNote').value.trim()
   };
   button.disabled = true;
@@ -181,6 +190,7 @@ async function saveOilLevelCheck(event) {
       await post();
     }
     el('oilCheckNote').value = '';
+    el('oilCheckLevel').value = '';
     message.textContent = 'Peilcontrole opgeslagen; geen oliebeurt aangemaakt.';
     await reloadData();
     await loadOilHistory();
