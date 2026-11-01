@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '34.05'
+APP_VERSION = '34.06'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -2211,6 +2211,11 @@ except ImportError:
     import report_validation
     import oil_history
 
+try:
+    from . import smart_insights
+except ImportError:
+    import smart_insights
+
 _pdf_text = pdf_report._pdf_text
 _pdf_escape = pdf_report._pdf_escape
 _SimplePdfPage = pdf_report._SimplePdfPage
@@ -2554,6 +2559,26 @@ def serialize_recent(rows: list[dict[str, Any]], limit: int = 30) -> list[dict[s
     return out
 
 
+def live_smart_insights(rows: list[dict[str, Any]], settings: dict[str, Any],
+                        odometer: float | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read-only derived cards; never alter stored trip, fuel or oil history."""
+    with DB_LOCK, db() as con:
+        entries = oil_history.list_entries(con)
+        checks = oil_history.list_checks(con)
+    oil = smart_insights.oil_guidance(entries, checks, odometer, now_local().date())
+    try:
+        rate = max(0.0, float(str(settings.get('km_reimbursement_rate', '0.25')).replace(',', '.')))
+        if not math.isfinite(rate):
+            rate = 0.0
+    except (ValueError, TypeError):
+        rate = 0.0
+    month_start, month_end = period_bounds('month')
+    finance = smart_insights.monthly_finances(
+        business_trips_raw(), full_tank_cycles(rows), rate,
+        month_start, month_end, parse_dt)
+    return oil, finance
+
+
 def summary(period: str = 'month') -> dict[str, Any]:
     if period not in {'day','week','month','year'}:
         period = 'month'
@@ -2565,6 +2590,7 @@ def summary(period: str = 'month') -> dict[str, Any]:
     odo = current_odometer(rows)
     latest_full = next((r for r in reversed(rows) if r['type'] == 'fuel' and int(r.get('full_tank') or 0) and not r.get('kilometer_conflict')), None)
     standalone = standalone_config()
+    oil_insight, monthly_finance = live_smart_insights(rows, settings, odo)
     since_full_km = None
     if odo is not None and latest_full is not None:
         since_full_km = max(0.0, odo - float(latest_full['odometer']))
@@ -2579,6 +2605,8 @@ def summary(period: str = 'month') -> dict[str, Any]:
             'standalone_ready': standalone['ready'],
             'backup': backup_status(),
         },
+        'oil_insight': oil_insight,
+        'monthly_finance': monthly_finance,
         'period': stats_for_period(period, rows),
         'period_full_tank': full_avg,
         'overall_full_tank': overall_full_tank_average(rows),
@@ -4166,7 +4194,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/maintenance/oil':
             with DB_LOCK, db() as con:
-                return json_response(self, {'entries': oil_history.list_entries(con)})
+                return json_response(self, {'entries': oil_history.list_entries(con),
+                                            'checks': oil_history.list_checks(con)})
         oil_match = re.fullmatch(r'/api/maintenance/oil/(\d+)', path)
         if oil_match:
             try:
@@ -4425,6 +4454,16 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, link_existing_fuel_receipt(
                     int(fuel_receipt_match.group(1)), payload), 201)
             oil_match = re.fullmatch(r'/api/maintenance/oil/(\d+)', path)
+            if path == '/api/maintenance/oil/check':
+                try:
+                    with DB_LOCK, db() as con:
+                        current = current_odometer(rows_events())
+                        checked = oil_history.add_check(con, payload, iso_local(),
+                                                        registered_odometer=current)
+                    return json_response(self, {'check': checked}, 201)
+                except oil_history.OilOdometerConfirmationRequired as exc:
+                    return json_response(self, {'error': str(exc),
+                                                 'code': 'OIL_ODOMETER_CONFIRMATION_REQUIRED'}, 409)
             if path == '/api/maintenance/oil' or oil_match:
                 try:
                     with DB_LOCK, db() as con:
