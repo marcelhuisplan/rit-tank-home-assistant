@@ -11,7 +11,7 @@ assert.ok(fuelStart>0&&fuelEnd>fuelStart,'real 33.15 digit helpers must be loade
 const nodes=new Map(),requests=[],toasts=[];
 const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',hidden:true,checked:false,innerHTML:'',textContent:''});return nodes.get(id)};
 $('fuelDate').value='2026-10-05T11:30';
-$('fuelStation').value='Tankstation';$('fuelFull').checked=true;
+$('fuelStation').value='Tankstation';$('fuelAddress').value='Stationsstraat 12, 7461 AA Rijssen';$('fuelFull').checked=true;
 const ctx=vm.createContext({
  $,console,JSON,Number,Date,Array,Promise,String,Math,document:{activeElement:null},
  DATA:{settings:{currency:'€'},latest_fuel:null},FUEL_LOCATION:null,FUEL_PLACE:null,RECEIPT_SCANNING:false,

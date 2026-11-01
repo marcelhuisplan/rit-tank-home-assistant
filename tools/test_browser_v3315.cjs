@@ -108,6 +108,7 @@ async function fuelFailureDiagnostics(page,scenario){
      await odo.click();await odo.pressSequentially('26200',{delay:3});
      assert.equal(await odo.inputValue(),'26200');
      assert.equal(await liters.inputValue(),'43,00');assert.equal(await price.inputValue(),'2,400');
+     await page.locator('#fuelAddress').fill('Stationsstraat 12, 7461 AA Rijssen');
      await page.locator('#fuelDate').fill('2026-10-10T15:30');
      await button.click();
      await page.waitForFunction(()=>!document.querySelector('#fuelModal').classList.contains('show'));
