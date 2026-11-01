@@ -45,7 +45,7 @@ jobs:
         run: python -m py_compile rit_tank/app.py rit_tank/pdf_report.py rit_tank/report_validation.py rit_tank/google_places.py rit_tank/routing.py rit_tank/home_assistant.py rit_tank/trips.py rit_tank/assistant.py rit_tank/odometer_control.py rit_tank/receipt_archive.py rit_tank/receipt_recognition.py
       - name: Smoke-test runtime imports
         working-directory: rit_tank
-        run: python -c "import app, pdf_report, report_validation, google_places, routing, home_assistant, trips, assistant, odometer_control, receipt_recognition; assert app.APP_VERSION == '34.04'; print('runtime imports OK')"
+        run: python -c "import app, pdf_report, report_validation, google_places, routing, home_assistant, trips, assistant, odometer_control, receipt_recognition; assert app.APP_VERSION == '34.05'; print('runtime imports OK')"
       - name: Check whitespace errors
         run: git diff --check HEAD^ HEAD
 
@@ -57,21 +57,21 @@ jobs:
         with:
           fetch-depth: 2
       - name: Build production image
-        run: docker build --build-arg BUILD_VERSION=34.04 --build-arg BUILD_ARCH=amd64 -t rit-tank-ci ./rit_tank
+        run: docker build --build-arg BUILD_VERSION=34.05 --build-arg BUILD_ARCH=amd64 -t rit-tank-ci ./rit_tank
       - name: Verify packaged runtime files
         run: docker run --rm --entrypoint /bin/sh rit-tank-ci -c 'test -f /app/app.py && test -f /app/report_validation.py && test -f /app/pdf_report.py && test -f /app/google_places.py && test -f /app/routing.py && test -f /app/home_assistant.py && test -f /app/trips.py && test -f /app/assistant.py && test -f /app/odometer_control.py && test -f /app/receipt_archive.py && test -f /app/receipt_archive.js && test -f /app/receipt_scanner.js && test -f /app/receipt_recognition.py && test -f /app/run.sh'
       - name: Smoke-test runtime imports in production image
-        run: docker run --rm --entrypoint python rit-tank-ci -c "import app, pdf_report, report_validation, google_places, routing, home_assistant, trips, assistant, odometer_control, receipt_recognition; assert app.APP_VERSION == '34.04'; print('runtime imports OK')"
+        run: docker run --rm --entrypoint python rit-tank-ci -c "import app, pdf_report, report_validation, google_places, routing, home_assistant, trips, assistant, odometer_control, receipt_recognition; assert app.APP_VERSION == '34.05'; print('runtime imports OK')"
       - name: Check whitespace errors
         run: git diff --check HEAD^ HEAD
 
 
-      - name: Package tracked local add-on files as a 34.03 release candidate
+      - name: Package tracked local add-on files as a 34.05 release candidate
         run: |
-          git archive --format=zip --output=rit-tank-34.04-local-addon.zip HEAD rit_tank
+          git archive --format=zip --output=rit-tank-34.05-local-addon.zip HEAD rit_tank
           python - <<'PY'
           from zipfile import ZipFile
-          name = 'rit-tank-34.04-local-addon.zip'
+          name = 'rit-tank-34.05-local-addon.zip'
           with ZipFile(name) as package:
               paths = package.namelist()
               required = ('rit_tank/config.yaml', 'rit_tank/Dockerfile',
@@ -86,8 +86,8 @@ jobs:
       - name: Store local add-on candidate ZIP for later approved installation
         uses: actions/upload-artifact@v4
         with:
-          name: rit-tank-34.04-local-addon-candidate
-          path: rit-tank-34.04-local-addon.zip
+          name: rit-tank-34.05-local-addon-candidate
+          path: rit-tank-34.05-local-addon.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -206,3 +206,43 @@ jobs:
           fi
           git push --dry-run origin ${{ github.event.pull_request.head.sha }}:refs/tags/v34.04
           echo 'DRY_RUN_34_04_RELEASE_WRITES_ALLOWED; no tag/release created'
+
+  release-preflight-3405:
+    name: Validate 34.05 release package and rights (NO PUBLISH)
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 57 && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact PR HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Verify approved 34.05 code and unchanged main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPROVED=d86e961aa030a59d38e35cff56fa6e383ded085a
+          OLD_MAIN=8bd51b6f45e3d739b0cc12d42acb009f7d123137
+          test "$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')" = "$OLD_MAIN"
+          git merge-base --is-ancestor "$APPROVED" HEAD
+          test "$(git rev-parse "$APPROVED:rit_tank")" = "$(git rev-parse HEAD:rit_tank)"
+          git diff --name-only "$APPROVED" HEAD > release-diff.txt
+          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3405[.]yml)|tools/release_3405[.]py)$' release-diff.txt; then
+            echo "Unexpected change to approved 34.05 code"; exit 1
+          fi
+      - name: Verify 34.05 release archive without publishing
+        run: python3 tools/release_3405.py --verify-only
+      - name: Verify v34.05 tag is unused and permissions via dry-run
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --tags origin refs/tags/v34.05 | grep -q .; then
+            echo "Release tag v34.05 already exists"; exit 1
+          fi
+          git push --dry-run origin ${{ github.event.pull_request.head.sha }}:refs/tags/v34.05
+          echo "DRY_RUN_34_05_TAG_WRITE_OK; no release or deployment performed"

@@ -73,6 +73,25 @@ class FuelTripStopTests(unittest.TestCase):
             self.assertEqual(con.execute('SELECT COUNT(*) FROM business_trips').fetchone()[0], 0)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM trip_stops').fetchone()[0], 0)
 
+    def test_oil_crud_during_active_trip_never_changes_driving_data(self):
+        import oil_history
+        self.start_trip()
+        app.add_fuel(self.payload())
+        def snapshot(con):
+            tables = ('events', 'business_trips', 'trip_stops', 'settings', 'receipt_archive')
+            return {table: [tuple(row) for row in con.execute('SELECT * FROM ' + table + ' ORDER BY 1')]
+                    for table in tables}
+        with app.db() as con:
+            before = snapshot(con)
+            oil = dict(performed_on='2026-10-19', kind='top_up', oil_type='5W-30',
+                       amount_ml=300, odometer=105, note='Thuis, tijdens actieve testrit')
+            entry = oil_history.create_entry(con, oil, app.iso_local(), registered_odometer=105)
+            self.assertEqual(snapshot(con), before)
+            oil_history.update_entry(con, entry['id'], dict(oil, kind='change', amount_ml=4500), app.iso_local())
+            self.assertEqual(snapshot(con), before)
+            oil_history.delete_entry(con, entry['id'], confirmed=True)
+            self.assertEqual(snapshot(con), before)
+
     def test_missing_address_is_saved_without_invented_details(self):
         trip_id = self.start_trip()
         created = app.add_fuel(self.payload(fuel_address=''))

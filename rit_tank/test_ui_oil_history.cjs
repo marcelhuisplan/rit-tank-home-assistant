@@ -10,7 +10,7 @@ assert.ok(app.includes('oil_history.init_schema(con)'), 'additive migration');
 assert.ok(app.includes("if path == '/api/maintenance/oil':"), 'authenticated list');
 assert.ok(app.includes("if path == '/api/maintenance/oil' or oil_match:"), 'create/update route');
 assert.ok(app.includes("oil_history.delete_entry(con,"), 'isolated deletion');
-assert.ok(app.includes('id="oilHistoryList"'), 'history in existing vehicle overview');
+assert.ok(app.includes('id="oilHistoryList"'), 'history in dedicated oil view');
 assert.ok(app.includes('id="oilHistoryKind"'), 'kind selector');
 assert.ok(app.includes('id="oilHistoryAmount"'), 'quantity in ml');
 assert.ok(app.includes('id="oilHistoryOdometer"'), 'maintenance-only odometer');

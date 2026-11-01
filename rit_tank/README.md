@@ -1,4 +1,24 @@
-# Rit & Tank 34.04
+# Rit & Tank 34.05
+
+## 34.05 — eigen tabblad Olie (releasekandidaat)
+
+Onderaan: **Overzicht | Ritten | Tanken | Olie | Meer**. Open **Olie** en kies
+**+ Oliebeurt toevoegen**. Leg datum, bijvullen/verversen, olietype, milliliters,
+kilometerstand en een optionele opmerking vast. Alle bestaande oliebeurten staan
+hier op datum, nieuwste eerst. Kies **Bekijken / wijzigen** voor details of correcties;
+verwijderen vraagt altijd bevestiging.
+
+De bestaande `oil_maintenance`-tabel en API worden hergebruikt. Alleen de optionele
+kolom `note` wordt additief toegevoegd; bestaande rijen blijven behouden. Ook bij
+een actieve rit verandert olieonderhoud geen tankbeurten, ritten, tussenstops,
+voertuigkilometerstand of kilometervergoeding.
+
+34.04 is de laatst gepubliceerde GitHub-release. 34.05 is nog niet vrijgegeven.
+Merge, publicatie en Home Assistant-installatie vereisen afzonderlijke toestemming.
+`repository.yaml`, de map `rit_tank` en slug `rit_tank` blijven gelijk: na latere
+vrijgave verschijnt de normale update via het bestaande repositorykanaal.
+Geen ZIP-overdracht nodig. De fysieke iPhone/PWA-test en herstelproef op de echte
+installatie blijven afzonderlijke controles.
 
 ## 34.04 — automatische tankstops tijdens actieve rit
 
@@ -6,14 +26,12 @@
 - Stationnaam en het beschikbare adres verschijnen in het rittenoverzicht en in de ritrapportage (PDF en CSV); ontbrekende adressen worden niet verzonnen en zijn corrigeerbaar.
 - Zonder actieve rit blijft tanken een gewone tankbeurt zonder fictieve zakelijke kilometervergoeding.
 - Ritten verwijderen laat de afzonderlijke tankbeurt intact; bestaande olieonderhoudsregistraties blijven volledig behouden.
-- De update naar 34.04 kan pas na goedgekeurde merge en officiële release via dezelfde Home Assistant-repository als bij 34.03 worden aangeboden.
 
 ## Motorolie bijvullen en verversen (sinds 34.03)
 
-- Op het voertuigoverzicht is **Motorolie** beschikbaar: leg afzonderlijk olie bijvullen of volledig verversen vast, met datum/tijd, vrij olietype (bijvoorbeeld 0W-20 of 5W-30), exacte hoeveelheid in ml, tellerstand en opmerking.
+- Via het eigen tabblad **Olie** is motorolieonderhoud beschikbaar: leg afzonderlijk olie bijvullen of volledig verversen vast, met datum, vrij olietype (bijvoorbeeld 0W-20 of 5W-30), exacte hoeveelheid in ml, tellerstand en opmerking.
 - Bekijk de onderhoudshistorie, wijzig foutieve vermeldingen en verwijder alleen na expliciete bevestiging.
 - Onderhoud staat in een aparte toevoegende SQLite-tabel `oil_maintenance` en verandert geen ritten, tankbeurten, fysieke tellerstand, kilometervergoeding, bonnen of PDF/CSV-ritrapportages.
-- **34.04 is een conceptversie in Draft PR #55.** De huidige Home Assistant-installatie is 34.03; publicatie en installatie vereisen afzonderlijke toestemming.
 - Voor installatie: controleer een volledige Home Assistant-back-up inclusief lokale apps-map, Rit & Tank-gegevens, externe back-upkopie en herstelsleutel. De gekoppelde externe GitHub-apprepository biedt een nieuwe versie via Home Assistant → Apps → Controleren op updates zodra de goedgekeurde code in de hoofdbranch staat. Klik zelf op Bijwerken; vervang geen lokale bestanden en bewaar /data.
 
 ## iPhone-toetsenbordnavigatie tankformulier (34.02)
@@ -136,7 +154,7 @@ Zie `DOCS.md` voor de bestaande appinstellingen en `CHANGELOG.md` voor wijziging
 
 ## Releasebeleid
 
-- Releasekandidaat: **34.04**, nog niet gepubliceerd. Huidige geïnstalleerde versie: **34.03**.
+- Releasekandidaat: **34.05**, nog niet gepubliceerd. Laatst gepubliceerde GitHub-release: **34.04**.
 - Elke door de eigenaar aangevraagde wijzigingsrelease gaat één geheel getal omhoog (bijv. 7.00 → 8.00 → 9.00 → 10.00 → 11.00 → 12.00, enz.). Er zijn geen tussenliggende deelversies (geen 7.10, 7.01, e.d.) binnen dit beleid.
 - Release 13.00 is bewust overgeslagen.
 - Volgende release: **nog niet vastgesteld**.

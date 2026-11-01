@@ -20,7 +20,7 @@ class OilOdometerConfirmationRequired(ValueError):
 
 
 def init_schema(con: sqlite3.Connection) -> None:
-    """Additive, repeatable migration; never alters or rewrites existing tables."""
+    """Additive, repeatable migration; preserves all existing rows and adds only missing columns."""
     con.executescript("""
         CREATE TABLE IF NOT EXISTS oil_maintenance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,6 +36,10 @@ def init_schema(con: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_oil_maintenance_vehicle_date
             ON oil_maintenance(vehicle_key, performed_on DESC, id DESC);
     """)
+
+    columns = {row[1] for row in con.execute('PRAGMA table_info(oil_maintenance)')}
+    if 'note' not in columns:
+        con.execute("ALTER TABLE oil_maintenance ADD COLUMN note TEXT NOT NULL DEFAULT ''")
 
 
 def _integer(value: Any, label: str, minimum: int, maximum: int) -> int:
@@ -70,7 +74,11 @@ def validate(payload: dict[str, Any]) -> dict[str, Any]:
     oil_type = oil_type.strip()
     if not oil_type or len(oil_type) > 120:
         raise ValueError('Vul een olietype in (maximaal 120 tekens, één regel).')
+    note = payload.get('note', '')
+    if not isinstance(note, str) or len(note) > 1000 or any(ord(c) < 32 and c not in '\n\r\t' for c in note):
+        raise ValueError('Gebruik maximaal 1000 tekens voor de opmerking, zonder stuurtekens.')
     return {
+        'note': note.strip(),
         'performed_on': raw_date,
         'kind': kind,
         'oil_type': oil_type,
@@ -85,7 +93,7 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
 
 def list_entries(con: sqlite3.Connection) -> list[dict[str, Any]]:
     return [_row(r) for r in con.execute(
-        """SELECT id, performed_on, kind, oil_type, amount_ml, odometer, created_at, updated_at
+        """SELECT id, performed_on, kind, oil_type, amount_ml, odometer, created_at, updated_at, note
            FROM oil_maintenance WHERE vehicle_key='primary'
            ORDER BY performed_on DESC, id DESC"""
     )]
@@ -93,7 +101,7 @@ def list_entries(con: sqlite3.Connection) -> list[dict[str, Any]]:
 
 def get_entry(con: sqlite3.Connection, entry_id: int) -> dict[str, Any]:
     row = con.execute(
-        """SELECT id, performed_on, kind, oil_type, amount_ml, odometer, created_at, updated_at
+        """SELECT id, performed_on, kind, oil_type, amount_ml, odometer, created_at, updated_at, note
            FROM oil_maintenance WHERE id=? AND vehicle_key='primary'""",
         (entry_id,),
     ).fetchone()
@@ -141,10 +149,10 @@ def create_entry(con: sqlite3.Connection, payload: dict[str, Any], stamp: str,
     _check_odometer(con, clean, payload, None, registered_odometer)
     cur = con.execute(
         """INSERT INTO oil_maintenance
-           (vehicle_key, performed_on, kind, oil_type, amount_ml, odometer, created_at, updated_at)
-           VALUES ('primary', ?, ?, ?, ?, ?, ?, ?)""",
+           (vehicle_key, performed_on, kind, oil_type, amount_ml, odometer, created_at, updated_at, note)
+           VALUES ('primary', ?, ?, ?, ?, ?, ?, ?, ?)""",
         (clean['performed_on'], clean['kind'], clean['oil_type'],
-         clean['amount_ml'], clean['odometer'], stamp, stamp),
+         clean['amount_ml'], clean['odometer'], stamp, stamp, clean['note']),
     )
     return get_entry(con, cur.lastrowid)
 
@@ -158,10 +166,10 @@ def update_entry(con: sqlite3.Connection, entry_id: int, payload: dict[str, Any]
     _check_odometer(con, clean, payload, entry_id, registered_odometer)
     cur = con.execute(
         """UPDATE oil_maintenance
-           SET performed_on=?, kind=?, oil_type=?, amount_ml=?, odometer=?, updated_at=?
+           SET performed_on=?, kind=?, oil_type=?, amount_ml=?, odometer=?, updated_at=?, note=?
            WHERE id=? AND vehicle_key='primary'""",
         (clean['performed_on'], clean['kind'], clean['oil_type'], clean['amount_ml'],
-         clean['odometer'], stamp, entry_id),
+         clean['odometer'], stamp, clean['note'], entry_id),
     )
     if cur.rowcount != 1:
         raise OilEntryNotFound('Oliebeurt niet gevonden.')

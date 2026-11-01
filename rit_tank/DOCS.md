@@ -1,4 +1,24 @@
-# Rit & Tank 34.04
+# Rit & Tank 34.05
+
+## 34.05 — eigen tabblad Olie (releasekandidaat)
+
+Onderaan: **Overzicht | Ritten | Tanken | Olie | Meer**. Open **Olie** en kies
+**+ Oliebeurt toevoegen**. Leg datum, bijvullen/verversen, olietype, milliliters,
+kilometerstand en een optionele opmerking vast. Alle bestaande oliebeurten staan
+hier op datum, nieuwste eerst. Kies **Bekijken / wijzigen** voor details of correcties;
+verwijderen vraagt altijd bevestiging.
+
+De bestaande `oil_maintenance`-tabel en API worden hergebruikt. Alleen de optionele
+kolom `note` wordt additief toegevoegd; bestaande rijen blijven behouden. Ook bij
+een actieve rit verandert olieonderhoud geen tankbeurten, ritten, tussenstops,
+voertuigkilometerstand of kilometervergoeding.
+
+34.04 is de laatst gepubliceerde GitHub-release. 34.05 is nog niet vrijgegeven.
+Merge, publicatie en Home Assistant-installatie vereisen afzonderlijke toestemming.
+`repository.yaml`, de map `rit_tank` en slug `rit_tank` blijven gelijk: na latere
+vrijgave verschijnt de normale update via het bestaande repositorykanaal.
+Geen ZIP-overdracht nodig. De fysieke iPhone/PWA-test en herstelproef op de echte
+installatie blijven afzonderlijke controles.
 
 ## 34.04 — tankbeurt als ritstop
 
@@ -6,10 +26,9 @@ Tijdens een actieve rit koppelt iedere nieuwe tankbeurt één stop aan de bestaa
 
 ## Onderhoudshistorie motorolie (sinds 34.03)
 
-- **Motorolie** in het bestaande voertuigoverzicht: kies **Bijvullen** of **Verversen** en leg datum/tijd, olietype, exact aantal milliliters, onderhoudstellerstand en optionele notitie vast.
+- **Motorolie** in het tabblad **Olie**: kies **Bijvullen** of **Verversen** en leg datum, olietype, exact aantal milliliters, onderhoudstellerstand en optionele notitie vast.
 - In het overzicht kun je opgeslagen oliebeurten lezen en, na bevestiging, corrigeren of verwijderen.
 - De losse database-tabel `oil_maintenance` wordt bij het starten additief aangemaakt. Ze raakt de huidige `events`, ritten, tankbeurten, tankbonscans, kilometervergoeding en PDF-/CSV-ritrapportages niet.
-- **Uitgangssituatie: de bestaande Home Assistant-app draait 34.03.** Versie 34.04 is uitsluitend in Draft PR #55 voorbereid. Gebruik na afzonderlijke releasegoedkeuring dezelfde bestaande GitHub-apprepository, slug `rit_tank` en de normale knop Bijwerken; vervang of reset nooit `/data`.
 - Vóór installatie: bevestig de volledige back-up met **Rit & Tank inclusief gegevens**, **lokale apps-map**, **Home Assistant-instellingen**, een externe kopie en de herstelsleutel. Stop bij ontbrekende of afwijkende installatiepaden.
 - **Fysieke iPhone-acceptatie volgt na installatie** in Safari en de bestaande PWA. Gebruik echte onderhoudsgegevens, geen fictieve kilometerstanden op productie.
 - Bij uitsluitend een codeprobleem mag de oude 34.02-appcode na het stoppen worden hersteld terwijl de huidige database behouden blijft. Herstellen van een oude databaseback-up kan latere mutaties wissen.

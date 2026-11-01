@@ -63,6 +63,39 @@ class OilMaintenanceTests(unittest.TestCase):
         self.assertEqual(len(oil.list_entries(self.connection)), 1)
         self.assertEqual(self.connection.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
 
+    def test_upgrade_3404_oil_rows_and_note_backup(self):
+        # Real 34.03/34.04 table shape, containing an existing registration.
+        legacy = sqlite3.connect(':memory:')
+        self.addCleanup(legacy.close)
+        legacy.row_factory = sqlite3.Row
+        legacy.execute('CREATE TABLE oil_maintenance (id INTEGER PRIMARY KEY, '
+                       'vehicle_key TEXT, performed_on TEXT, kind TEXT, oil_type TEXT, '
+                       'amount_ml INTEGER, odometer INTEGER, created_at TEXT, updated_at TEXT)')
+        legacy.execute("INSERT INTO oil_maintenance VALUES(41,'primary','2026-01-02',"
+                       "'change','5W-30',4500,60000,'original','original')")
+        before = dict(legacy.execute('SELECT * FROM oil_maintenance').fetchone())
+        oil.init_schema(legacy)
+        oil.init_schema(legacy)
+        row = dict(legacy.execute('SELECT * FROM oil_maintenance').fetchone())
+        self.assertEqual(row.pop('note'), '')
+        self.assertEqual(row, before)
+        updated = oil.update_entry(legacy, 41, dict(before, note='Thuis bijgewerkt\nFictieve notitie'), 'edited')
+        self.assertEqual(updated['note'], 'Thuis bijgewerkt\nFictieve notitie')
+        legacy.commit()
+        with sqlite3.connect(Path(self.tmp.name) / 'note-backup.db') as backup:
+            legacy.backup(backup)
+            self.assertEqual(backup.execute('SELECT note FROM oil_maintenance WHERE id=41').fetchone()[0], updated['note'])
+            self.assertEqual(backup.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+
+    def test_optional_note_validation_and_edit(self):
+        first = oil.create_entry(self.connection, self.payload(), 'created')
+        self.assertEqual(first['note'], '')
+        edited = oil.update_entry(self.connection, first['id'], self.payload(note='<b>Thuis</b>'), 'edited')
+        self.assertEqual(edited['note'], '<b>Thuis</b>')
+        for note in (None, 123, 'x' * 1001, 'bad\x00note'):
+            with self.subTest(note=repr(note)[:30]), self.assertRaises(ValueError):
+                oil.create_entry(self.connection, self.payload(note=note), 'bad')
+
     def test_validation_rejects_bad_values(self):
         for key, value in [('kind', 'other'), ('performed_on', '2026-02-30'),
                            ('oil_type', '<bad>\n'), ('amount_ml', '1.5'), ('amount_ml', 0),
