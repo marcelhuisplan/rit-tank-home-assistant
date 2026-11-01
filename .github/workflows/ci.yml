@@ -168,3 +168,41 @@ jobs:
           # The actual release REST API still cannot be guaranteed without publishing.
           git push --dry-run origin af15c7ba6f75503b3e1999758601a627d49f0a12:refs/tags/v34.03
           echo 'Dry-run push accepted; no tag, release or Home Assistant state changed'
+
+  release-preflight-3404:
+    name: Validate 34.04 release ZIP and token (NO PUBLISH)
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 55 && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Confirm 34.03 main is unchanged and 34.04 feature code was approved
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')" = 7819dba210db88a048a8dba9b50cb14a17f517c2
+          git merge-base --is-ancestor a8108456b8663314cd9bba1fc0d47a7b8df129db HEAD
+          test "$(git rev-parse a8108456b8663314cd9bba1fc0d47a7b8df129db:rit_tank)" = "$(git rev-parse HEAD:rit_tank)"
+          git diff --name-only a8108456b8663314cd9bba1fc0d47a7b8df129db HEAD > release-diff.txt
+          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3404[.]yml)|tools/release_3404[.]py)$' release-diff.txt; then
+            echo 'Source change after approved 34.04 candidate'; exit 1
+          fi
+      - name: Verify 34.04 ZIP without publishing or modifying Home Assistant
+        run: python3 tools/release_3404.py --verify-only
+      - name: Verify release tag is free and write access through dry-run only
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --tags origin refs/tags/v34.04 | grep -q .; then
+            echo 'Tag 34.04 exists'; exit 1
+          fi
+          git push --dry-run origin ${{ github.event.pull_request.head.sha }}:refs/tags/v34.04
+          echo 'DRY_RUN_34_04_RELEASE_WRITES_ALLOWED; no tag/release created'
