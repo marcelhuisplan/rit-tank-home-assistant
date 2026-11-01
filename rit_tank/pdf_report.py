@@ -294,7 +294,9 @@ def report_stop_address(stop: dict[str, Any], *, dependencies: Mapping[str, Call
     # Fuel address entered by the user may have no postcode; never invent one.
     if stop.get('fuel_event_id'):
         raw = ' '.join(str(stop.get('manual_label') or '').split())
-        if raw and raw != 'Adres tankstop nog niet bevestigd':
+        if raw != 'Adres tankstop nog niet bevestigd' and re.fullmatch(
+            r'[^,]*[^\W\d_][^,]*\s+\d+[A-Za-z]?,\s*[^,\d][^,]*', raw
+        ):
             return raw
     address = _full_address(stop.get('location_address'))
     if address:
