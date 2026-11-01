@@ -40,6 +40,18 @@ def init_schema(con: sqlite3.Connection) -> None:
     columns = {row[1] for row in con.execute('PRAGMA table_info(oil_maintenance)')}
     if 'note' not in columns:
         con.execute("ALTER TABLE oil_maintenance ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS oil_level_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicle_key TEXT NOT NULL DEFAULT 'primary' CHECK(vehicle_key = 'primary'),
+            checked_on TEXT NOT NULL,
+            odometer INTEGER NOT NULL CHECK(odometer BETWEEN 0 AND 999999),
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_oil_level_checks_date ON oil_level_checks(vehicle_key, checked_on DESC, id DESC)")
+
 
 
 def _integer(value: Any, label: str, minimum: int, maximum: int) -> int:
@@ -185,3 +197,40 @@ def delete_entry(con: sqlite3.Connection, entry_id: int, *, confirmed: bool) -> 
     )
     if cur.rowcount != 1:
         raise OilEntryNotFound('Oliebeurt niet gevonden.')
+
+def list_checks(con: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Independent checks: a peilcontrole is NOT a top-up or an oil change."""
+    return [_row(row) for row in con.execute(
+        "SELECT id, checked_on, odometer, note, created_at "
+        "FROM oil_level_checks WHERE vehicle_key='primary' ORDER BY checked_on DESC, id DESC"
+    )]
+
+
+def add_check(con: sqlite3.Connection, payload: dict[str, Any], stamp: str,
+              registered_odometer: float | None = None) -> dict[str, Any]:
+    raw_date = payload.get('checked_on')
+    if not isinstance(raw_date, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', raw_date):
+        raise ValueError('Vul een geldige controledatum in.')
+    try:
+        checked_on = date.fromisoformat(raw_date)
+    except ValueError:
+        raise ValueError('Vul een geldige controledatum in.') from None
+    if not (1900 <= checked_on.year <= 2100) or checked_on > date.today():
+        raise ValueError('De controledatum mag niet in de toekomst liggen.')
+    odo = _integer(payload.get('odometer'), 'Kilometerstand', 0, 999999)
+    if registered_odometer is not None and odo > float(registered_odometer) and payload.get('confirm_odometer_anomaly') is not True:
+        raise OilOdometerConfirmationRequired(
+            'De onderhoudsstand ligt boven de geregistreerde voertuigstand. '
+            'Controleer de werkelijke kilometerstand. De voertuigstand wordt niet gewijzigd.'
+        )
+    note = payload.get('note', '')
+    if not isinstance(note, str) or len(note) > 500 or any(ord(c) < 32 and c not in '\n\r\t' for c in note):
+        raise ValueError('Opmerking maximaal 500 tekens.')
+    cur = con.execute(
+        "INSERT INTO oil_level_checks (checked_on, odometer, note, created_at) VALUES (?, ?, ?, ?)",
+        (raw_date, odo, note.strip(), stamp),
+    )
+    return dict(con.execute(
+        "SELECT id, checked_on, odometer, note, created_at FROM oil_level_checks WHERE id=?",
+        (cur.lastrowid,),
+    ).fetchone())

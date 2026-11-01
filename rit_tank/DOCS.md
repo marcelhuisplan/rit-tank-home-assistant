@@ -1,6 +1,14 @@
-# Rit & Tank 34.05
+# Rit & Tank 34.06
 
-## 34.05 — eigen tabblad Olie (releasekandidaat)
+## 34.06 — slim olieonderhoud / geschat maandsaldo (ontwikkelversie)
+
+Het olieadvies wordt uitsluitend uit bestaande oliebeurten, onafhankelijke peilcontroles, datum en betrouwbare kilometerstanden berekend. Bij één bijvulling is er nog onvoldoende basis om verbruik te schatten. Vanaf twee betrouwbare intervallen tussen drie bijvullingen kan de app een voorlopig verbruik afleiden. Bij een olieverversing wordt de reeks gereset. Fabrieksinstructies blijven leidend.
+
+De registratie **Peil gecontroleerd** gebruikt de aparte additieve tabel `oil_level_checks` en verandert noch oliehoeveelheden, ritten, stops, kilometerstand noch fiscale vergoeding.
+
+Het financieel maandsaldo is een indicatie: bruto zakelijke kilometervergoeding verminderd met zakelijke kilometers × kosten per kilometer op basis van volledige tankcycli. Zonder betrouwbare volle-tankcyclus wordt geen nettoresultaat getoond. Maandgrenzen worden tijdsevenredig toegerekend voor de schatting. Fiscale PDF/CSV-rapporten worden niet gewijzigd.
+
+## 34.05 — eigen tabblad Olie (gepubliceerd)
 
 Onderaan: **Overzicht | Ritten | Tanken | Olie | Meer**. Open **Olie** en kies
 **+ Oliebeurt toevoegen**. Leg datum, bijvullen/verversen, olietype, milliliters,
@@ -13,7 +21,7 @@ kolom `note` wordt additief toegevoegd; bestaande rijen blijven behouden. Ook bi
 een actieve rit verandert olieonderhoud geen tankbeurten, ritten, tussenstops,
 voertuigkilometerstand of kilometervergoeding.
 
-34.04 is de laatst gepubliceerde GitHub-release. 34.05 is nog niet vrijgegeven.
+34.05 is de laatst gepubliceerde GitHub-release. 34.06 is nog in ontwikkeling.
 Merge, publicatie en Home Assistant-installatie vereisen afzonderlijke toestemming.
 `repository.yaml`, de map `rit_tank` en slug `rit_tank` blijven gelijk: na latere
 vrijgave verschijnt de normale update via het bestaande repositorykanaal.

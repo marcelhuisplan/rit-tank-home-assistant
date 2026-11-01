@@ -1,6 +1,17 @@
-# Rit & Tank 34.05
+# Rit & Tank 34.06
 
-## 34.05 — eigen tabblad Olie (releasekandidaat)
+## 34.06 — slimme oliepeilcontrole en financieel maandinzicht (ontwikkelversie)
+
+Releasekandidaat: **34.06** · nog niet gemerged of gepubliceerd.
+
+- Het welkomstscherm toont een advies **Motoroliepeil controleren** op basis van kilometers en dagen. Na meerdere geldige intervallen tussen bijvullingen leert de app een conservatiever persoonlijk controle-interval. Beginwaarden: 1.500 km of 21 dagen. Dit is advies, geen vervanging van fabrieksvoorschriften.
+- Via tabblad **Olie → Peil gecontroleerd** bewaar je een daadwerkelijke controle zonder een fictieve bijvulling. De normale voertuigstand verandert niet.
+- Het dashboard toont geschat motoroliebijvulverbruik in liter per 1.000 km. Volledige olieverversingen tellen niet mee; bij onvoldoende gegevens verschijnt geen verzonnen cijfer.
+- Het dashboard toont per lopende maand zakelijke kilometers, bruto kilometervergoeding, naar zakelijke kilometers toegerekende geschatte brandstofkosten en saldo na brandstof. Het is geen fiscale nettowinst; voor maanden met grensoverschrijdende ritten worden de afstanden voor deze schatting tijdsevenredig verdeeld. De bestaande ritrapporten blijven ongewijzigd.
+- Onderhoud en kilometeradministratie blijven in afzonderlijke tabellen; alleen de tabel `oil_level_checks` wordt toegevoegd. Oude gegevens en add-on-updatekanaal blijven behouden.
+- Nog geen merge, release of Home Assistant-installatie. Alleen fictieve tests. Na akkoord komt de normale update via **Bijwerken**.
+
+## 34.05 — eigen tabblad Olie (gepubliceerd)
 
 Onderaan: **Overzicht | Ritten | Tanken | Olie | Meer**. Open **Olie** en kies
 **+ Oliebeurt toevoegen**. Leg datum, bijvullen/verversen, olietype, milliliters,
@@ -13,7 +24,7 @@ kolom `note` wordt additief toegevoegd; bestaande rijen blijven behouden. Ook bi
 een actieve rit verandert olieonderhoud geen tankbeurten, ritten, tussenstops,
 voertuigkilometerstand of kilometervergoeding.
 
-34.04 is de laatst gepubliceerde GitHub-release. 34.05 is nog niet vrijgegeven.
+34.05 is de laatst gepubliceerde GitHub-release. 34.06 is nog in ontwikkeling.
 Merge, publicatie en Home Assistant-installatie vereisen afzonderlijke toestemming.
 `repository.yaml`, de map `rit_tank` en slug `rit_tank` blijven gelijk: na latere
 vrijgave verschijnt de normale update via het bestaande repositorykanaal.

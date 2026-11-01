@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '34.05'
+APP_VERSION = '34.06'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -2211,6 +2211,11 @@ except ImportError:
     import report_validation
     import oil_history
 
+try:
+    from . import smart_insights
+except ImportError:
+    import smart_insights
+
 _pdf_text = pdf_report._pdf_text
 _pdf_escape = pdf_report._pdf_escape
 _SimplePdfPage = pdf_report._SimplePdfPage
@@ -2554,6 +2559,26 @@ def serialize_recent(rows: list[dict[str, Any]], limit: int = 30) -> list[dict[s
     return out
 
 
+def live_smart_insights(rows: list[dict[str, Any]], settings: dict[str, Any],
+                        odometer: float | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read-only derived cards; never alter stored trip, fuel or oil history."""
+    with DB_LOCK, db() as con:
+        entries = oil_history.list_entries(con)
+        checks = oil_history.list_checks(con)
+    oil = smart_insights.oil_guidance(entries, checks, odometer, now_local().date())
+    try:
+        rate = max(0.0, float(str(settings.get('km_reimbursement_rate', '0.25')).replace(',', '.')))
+        if not math.isfinite(rate):
+            rate = 0.0
+    except (ValueError, TypeError):
+        rate = 0.0
+    month_start, month_end = period_bounds('month')
+    finance = smart_insights.monthly_finances(
+        business_trips_raw(), full_tank_cycles(rows), rate,
+        month_start, month_end, parse_dt)
+    return oil, finance
+
+
 def summary(period: str = 'month') -> dict[str, Any]:
     if period not in {'day','week','month','year'}:
         period = 'month'
@@ -2565,6 +2590,7 @@ def summary(period: str = 'month') -> dict[str, Any]:
     odo = current_odometer(rows)
     latest_full = next((r for r in reversed(rows) if r['type'] == 'fuel' and int(r.get('full_tank') or 0) and not r.get('kilometer_conflict')), None)
     standalone = standalone_config()
+    oil_insight, monthly_finance = live_smart_insights(rows, settings, odo)
     since_full_km = None
     if odo is not None and latest_full is not None:
         since_full_km = max(0.0, odo - float(latest_full['odometer']))
@@ -2579,6 +2605,8 @@ def summary(period: str = 'month') -> dict[str, Any]:
             'standalone_ready': standalone['ready'],
             'backup': backup_status(),
         },
+        'oil_insight': oil_insight,
+        'monthly_finance': monthly_finance,
         'period': stats_for_period(period, rows),
         'period_full_tank': full_avg,
         'overall_full_tank': overall_full_tank_average(rows),
@@ -2901,6 +2929,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 #oilHistoryCard .oil-hint{color:var(--muted);font-size:12px;line-height:1.5;margin:5px 0 12px}#oilHistoryCard .event-actions{display:flex;gap:6px}#oilHistoryCard button{min-height:44px;touch-action:manipulation}#oilHistoryModal input,#oilHistoryModal select,#oilHistoryModal textarea{min-height:52px;font-size:16px}#oilHistoryModal .sheet{max-height:calc(100dvh - env(safe-area-inset-top) - 12px);overflow-y:auto;padding-bottom:calc(20px + env(safe-area-inset-bottom))}#oilHistoryModal #oilHistoryError{color:#ffabb4;font-size:13px}#oilHistoryModal .sheethead{position:sticky;top:0;z-index:5;background:#14191e;padding-bottom:10px}#oilHistoryModal .close{flex:0 0 48px;min-width:48px;min-height:48px;background:#50eec7;color:#05251d;border:0;border-radius:14px;font-size:27px;font-weight:900;touch-action:manipulation}
 body.oil-view .app>.hero,body.oil-view .dashboard-actions,body.oil-view .app>.tabs{display:none}
 #oilHistoryCard h2{margin:0;font-size:24px}#oilHistoryCard .event{grid-template-columns:42px minmax(0,1fr);align-items:start}#oilHistoryCard .event-actions{grid-column:2;justify-content:flex-start;flex-wrap:wrap}#oilHistoryCard .event-actions button{min-width:44px}#oilHistoryCard .oil-details{min-width:0;overflow-wrap:anywhere}#oilHistoryCard .oil-note{white-space:pre-wrap}#oilHistoryModal textarea{width:100%;resize:vertical}
+.smart-insight-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}.smart-insight{padding:16px;border:1px solid rgba(76,210,174,.3);background:#102622;border-radius:20px;min-width:0}.smart-insight strong{display:block;font-size:20px;margin:9px 0;overflow-wrap:anywhere}.smart-insight small{display:block;color:#a6c7bd;line-height:1.5}.smart-insight h3{font-size:15px;margin:0}.smart-insight .insight-warn{color:#f4c38b}#oilCheckForm{display:grid;gap:10px;margin:16px 0;padding:14px;border:1px solid rgba(76,210,174,.3);border-radius:17px}#oilCheckForm input{width:100%;padding:12px;background:#091917;color:#fff;border:1px solid #448173;border-radius:10px}#oilCheckForm label{display:block;font-size:13px;color:#c8e1d8}#oilCheckForm .save{margin-top:6px}@media(max-width:400px){.smart-insight-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -2925,6 +2954,10 @@ body.oil-view .app>.hero,body.oil-view .dashboard-actions,body.oil-view .app>.ta
 
   <div class="tabs"><button class="tab" data-period="day">Dag</button><button class="tab" data-period="week">Week</button><button class="tab active" data-period="month">Maand</button><button class="tab" data-period="year">Jaar</button></div>
 
+  <section class="smart-insight-grid" aria-label="Oliecontrole en financieel maandoverzicht">
+    <article class="smart-insight"><h3>🛢️ Motoroliepeil</h3><strong id="smartOilStatus">Laden…</strong><small id="smartOilDetail">Oliecontroleadvies op basis van je onderhoudshistorie.</small><small id="smartOilConsumption">Geschat bijvulverbruik: onvoldoende gegevens</small></article>
+    <article class="smart-insight"><h3>💶 Saldo na brandstof · maand</h3><strong id="smartNetBalance">Laden…</strong><small id="smartNetDetails">Zakelijke kilometers × vergoeding minus geschatte zakelijke brandstofkosten.</small><small id="smartNetNote">Dit is geen nettowinst of fiscale berekening.</small></article>
+  </section>
   <div class="view active" id="view-auto">
     <div class="period-title"><h3 id="periodLabel">Deze maand</h3><span id="fuelCount"></span></div>
     <section class="kpis">
@@ -2946,6 +2979,15 @@ body.oil-view .app>.hero,body.oil-view .dashboard-actions,body.oil-view .app>.ta
       <div class="cardhead"><h2 id="oilPageTitle">Motorolie</h2></div>
       <p class="oil-hint">Olie bijvullen of verversen, thuis of onderweg. Los van tanken en ritten.</p>
       <button type="button" class="save" id="oilAddButton" onclick="openOilEntry()">+ Oliebeurt toevoegen</button>
+      <form id="oilCheckForm" onsubmit="saveOilLevelCheck(event)">
+        <strong>Peil gecontroleerd (zonder bijvullen)</strong>
+        <label for="oilCheckDate">Datum</label><input id="oilCheckDate" type="date" required>
+        <label for="oilCheckOdometer">Werkelijke kilometerstand</label><input id="oilCheckOdometer" type="number" min="0" max="999999" step="1" inputmode="numeric" required>
+        <label for="oilCheckNote">Opmerking (optioneel)</label><input id="oilCheckNote" maxlength="500" placeholder="Bijv. peil goed">
+        <button class="save" type="submit" id="oilCheckSave">Peil gecontroleerd</button>
+        <small id="oilCheckMessage" role="status">Een peilcontrole verandert geen kilometerstand of oliebeurt.</small>
+        <div id="oilCheckHistory"></div>
+      </form>
       <h3>Onderhoudshistorie</h3>
       <p class="oil-hint">Alle oliebeurten · nieuwste eerst</p>
       <div class="history" id="oilHistoryList"><div class="empty">Onderhoudshistorie laden…</div></div>
@@ -3164,7 +3206,31 @@ let modalScrollY=0;function lockModalScroll(){if(document.body.classList.contain
 let GUIDE_TIMER=null;
 function guideTo(id,delay=80){clearTimeout(GUIDE_TIMER);GUIDE_TIMER=setTimeout(()=>{let el=$(id);if(!el)return;let modal=el.closest('.modal');if(modal&&!modal.classList.contains('show'))return;if(modal)modal.querySelectorAll('.guide-section').forEach(x=>x.classList.toggle('active',x===el));let sheet=el.closest('.sheet');if(sheet){let top=el.getBoundingClientRect().top-sheet.getBoundingClientRect().top+sheet.scrollTop-24;sheet.scrollTo({top:Math.max(0,top),behavior:'smooth'})}else el.scrollIntoView({behavior:'smooth',block:'center'})},delay)}
 async function reloadData(){try{DATA=await api(`api/summary?period=${PERIOD}`);await migrateLocationFallback();render();handleLaunchAction()}catch(e){toast(e.message,true)}}
-function render(){let s=DATA.settings,p=DATA.period,f=DATA.period_full_tank;$('vehicleName').textContent=s.vehicle_name;$('fuelType').textContent=s.fuel_type;$('odometer').textContent=DATA.current_odometer==null?'—':fmt(DATA.current_odometer,0);$('heroConsumption').textContent=DATA.latest_full_cycle?.l100!=null?fmt(DATA.latest_full_cycle.l100,2):'—';$('sinceFull').textContent=DATA.since_full_km==null?'Nog geen volle-tank startpunt':`${fmt(DATA.since_full_km,0)} km sinds laatste volle tank`;$('periodLabel').textContent=p.label;$('fuelCount').textContent=`${p.fuel_count} tankbeurt${p.fuel_count===1?'':'en'}`;$('kpiKm').textContent=`${fmt(p.km,1)} km`;$('kpiLiters').textContent=`${fmt(p.liters,2)} L`;$('kpiL100').textContent=f?.l100==null?'—':fmt(f.l100,2);$('kpiKmPerLiter').textContent=kmPerLiter(f);$('kpiCost').textContent=money(p.cost);$('kpiPrice').textContent=p.avg_price==null?'—':`${s.currency} ${fmt(p.avg_price,3)}`;$('kpiCost100').textContent=f?.cost100==null?'—':money(f.cost100);$('fullAvgKmPerLiter').textContent=kmPerLiter(f);if(f?.l100!=null){$('fullAvgVal').textContent=`${fmt(f.l100,2)} L/100 km`;$('fullAvgInfo').innerHTML=`${f.cycles} complete cyclus${f.cycles===1?'':'sen'}<br>${fmt(f.km,0)} km · ${fmt(f.liters,1)} L`}else{$('fullAvgVal').textContent='—';$('fullAvgInfo').textContent='Nog geen complete volle-tank cyclus in deze periode'};renderChart();renderStations();renderHistory();renderBusiness();$('eventCount').textContent=`${DATA.total_events} totaal`;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.period===PERIOD));document.querySelectorAll('.seg button').forEach(b=>b.classList.toggle('active',b.dataset.metric===METRIC));switchView(VIEW,false)}
+function renderSmartInsights(){
+  const oil=DATA.oil_insight||{}, finance=DATA.monthly_finance||{};
+  const oilStatus=$('smartOilStatus'),detail=$('smartOilDetail'),consumption=$('smartOilConsumption');
+  if(oil.status==='no_history'){
+    oilStatus.textContent='Nog geen historie';
+    detail.textContent='Begin met het registreren van olieonderhoud of een peilcontrole.';
+  }else{
+    oilStatus.textContent=oil.reminder?'⚠️ Motoroliepeil controleren':'Volgende oliecontrole gepland';
+    oilStatus.classList.toggle('insight-warn',Boolean(oil.reminder));
+    detail.textContent='Advies: elke '+oil.interval_km.toLocaleString('nl-NL')+' km of '+oil.interval_days+
+      ' dagen. Volgende grens: '+oil.next_km.toLocaleString('nl-NL')+' km / '+oil.next_date+
+      (oil.learned?' · op basis van meerdere bijvullingen':' · voorlopig instelbaar basisinterval');
+  }
+  consumption.textContent=oil.consumption_l_per_1000==null
+    ? 'Geschat bijvulverbruik: nog onvoldoende meetgegevens'
+    : 'Geschat bijvulverbruik: '+fmt(oil.consumption_l_per_1000,3)+' L / 1.000 km';
+  $('smartNetBalance').textContent=finance.balance_after_fuel==null?'Nog onvoldoende tankgegevens':money(finance.balance_after_fuel);
+  $('smartNetDetails').textContent=fmt(finance.business_km||0,1)+' zakelijke km · bruto '+
+    money(finance.gross_reimbursement||0)+' · brandstof '+
+    (finance.allocated_fuel_cost==null?'onbekend':money(finance.allocated_fuel_cost));
+  $('smartNetNote').textContent=finance.prorated_month_boundary
+    ? 'Schatting: ritdelen over maandgrens tijdsevenredig verdeeld; geen fiscale nettowinst.'
+    : 'Schatting op basis van volle-tankcycli; geen fiscale nettowinst.';
+}
+function render(){let s=DATA.settings,p=DATA.period,f=DATA.period_full_tank;$('vehicleName').textContent=s.vehicle_name;$('fuelType').textContent=s.fuel_type;$('odometer').textContent=DATA.current_odometer==null?'—':fmt(DATA.current_odometer,0);$('heroConsumption').textContent=DATA.latest_full_cycle?.l100!=null?fmt(DATA.latest_full_cycle.l100,2):'—';$('sinceFull').textContent=DATA.since_full_km==null?'Nog geen volle-tank startpunt':`${fmt(DATA.since_full_km,0)} km sinds laatste volle tank`;$('periodLabel').textContent=p.label;$('fuelCount').textContent=`${p.fuel_count} tankbeurt${p.fuel_count===1?'':'en'}`;$('kpiKm').textContent=`${fmt(p.km,1)} km`;$('kpiLiters').textContent=`${fmt(p.liters,2)} L`;$('kpiL100').textContent=f?.l100==null?'—':fmt(f.l100,2);$('kpiKmPerLiter').textContent=kmPerLiter(f);$('kpiCost').textContent=money(p.cost);$('kpiPrice').textContent=p.avg_price==null?'—':`${s.currency} ${fmt(p.avg_price,3)}`;$('kpiCost100').textContent=f?.cost100==null?'—':money(f.cost100);$('fullAvgKmPerLiter').textContent=kmPerLiter(f);if(f?.l100!=null){$('fullAvgVal').textContent=`${fmt(f.l100,2)} L/100 km`;$('fullAvgInfo').innerHTML=`${f.cycles} complete cyclus${f.cycles===1?'':'sen'}<br>${fmt(f.km,0)} km · ${fmt(f.liters,1)} L`}else{$('fullAvgVal').textContent='—';$('fullAvgInfo').textContent='Nog geen complete volle-tank cyclus in deze periode'};renderChart();renderStations();renderHistory();renderBusiness();renderSmartInsights();$('eventCount').textContent=`${DATA.total_events} totaal`;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.period===PERIOD));document.querySelectorAll('.seg button').forEach(b=>b.classList.toggle('active',b.dataset.metric===METRIC));switchView(VIEW,false)}
 function renderChart(){let c=$('chart');c.innerHTML='';let vals=DATA.chart.map(x=>Number(x[METRIC]??0)||0),max=Math.max(...vals,1);DATA.chart.forEach(x=>{let w=document.createElement('div');w.className='bar-wrap';let value=Number(x[METRIC]??0)||0,pct=value<=0?1:Math.max(3,value/max*88);let label=METRIC==='cost'?`${DATA.settings.currency}${fmt(value,0)}`:METRIC==='liters'?`${fmt(value,1)}L`:METRIC==='l100'?`${fmt(value,1)}`:`${fmt(value,0)}`;w.innerHTML=`<div class="bar-val">${value?label:''}</div><div class="bar ${METRIC==='l100'?'orange':''}" style="height:${pct}%"></div><div class="bar-label">${x.label}</div>`;c.appendChild(w)})}
 function renderStations(){let box=$('stationStats'),arr=DATA.station_stats||[];$('stationCount').textContent=arr.length?`${arr.length} locatie${arr.length===1?'':'s'}`:'';box.innerHTML='';if(!arr.length){box.innerHTML='<div class="empty">In deze periode zijn nog geen tanklocaties opgeslagen.</div>';return}arr.forEach(x=>{let r=document.createElement('div');r.className='station-row';let map=x.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(x.google_maps_uri)}">📍</a>`:'';r.innerHTML=`<div class="station-icon">⛽</div><div><strong>${esc(x.name)}</strong><small>${x.count}× getankt · ${fmt(x.liters,1)} L · ${money(x.cost)}<br>gem. ${x.avg_price==null?'—':DATA.settings.currency+' '+fmt(x.avg_price,3)}/L${x.address?'<br>'+esc(x.address):''}</small></div>${map}`;box.appendChild(r)})}
 function renderHistory(){let h=$('history');h.innerHTML='';if(!DATA.recent.length){h.innerHTML='<div class="empty">Nog geen registraties. Voeg je eerste kilometerstand of tankbeurt toe.</div>';return}DATA.recent.forEach(e=>{let d=document.createElement('div');d.className='event';let fuel=e.type==='fuel',station=e.station_display||e.station||'',desc=fuel?`${fmt(e.liters,2)} L · ${DATA.settings.currency} ${fmt(e.price_per_liter,3)}/L${station?' · '+esc(station):''}`:`+${fmt(e.delta_km,1)} km`,map=e.google_maps_uri?`<a class="maplink" target="_blank" rel="noopener" href="${escAttr(e.google_maps_uri)}">📍</a>`:'',receipt=e.receipt_archive_id?`<a class="linkbtn" target="_blank" rel="noopener" href="api/receipt-archive/${e.receipt_archive_id}">Bon bekijken</a><a class="linkbtn" href="api/receipt-archive/${e.receipt_archive_id}?download=1" download>Downloaden</a>`:e.receipt_path?`<a class="receipt-link" target="_blank" rel="noopener" href="api/receipt/${e.id}">📷</a>`:'';d.innerHTML=`<div class="event-icon">${fuel?'⛽':'🛣️'}</div><div><strong>${fuel?'Tankbeurt':'Kilometerstand'} · ${fmt(e.odometer,0)} km</strong><small>${e.date_label} ${e.time_label} · ${desc}${e.kilometer_conflict?'<br>⚠️ Kilometerconflict — afstand/verbruik uitgesloten':''}${e.station_address?'<br>'+esc(e.station_address):''}${e.note?'<br>'+esc(e.note):''}</small></div><div class="right">${fuel?`<b>${money(e.cost)}</b>`:`<b>${fmt(e.delta_km,1)} km</b>`}<div class="event-actions">${map}${receipt}${fuel?`<button type="button" class="fuel-receipt-action" onclick="openFuelReceiptLink(${e.id})">📎 Bon toevoegen</button>`:'' }<button class="trash" onclick="removeEvent(${e.id})">🗑️</button></div></div>`;h.appendChild(d)})}
@@ -4166,7 +4232,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/maintenance/oil':
             with DB_LOCK, db() as con:
-                return json_response(self, {'entries': oil_history.list_entries(con)})
+                return json_response(self, {'entries': oil_history.list_entries(con),
+                                            'checks': oil_history.list_checks(con)})
         oil_match = re.fullmatch(r'/api/maintenance/oil/(\d+)', path)
         if oil_match:
             try:
@@ -4425,6 +4492,16 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, link_existing_fuel_receipt(
                     int(fuel_receipt_match.group(1)), payload), 201)
             oil_match = re.fullmatch(r'/api/maintenance/oil/(\d+)', path)
+            if path == '/api/maintenance/oil/check':
+                try:
+                    with DB_LOCK, db() as con:
+                        current = current_odometer(rows_events())
+                        checked = oil_history.add_check(con, payload, iso_local(),
+                                                        registered_odometer=current)
+                    return json_response(self, {'check': checked}, 201)
+                except oil_history.OilOdometerConfirmationRequired as exc:
+                    return json_response(self, {'error': str(exc),
+                                                 'code': 'OIL_ODOMETER_CONFIRMATION_REQUIRED'}, 409)
             if path == '/api/maintenance/oil' or oil_match:
                 try:
                     with DB_LOCK, db() as con:

@@ -1,6 +1,14 @@
 # Changelog
 
-## 34.05 — eigen tabblad Olie (releasekandidaat)
+## 34.06 — slimme oliepeilcontrole en maandsaldo (ontwikkelversie)
+- Advies voor oliepeilcontrole op tijd en gereden kilometers, met voorzichtige patroonherkenning.
+- Zelfstandige oliepeilcontrole zonder fictieve bijvulling of tellerstandwijziging.
+- Indicatie van olie-bijvulverbruik per 1.000 kilometer bij voldoende metingen.
+- Bruto zakelijke vergoeding en geschat saldo na toegerekende zakelijke brandstofkosten per kalendermaand.
+- Veilige additieve oliemeettabel, ongewijzigde fiscale ritrapporten.
+- Geen merge of Home Assistant-installatie uitgevoerd.
+
+## 34.05 — eigen tabblad Olie (gepubliceerd)
 - Vijf navigatieknoppen: Overzicht, Ritten, Tanken, Olie en Meer.
 - Eigen motoroliescherm met toevoegen, historie, bekijken/wijzigen en bevestigd verwijderen.
 - Optionele opmerking in de bestaande oil_maintenance-tabel via een herhaalbare, additieve migratie.

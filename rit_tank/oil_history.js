@@ -1,12 +1,19 @@
 /* Motorolie-onderhoud: aparte administratie, geen rit- of tellerstandwijzigingen. */
 let OIL_ENTRIES = [];
+let OIL_CHECKS = [];
 async function loadOilHistory() {
   const box = document.getElementById('oilHistoryList');
   if (!box) return;
   try {
     const result = await api('api/maintenance/oil');
     OIL_ENTRIES = result.entries || [];
+    OIL_CHECKS = result.checks || [];
     renderOilHistory();
+    renderOilChecks();
+    const date = document.getElementById('oilCheckDate');
+    const km = document.getElementById('oilCheckOdometer');
+    if (date && !date.value) date.value = new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
+    if (km && !km.value && Number.isInteger(Number(DATA?.current_odometer))) km.value = DATA.current_odometer;
   } catch (error) {
     box.textContent = 'Onderhoudshistorie laden mislukt: ' + error.message;
   }
@@ -132,3 +139,54 @@ async function removeOilEntry(id) {
   }
 }
 document.addEventListener('DOMContentLoaded', loadOilHistory);
+
+function renderOilChecks() {
+  const box = document.getElementById('oilCheckHistory');
+  if (!box) return;
+  box.replaceChildren();
+  const heading = document.createElement('small');
+  heading.textContent = 'Laatste peilcontroles (zonder bijvullen)';
+  box.appendChild(heading);
+  if (!OIL_CHECKS.length) return;
+  OIL_CHECKS.slice(0, 5).forEach(check => {
+    const row = document.createElement('small');
+    row.textContent = check.checked_on.split('-').reverse().join('-')+
+      ' · '+Number(check.odometer).toLocaleString('nl-NL')+' km'+
+      (check.note ? ' · '+check.note : '');
+    box.appendChild(row);
+  });
+}
+
+async function saveOilLevelCheck(event) {
+  event.preventDefault();
+  const el = id => document.getElementById(id);
+  const button = el('oilCheckSave'), message = el('oilCheckMessage');
+  const payload = {
+    checked_on: el('oilCheckDate').value,
+    odometer: el('oilCheckOdometer').value,
+    note: el('oilCheckNote').value.trim()
+  };
+  button.disabled = true;
+  message.textContent = '';
+  try {
+    const post = () => api('api/maintenance/oil/check', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    try {
+      await post();
+    } catch (error) {
+      if (error.code !== 'OIL_ODOMETER_CONFIRMATION_REQUIRED' || !confirm(error.message+' Toch opslaan?')) throw error;
+      payload.confirm_odometer_anomaly = true;
+      await post();
+    }
+    el('oilCheckNote').value = '';
+    message.textContent = 'Peilcontrole opgeslagen; geen oliebeurt aangemaakt.';
+    await reloadData();
+    await loadOilHistory();
+  } catch (error) {
+    message.textContent = 'Opslaan mislukt: '+error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
