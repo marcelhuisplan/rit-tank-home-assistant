@@ -285,3 +285,42 @@ jobs:
           fi
           git push --dry-run origin ${{ github.event.pull_request.head.sha }}:refs/tags/v34.06
           echo "DRY_RUN_34_05_TAG_WRITE_OK; no release or deployment performed"
+  release-preflight-3407:
+    name: Validate 34.07 release package and rights (NO PUBLISH)
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 59 && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact PR HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Verify approved 34.07 navigator and oil selector and unchanged main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPROVED=9e09914681d53af6c6489f67cd213692b90c6a13
+          OLD_MAIN=c0abf0d9088885fc5d8a49ce481ecea535397d67
+          test "$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')" = "$OLD_MAIN"
+          git merge-base --is-ancestor "$APPROVED" HEAD
+          test "$(git rev-parse "$APPROVED:rit_tank")" = "$(git rev-parse HEAD:rit_tank)"
+          git diff --name-only "$APPROVED" HEAD > release-diff.txt
+          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3407[.]yml)|tools/release_3407[.]py)$' release-diff.txt; then
+            echo "Unexpected change to approved 34.07 source"; exit 1
+          fi
+      - name: Verify 34.07 release archive without publishing
+        run: python3 tools/release_3407.py --verify-only
+      - name: Verify v34.07 tag is unused and permissions via dry-run
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --tags origin refs/tags/v34.07 | grep -q .; then
+            echo "Release tag v34.07 already exists"; exit 1
+          fi
+          git push --dry-run origin ${{ github.event.pull_request.head.sha }}:refs/tags/v34.07
+          echo "DRY_RUN_34_05_TAG_WRITE_OK; no release or deployment performed"
