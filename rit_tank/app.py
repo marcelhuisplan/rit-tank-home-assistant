@@ -52,7 +52,7 @@ def administration_serialized(function):
             return function(*args, **kwargs)
     return wrapped
 
-APP_VERSION = '34.06'
+APP_VERSION = '34.07'
 HOME_ADDRESS = 'Verenlandweg 4, 7461 AP Rijssen'
 BEATRIXSCHOOL_NAME = 'Beatrixschool Rijssen'
 BEATRIXSCHOOL_ADDRESS = 'Van Broekhuizenstraat 4, 7461 VW Rijssen'
@@ -2560,7 +2560,7 @@ def serialize_recent(rows: list[dict[str, Any]], limit: int = 30) -> list[dict[s
 
 
 def live_smart_insights(rows: list[dict[str, Any]], settings: dict[str, Any],
-                        odometer: float | None) -> tuple[dict[str, Any], dict[str, Any]]:
+                        odometer: float | None, finance_month: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     """Read-only derived cards; never alter stored trip, fuel or oil history."""
     with DB_LOCK, db() as con:
         entries = oil_history.list_entries(con)
@@ -2572,14 +2572,13 @@ def live_smart_insights(rows: list[dict[str, Any]], settings: dict[str, Any],
             rate = 0.0
     except (ValueError, TypeError):
         rate = 0.0
-    month_start, month_end = period_bounds('month')
-    finance = smart_insights.monthly_finances(
+    finances = smart_insights.finance_overview(
         business_trips_raw(), full_tank_cycles(rows), rate,
-        month_start, month_end, parse_dt)
-    return oil, finance
+        now_local(), finance_month, parse_dt)
+    return oil, finances
 
 
-def summary(period: str = 'month') -> dict[str, Any]:
+def summary(period: str = 'month', finance_month: str | None = None) -> dict[str, Any]:
     if period not in {'day','week','month','year'}:
         period = 'month'
     rows = rows_events()
@@ -2590,7 +2589,7 @@ def summary(period: str = 'month') -> dict[str, Any]:
     odo = current_odometer(rows)
     latest_full = next((r for r in reversed(rows) if r['type'] == 'fuel' and int(r.get('full_tank') or 0) and not r.get('kilometer_conflict')), None)
     standalone = standalone_config()
-    oil_insight, monthly_finance = live_smart_insights(rows, settings, odo)
+    oil_insight, finances = live_smart_insights(rows, settings, odo, finance_month)
     since_full_km = None
     if odo is not None and latest_full is not None:
         since_full_km = max(0.0, odo - float(latest_full['odometer']))
@@ -2606,7 +2605,9 @@ def summary(period: str = 'month') -> dict[str, Any]:
             'backup': backup_status(),
         },
         'oil_insight': oil_insight,
-        'monthly_finance': monthly_finance,
+        'monthly_finance': finances['monthly'],
+        'annual_finance': finances['year'],
+        'finance_navigation': finances['navigation'],
         'period': stats_for_period(period, rows),
         'period_full_tank': full_avg,
         'overall_full_tank': overall_full_tank_average(rows),
@@ -2929,7 +2930,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
 #oilHistoryCard .oil-hint{color:var(--muted);font-size:12px;line-height:1.5;margin:5px 0 12px}#oilHistoryCard .event-actions{display:flex;gap:6px}#oilHistoryCard button{min-height:44px;touch-action:manipulation}#oilHistoryModal input,#oilHistoryModal select,#oilHistoryModal textarea{min-height:52px;font-size:16px}#oilHistoryModal .sheet{max-height:calc(100dvh - env(safe-area-inset-top) - 12px);overflow-y:auto;padding-bottom:calc(20px + env(safe-area-inset-bottom))}#oilHistoryModal #oilHistoryError{color:#ffabb4;font-size:13px}#oilHistoryModal .sheethead{position:sticky;top:0;z-index:5;background:#14191e;padding-bottom:10px}#oilHistoryModal .close{flex:0 0 48px;min-width:48px;min-height:48px;background:#50eec7;color:#05251d;border:0;border-radius:14px;font-size:27px;font-weight:900;touch-action:manipulation}
 body.oil-view .app>.hero,body.oil-view .dashboard-actions,body.oil-view .app>.tabs{display:none}
 #oilHistoryCard h2{margin:0;font-size:24px}#oilHistoryCard .event{grid-template-columns:42px minmax(0,1fr);align-items:start}#oilHistoryCard .event-actions{grid-column:2;justify-content:flex-start;flex-wrap:wrap}#oilHistoryCard .event-actions button{min-width:44px}#oilHistoryCard .oil-details{min-width:0;overflow-wrap:anywhere}#oilHistoryCard .oil-note{white-space:pre-wrap}#oilHistoryModal textarea{width:100%;resize:vertical}
-.smart-insight-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}.smart-insight{padding:16px;border:1px solid rgba(76,210,174,.3);background:#102622;border-radius:20px;min-width:0}.smart-insight strong{display:block;font-size:20px;margin:9px 0;overflow-wrap:anywhere}.smart-insight small{display:block;color:#a6c7bd;line-height:1.5}.smart-insight h3{font-size:15px;margin:0}.smart-insight .insight-warn{color:#f4c38b}#oilCheckForm{display:grid;gap:10px;margin:16px 0;padding:14px;border:1px solid rgba(76,210,174,.3);border-radius:17px}#oilCheckForm input{width:100%;padding:12px;background:#091917;color:#fff;border:1px solid #448173;border-radius:10px}#oilCheckForm label{display:block;font-size:13px;color:#c8e1d8}#oilCheckForm .save{margin-top:6px}@media(max-width:400px){.smart-insight-grid{grid-template-columns:1fr}}
+.smart-insight-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}.smart-insight{padding:16px;border:1px solid rgba(76,210,174,.3);background:#102622;border-radius:20px;min-width:0}.smart-insight strong{display:block;font-size:20px;margin:9px 0;overflow-wrap:anywhere}.smart-insight small{display:block;color:#a6c7bd;line-height:1.5}.smart-insight h3{font-size:15px;margin:0}.smart-insight .insight-warn{color:#f4c38b}#oilCheckForm{display:grid;gap:10px;margin:16px 0;padding:14px;border:1px solid rgba(76,210,174,.3);border-radius:17px}#oilCheckForm input,#oilCheckForm select{width:100%;padding:12px;background:#091917;color:#fff;border:1px solid #448173;border-radius:10px}#oilCheckForm label{display:block;font-size:13px;color:#c8e1d8}#oilCheckForm .save{margin-top:6px}.finance-month-nav{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:12px 0}.finance-month-nav button{width:40px;height:42px;border-radius:12px;border:1px solid #448173;background:#12372f;color:#d7fff3;font-size:20px;flex-shrink:0}.finance-month-nav button:disabled{opacity:.3;cursor:not-allowed}.finance-month-nav strong{margin:0;font-size:15px;text-align:center}.smart-insight .year-summary{border-top:1px solid #387064;margin-top:16px;padding-top:14px}.smart-insight .year-summary strong{font-size:20px}#oilCheckForm select{min-height:46px} @media(max-width:400px){.smart-insight-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -2956,7 +2957,17 @@ body.oil-view .app>.hero,body.oil-view .dashboard-actions,body.oil-view .app>.ta
 
   <section class="smart-insight-grid" aria-label="Oliecontrole en financieel maandoverzicht">
     <article class="smart-insight"><h3>🛢️ Motoroliepeil</h3><strong id="smartOilStatus">Laden…</strong><small id="smartOilDetail">Oliecontroleadvies op basis van je onderhoudshistorie.</small><small id="smartOilConsumption">Geschat bijvulverbruik: onvoldoende gegevens</small></article>
-    <article class="smart-insight"><h3>💶 Saldo na brandstof · maand</h3><strong id="smartNetBalance">Laden…</strong><small id="smartNetDetails">Zakelijke kilometers × vergoeding minus geschatte zakelijke brandstofkosten.</small><small id="smartNetNote">Dit is geen nettowinst of fiscale berekening.</small></article>
+    <article class="smart-insight"><h3>💶 Saldo na brandstof · maand</h3>
+      <div class="finance-month-nav" aria-label="Maand kiezen voor financieel overzicht">
+        <button id="financePrevMonth" type="button" aria-label="Vorige maand" onclick="stepFinanceMonth(-1)">‹</button>
+        <strong id="financeSelectedMonth" aria-live="polite">Deze maand</strong>
+        <button id="financeNextMonth" type="button" aria-label="Volgende maand" onclick="stepFinanceMonth(1)">›</button>
+      </div>
+      <strong id="smartNetBalance">Laden…</strong>
+      <small id="smartNetDetails">Zakelijke kilometers × vergoeding minus geschatte zakelijke brandstofkosten.</small>
+      <small id="smartNetNote">Dit is geen nettowinst of fiscale berekening.</small>
+      <div class="year-summary"><h3 id="financeYearTitle">Jaartotaal · 2026</h3><strong id="financeYearBalance">—</strong><small id="financeYearDetails">Vanaf eerste registratie dit jaar t/m vandaag.</small></div>
+    </article>
   </section>
   <div class="view active" id="view-auto">
     <div class="period-title"><h3 id="periodLabel">Deze maand</h3><span id="fuelCount"></span></div>
@@ -2983,7 +2994,18 @@ body.oil-view .app>.hero,body.oil-view .dashboard-actions,body.oil-view .app>.ta
         <strong>Peil gecontroleerd (zonder bijvullen)</strong>
         <label for="oilCheckDate">Datum</label><input id="oilCheckDate" type="date" required>
         <label for="oilCheckOdometer">Werkelijke kilometerstand</label><input id="oilCheckOdometer" type="number" min="0" max="999999" step="1" inputmode="numeric" required>
-        <label for="oilCheckNote">Opmerking (optioneel)</label><input id="oilCheckNote" maxlength="500" placeholder="Bijv. peil goed">
+        <label for="oilCheckLevel">Uitkomst peilcontrole</label>
+        <select id="oilCheckLevel" required>
+          <option value="">Kies een uitkomst…</option>
+          <option value="normal">Peil goed (tussen min. en max.)</option>
+          <option value="low">Peil laag (bij minimum)</option>
+          <option value="below_min">Onder minimum — bijvullen nodig</option>
+          <option value="high">Peil boven maximum</option>
+          <option value="unreadable">Niet goed afleesbaar</option>
+          <option value="recheck">Controle herhalen</option>
+          <option value="other">Overige opmerking</option>
+        </select>
+        <label for="oilCheckNote">Eigen toelichting (optioneel)</label><input id="oilCheckNote" maxlength="500" placeholder="Bijv. motor koud, auto vlak geparkeerd">
         <button class="save" type="submit" id="oilCheckSave">Peil gecontroleerd</button>
         <small id="oilCheckMessage" role="status">Een peilcontrole verandert geen kilometerstand of oliebeurt.</small>
         <div id="oilCheckHistory"></div>
@@ -3205,9 +3227,24 @@ function toast(msg,error=false){let t=$('toast');t.textContent=msg;t.className='
 let modalScrollY=0;function lockModalScroll(){if(document.body.classList.contains('modal-open'))return;modalScrollY=window.scrollY;document.body.style.top=`-${modalScrollY}px`;document.body.classList.add('modal-open')}function unlockModalScroll(){if(document.querySelector('.modal.show'))return;let scrollY=modalScrollY;document.body.classList.remove('modal-open');document.body.style.top='';modalScrollY=0;window.scrollTo(0,scrollY)}function closeModal(id){if(id==='tripModal'){clearTimeout(TRIP_HOUSE_TIMER);++TRIP_HOUSE_REQUEST;++TRIP_ADDRESS_REQUEST;++TRIP_ROUTE_PREVIEW_REQUEST;TRIP_STREET_CONTEXT='';}if(id==='assistantModal')openAssistantComplete.request=(openAssistantComplete.request||0)+1;if(['tripModal','assistantModal','distanceModal'].includes(id)){PHYSICAL_PENDING=null;++PHYSICAL_GENERATION;}$(id).classList.remove('show');unlockModalScroll()} function openModal(id){lockModalScroll();$(id).classList.add('show');let sh=$(id).querySelector('.sheet');if(sh)sh.scrollTop=0}
 let GUIDE_TIMER=null;
 function guideTo(id,delay=80){clearTimeout(GUIDE_TIMER);GUIDE_TIMER=setTimeout(()=>{let el=$(id);if(!el)return;let modal=el.closest('.modal');if(modal&&!modal.classList.contains('show'))return;if(modal)modal.querySelectorAll('.guide-section').forEach(x=>x.classList.toggle('active',x===el));let sheet=el.closest('.sheet');if(sheet){let top=el.getBoundingClientRect().top-sheet.getBoundingClientRect().top+sheet.scrollTop-24;sheet.scrollTo({top:Math.max(0,top),behavior:'smooth'})}else el.scrollIntoView({behavior:'smooth',block:'center'})},delay)}
-async function reloadData(){try{DATA=await api(`api/summary?period=${PERIOD}`);await migrateLocationFallback();render();handleLaunchAction()}catch(e){toast(e.message,true)}}
+let FINANCE_MONTH = null;
+async function reloadData(){
+  try{
+    DATA=await api(`api/summary?period=${PERIOD}${FINANCE_MONTH?'&finance_month='+encodeURIComponent(FINANCE_MONTH):''}`);
+    FINANCE_MONTH=DATA.finance_navigation?.selected_month||null;
+    await migrateLocationFallback();render();handleLaunchAction()
+  }catch(e){toast(e.message,true)}
+}
+function stepFinanceMonth(direction){
+  const n=DATA?.finance_navigation;
+  if(!n || (direction<0&&!n.has_previous) || (direction>0&&!n.has_next))return;
+  const [y,m]=n.selected_month.split('-').map(Number);
+  const d=new Date(Date.UTC(y,m-1+direction,1));
+  FINANCE_MONTH=d.toISOString().slice(0,7);
+  reloadData();
+}
 function renderSmartInsights(){
-  const oil=DATA.oil_insight||{}, finance=DATA.monthly_finance||{};
+  const oil=DATA.oil_insight||{}, finance=DATA.monthly_finance||{}, year=DATA.annual_finance||{}, nav=DATA.finance_navigation||{};
   const oilStatus=$('smartOilStatus'),detail=$('smartOilDetail'),consumption=$('smartOilConsumption');
   if(oil.status==='no_history'){
     oilStatus.textContent='Nog geen historie';
@@ -3217,12 +3254,25 @@ function renderSmartInsights(){
     oilStatus.classList.toggle('insight-warn',Boolean(oil.reminder));
     detail.textContent='Advies: elke '+oil.interval_km.toLocaleString('nl-NL')+' km of '+oil.interval_days+
       ' dagen. Volgende grens: '+oil.next_km.toLocaleString('nl-NL')+' km / '+oil.next_date+
-      (oil.learned?' · op basis van meerdere bijvullingen':' · voorlopig instelbaar basisinterval');
+      (oil.learned?' · op basis van meerdere bijvullingen':' · voorlopig basisinterval')+
+      (oil.level_attention?' · Laatst gemeten peil vraagt aandacht; controleer dit vóór verder rijden.':'');
   }
   consumption.textContent=oil.consumption_l_per_1000==null
     ? 'Geschat bijvulverbruik: nog onvoldoende meetgegevens'
     : 'Geschat bijvulverbruik: '+fmt(oil.consumption_l_per_1000,3)+' L / 1.000 km';
+  $('financeSelectedMonth').textContent=nav.selected_month
+    ? new Intl.DateTimeFormat('nl-NL',{month:'long',year:'numeric'}).format(new Date(nav.selected_month+'-01T12:00:00'))
+    : 'Deze maand';
+  $('financePrevMonth').disabled=!nav.has_previous;
+  $('financeNextMonth').disabled=!nav.has_next;
   $('smartNetBalance').textContent=finance.balance_after_fuel==null?'Nog onvoldoende tankgegevens':money(finance.balance_after_fuel);
+  $('financeYearTitle').textContent='Jaartotaal · '+(year.year||new Date().getFullYear());
+  $('financeYearBalance').textContent=year.balance_after_fuel==null?'Nog onvoldoende tankgegevens':money(year.balance_after_fuel);
+  $('financeYearDetails').textContent=fmt(year.business_km||0,1)+' zakelijke km · bruto '+
+     money(year.gross_reimbursement||0)+' · brandstof '+
+     (year.allocated_fuel_cost==null?'onbekend':money(year.allocated_fuel_cost))+
+     ' · t/m '+(year.through_date||'vandaag')+
+     ' · indicatief saldo vanaf eerste registratie dit jaar.';
   $('smartNetDetails').textContent=fmt(finance.business_km||0,1)+' zakelijke km · bruto '+
     money(finance.gross_reimbursement||0)+' · brandstof '+
     (finance.allocated_fuel_cost==null?'onbekend':money(finance.allocated_fuel_cost));
@@ -4252,7 +4302,8 @@ class Handler(BaseHTTPRequestHandler):
                                             (q.get('download') or ['0'])[0] == '1')
         if path == '/api/summary':
             period = (q.get('period') or ['month'])[0]
-            return json_response(self, summary(period))
+            finance_month = (q.get('finance_month') or [None])[0]
+            return json_response(self, summary(period, finance_month))
         ms = re.fullmatch(r'/api/stats/(day|week|month|year)', path)
         if ms:
             return json_response(self, summary(ms.group(1)))

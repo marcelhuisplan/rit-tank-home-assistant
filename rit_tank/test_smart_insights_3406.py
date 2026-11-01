@@ -57,7 +57,7 @@ class SmartInsightsTests(unittest.TestCase):
         c.execute('INSERT INTO events VALUES (1, 11000)')
         oil_history.init_schema(c)
         row = oil_history.add_check(c, {'checked_on': '2026-10-28', 'odometer': 10900,
-                                        'note': 'Peil goed'}, '2026-10-28T10:00:00')
+                                        'note': 'Peil goed', 'level_status': 'normal'}, '2026-10-28T10:00:00')
         oil_history.init_schema(c)
         self.assertEqual(len(oil_history.list_checks(c)), 1)
         self.assertEqual(row['note'], 'Peil goed')

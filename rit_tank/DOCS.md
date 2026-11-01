@@ -1,4 +1,14 @@
-# Rit & Tank 34.06
+# Rit & Tank 34.07
+
+## 34.07 — maandnavigatie, jaarsaldo en standaardkeuzes bij oliecontrole (ontwikkelversie)
+
+Releasekandidaat: **34.07** · nog niet gemerged of gepubliceerd.
+
+- Het financiële dashboard heeft zelfstandige knoppen **Vorige maand** / **Volgende maand**, los van de bestaande Dag/Week/Maand/Jaar-weergave. Je kunt terugbladeren vanaf de maand van de eerste geregistreerde rit; niet vooruit naar toekomstige maanden.
+- Het **jaartotaal 2026 t/m vandaag** staat direct onder het gekozen maandsaldo. Deze cijfers zijn afgeleide schattingen van zakelijke kilometers maal vergoeding, verminderd met toegerekende brandstofkosten op basis van volledige tankcycli. Bij ontbrekende meetgegevens verschijnt geen misleidende netto-uitkomst. Fiscale PDF/CSV blijft intact.
+- De peilcontrole bevat een verplichte keuzelijst: **Peil goed**, **Peil laag**, **Onder minimum – bijvullen nodig**, **Peil boven maximum**, **Niet goed afleesbaar**, **Controle herhalen** of **Overige opmerking**. Een eigen toelichting blijft mogelijk.
+- Bestaande peilcontroles blijven via een toevoegende, herhaalbare databasekolom bewaard en zijn herkenbaar als 'Niet gespecificeerd'. Een peilcontrole verandert geen oliebeurt, rit of voertuigkilometerstand.
+- De bestaande Home Assistant-repository en slug blijven onveranderd. Geen installatie of officiële publicatie zonder aparte toestemming.
 
 ## 34.06 — slim olieonderhoud / geschat maandsaldo (ontwikkelversie)
 
@@ -21,7 +31,7 @@ kolom `note` wordt additief toegevoegd; bestaande rijen blijven behouden. Ook bi
 een actieve rit verandert olieonderhoud geen tankbeurten, ritten, tussenstops,
 voertuigkilometerstand of kilometervergoeding.
 
-34.05 is de laatst gepubliceerde GitHub-release. 34.06 is nog in ontwikkeling.
+34.06 is de laatst gepubliceerde GitHub-release; 34.07 is in ontwikkeling.
 Merge, publicatie en Home Assistant-installatie vereisen afzonderlijke toestemming.
 `repository.yaml`, de map `rit_tank` en slug `rit_tank` blijven gelijk: na latere
 vrijgave verschijnt de normale update via het bestaande repositorykanaal.

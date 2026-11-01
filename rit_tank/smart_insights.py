@@ -59,8 +59,15 @@ def oil_guidance(entries: list[dict[str, Any]], checks: list[dict[str, Any]],
     next_date = latest["_date"] + timedelta(days=day_interval)
     remaining_km = None if current_odometer is None else round(next_km - float(current_odometer), 0)
     days_left = (next_date - today).days
-    due = days_left <= 0 or (remaining_km is not None and remaining_km <= 0)
+    # A concerning recorded level remains actionable even when the usual
+    # mileage/time interval has not elapsed. A later normal check or top-up
+    # clears it; never silently postpone a below-minimum finding.
+    attention = (latest.get("kind") == "check" and
+                 latest.get("level_status") in {
+                     "low", "below_min", "high", "unreadable", "recheck"})
+    due = attention or days_left <= 0 or (remaining_km is not None and remaining_km <= 0)
     return dict(status="due" if due else "scheduled", reminder=due,
+                level_attention=bool(attention),
                 learned=confident, interval_km=km_interval, interval_days=day_interval,
                 next_km=next_km, next_date=next_date.isoformat(),
                 remaining_km=remaining_km, remaining_days=days_left,
@@ -123,4 +130,62 @@ def monthly_finances(trips: list[tuple[dict[str, Any], list[dict[str, Any]]]],
         "estimated": True,
         "prorated_month_boundary": prorated,
         "fuel_cycles": len(valid_cycles),
+    }
+
+
+def finance_overview(trips: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+                     cycles: list[dict[str, Any]], rate: float, now: datetime,
+                     requested_month: str | None,
+                     parse_dt: Callable[[str], datetime]) -> dict[str, Any]:
+    """Monthly navigator and current-year balance based on the same trip segments.
+
+    Both figures remain indicative; fiscal reports and historical records are
+    not changed. Only real trip stop dates establish the first available month.
+    """
+    import re
+
+    tz = now.tzinfo
+    current_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    def first_of_next_month(start: datetime) -> datetime:
+        return (start.replace(year=start.year + 1, month=1) if start.month == 12
+                else start.replace(month=start.month + 1))
+
+    first_dates = [parse_dt(stop["created_at"]) for _, stops in trips for stop in stops
+                   if stop.get("created_at")]
+    earliest = min(first_dates).replace(day=1, hour=0, minute=0, second=0, microsecond=0) if first_dates else current_start
+    # A future-dated anomaly must not let the navigator jump to future months.
+    earliest = min(earliest, current_start)
+    selected = current_start
+    if requested_month and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", requested_month):
+        try:
+            candidate = datetime.fromisoformat(requested_month + "-01").replace(tzinfo=tz)
+            if earliest <= candidate <= current_start:
+                selected = candidate
+        except ValueError:
+            pass
+
+    selected_end = first_of_next_month(selected)
+    if selected == current_start:
+        # Ignore future-dated stops while retaining today's real registrations.
+        selected_end = min(selected_end, (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0))
+    monthly = monthly_finances(trips, cycles, rate, selected, selected_end, parse_dt)
+
+    year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    year_end = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    annual = monthly_finances(trips, cycles, rate, year_start, year_end, parse_dt)
+    annual["year"] = now.year
+    annual["through_date"] = now.date().isoformat()
+    annual["since_first_registration"] = min(first_dates).date().isoformat() if first_dates else None
+    return {
+        "monthly": monthly,
+        "year": annual,
+        "navigation": {
+            "selected_month": selected.strftime("%Y-%m"),
+            "earliest_month": earliest.strftime("%Y-%m"),
+            "latest_month": current_start.strftime("%Y-%m"),
+            "has_previous": selected > earliest,
+            "has_next": selected < current_start,
+            "has_registrations": bool(first_dates),
+        },
     }
