@@ -38,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APPROVED=9e09914681d53af6c6489f67cd213692b90c6a13
+          APPROVED=2566e43896925973af08b44f909ee88cf033609f
           OLD_MAIN=c0abf0d9088885fc5d8a49ce481ecea535397d67
           test "$(git rev-parse HEAD)" = "$TESTED_SHA"
           test "$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')" = "$TESTED_SHA"
