@@ -59,8 +59,15 @@ def oil_guidance(entries: list[dict[str, Any]], checks: list[dict[str, Any]],
     next_date = latest["_date"] + timedelta(days=day_interval)
     remaining_km = None if current_odometer is None else round(next_km - float(current_odometer), 0)
     days_left = (next_date - today).days
-    due = days_left <= 0 or (remaining_km is not None and remaining_km <= 0)
+    # A concerning recorded level remains actionable even when the usual
+    # mileage/time interval has not elapsed. A later normal check or top-up
+    # clears it; never silently postpone a below-minimum finding.
+    attention = (latest.get("kind") == "check" and
+                 latest.get("level_status") in {
+                     "low", "below_min", "high", "unreadable", "recheck"})
+    due = attention or days_left <= 0 or (remaining_km is not None and remaining_km <= 0)
     return dict(status="due" if due else "scheduled", reminder=due,
+                level_attention=bool(attention),
                 learned=confident, interval_km=km_interval, interval_days=day_interval,
                 next_km=next_km, next_date=next_date.isoformat(),
                 remaining_km=remaining_km, remaining_days=days_left,
