@@ -169,4 +169,3 @@ PDF's staan blijvend onder `/data/receipt_archive` en de index in `/data/rit_tan
 ## Bon achteraf koppelen (33.11)
 
 Bij **Recente registraties** heeft iedere tankbeurt **📎 Bon toevoegen**. Selecteer een bestaande PDF uit het bonnenarchief, maak een iPhone-foto of upload een PDF. De nieuwe bon wordt als PDF opgeslagen. Daarna kun je **Bon bekijken** en **Downloaden**. Een bestaande koppeling vervang je uitsluitend na bevestiging; de oude bon blijft in de opslag staan. De koppeling staat in de bestaande database en maakt samen met de PDF deel uit van Home Assistant- en versleutelde app-back-ups. Tankwaarden en ritten worden niet gewijzigd.
-

@@ -156,4 +156,3 @@ class FuelReceiptLink3311Tests(unittest.TestCase):
         for token in ('fuelReceiptCamera','fuelReceiptExistingSelect','Bon koppelen',
                       'confirm_replace','confirm_duplicate'):
             self.assertIn(token,ui)
-

@@ -63,4 +63,3 @@ schema:
   backup_encryption_password: password
   backup_hour: int(0,23)
   backup_retention_days: int(0,365)
-

@@ -132,4 +132,3 @@ async function removeOilEntry(id) {
   }
 }
 document.addEventListener('DOMContentLoaded', loadOilHistory);
-

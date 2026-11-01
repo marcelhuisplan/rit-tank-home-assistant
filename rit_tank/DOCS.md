@@ -473,4 +473,3 @@ Nieuwe PDF's en index leven onder `/data/receipt_archive` respectievelijk in de 
 ## Tankbon achteraf koppelen (33.11)
 
 Bij **Recente registraties → 📎 Bon toevoegen** hoort de koppeling uitsluitend bij de gekozen bestaande tankbeurt (`events.receipt_archive_id`). De database migreert deze optionele kolom zonder oudere registraties te wijzigen. Kies een bestaande PDF uit het archief of gebruik iPhone-foto/PDF-upload. Alleen nieuwe uploads worden via de bestaande veilige PDF-verwerking in `/data/receipt_archive` opgeslagen. Koppelen maakt geen tweede tankregistratie, past geen kilometers, liters, bedrag, datum, rit of oorspronkelijke `receipt_path` aan en verwijdert geen bonnen. Bij een eerdere koppeling volgt een expliciete bevestiging; een vervangen bon blijft bewaard. Nieuwe koppelingen zijn via **Bon bekijken** en **Downloaden** direct beschikbaar. SQLite en PDF's vallen onder de bestaande Home Assistant data-/back-ups en de versleutelde app-back-up.
-

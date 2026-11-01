@@ -185,4 +185,3 @@ def delete_entry(con: sqlite3.Connection, entry_id: int, *, confirmed: bool) -> 
     )
     if cur.rowcount != 1:
         raise OilEntryNotFound('Oliebeurt niet gevonden.')
-

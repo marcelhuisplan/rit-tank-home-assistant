@@ -19,4 +19,3 @@ assert.ok(app.includes('id="oilHistoryType"'), 'oil viscosity/custom text');
 assert.ok(app.includes('<script src="oil-history.js"></script>'), 'frontend script bundled');
 assert.ok(!app.includes("INSERT INTO events(created_at,type,odometer,note) VALUES(?,?,?,?)',\n        (oil_history"), 'never add oil as mileage event');
 console.log('Oil history UI and isolated routes PASS');
-

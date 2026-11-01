@@ -164,4 +164,3 @@ class Beatrixschool3200UiSourceTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-

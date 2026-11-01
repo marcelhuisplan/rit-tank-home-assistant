@@ -56,4 +56,3 @@ class Recovery3309Tests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-

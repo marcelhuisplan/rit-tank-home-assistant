@@ -532,4 +532,3 @@ Release 25.00 voegt **🏠 Thuis** toe aan Nieuwe rit: altijd Verenlandweg 4, 74
 - Slim voorstel Zakelijk/Privé op basis van bestemming, vertrekplek en geleerde routes.
 - Terugkerende routes worden onthouden na bevestiging.
 - CSV en fiscale PDF bevatten ritsoort per etappe.
-
