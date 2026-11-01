@@ -3254,7 +3254,8 @@ function renderSmartInsights(){
     oilStatus.classList.toggle('insight-warn',Boolean(oil.reminder));
     detail.textContent='Advies: elke '+oil.interval_km.toLocaleString('nl-NL')+' km of '+oil.interval_days+
       ' dagen. Volgende grens: '+oil.next_km.toLocaleString('nl-NL')+' km / '+oil.next_date+
-      (oil.learned?' · op basis van meerdere bijvullingen':' · voorlopig instelbaar basisinterval');
+      (oil.learned?' · op basis van meerdere bijvullingen':' · voorlopig basisinterval')+
+      (oil.level_attention?' · Laatst gemeten peil vraagt aandacht; controleer dit vóór verder rijden.':'');
   }
   consumption.textContent=oil.consumption_l_per_1000==null
     ? 'Geschat bijvulverbruik: nog onvoldoende meetgegevens'
