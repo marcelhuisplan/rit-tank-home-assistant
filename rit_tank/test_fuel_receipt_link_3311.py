@@ -147,7 +147,7 @@ class FuelReceiptLink3311Tests(unittest.TestCase):
                              response.json()['archive_id'])
 
     def test_ui_contract(self):
-        self.assertEqual(app.APP_VERSION,'34.06')
+        self.assertEqual(app.APP_VERSION,'34.07')
         self.assertIn('📎 Bon toevoegen', app.APP_HTML)
         self.assertIn('openFuelReceiptLink(', app.APP_HTML)
         self.assertIn('Bon bekijken', app.APP_HTML)
