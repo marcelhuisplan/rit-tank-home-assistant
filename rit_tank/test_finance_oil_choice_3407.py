@@ -106,6 +106,20 @@ class OilChoice3407Tests(unittest.TestCase):
         self.assertEqual(len(oil_history.list_entries(self.db)), 0)
         self.assertEqual(len(oil_history.list_checks(self.db)), len(oil_history.OIL_LEVEL_CHOICES))
 
+    def test_unsafe_peil_keeps_warning_until_normal_check(self):
+        oil = [{"id": 1, "kind": "top_up", "performed_on": "2026-10-20",
+                "amount_ml": 200, "odometer": 10000}]
+        bad = [{"id": 2, "checked_on": "2026-10-31", "odometer": 10020,
+                "level_status": "below_min"}]
+        due = smart_insights.oil_guidance(oil, bad, 10021, dt("2026-11-01T12:00:00").date())
+        self.assertTrue(due["reminder"])
+        self.assertTrue(due["level_attention"])
+        good = bad + [{"id": 3, "checked_on": "2026-11-01", "odometer": 10021,
+                      "level_status": "normal"}]
+        new = smart_insights.oil_guidance(oil, good, 10021, dt("2026-11-01T12:00:00").date())
+        self.assertFalse(new["reminder"])
+        self.assertFalse(new["level_attention"])
+
     def test_missing_or_unknown_choice_cannot_be_saved(self):
         oil_history.init_schema(self.db)
         for value in (None, "", "magic"):
