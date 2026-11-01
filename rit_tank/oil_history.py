@@ -51,6 +51,9 @@ def init_schema(con: sqlite3.Connection) -> None:
         )
     """)
     con.execute("CREATE INDEX IF NOT EXISTS idx_oil_level_checks_date ON oil_level_checks(vehicle_key, checked_on DESC, id DESC)")
+    check_columns = {row[1] for row in con.execute('PRAGMA table_info(oil_level_checks)')}
+    if 'level_status' not in check_columns:
+        con.execute("ALTER TABLE oil_level_checks ADD COLUMN level_status TEXT NOT NULL DEFAULT 'unspecified'")
 
 
 
@@ -198,10 +201,21 @@ def delete_entry(con: sqlite3.Connection, entry_id: int, *, confirmed: bool) -> 
     if cur.rowcount != 1:
         raise OilEntryNotFound('Oliebeurt niet gevonden.')
 
+OIL_LEVEL_CHOICES = {
+    'normal': 'Peil goed (tussen minimum en maximum)',
+    'low': 'Peil laag (bij minimum)',
+    'below_min': 'Onder minimum — olie bijvullen nodig',
+    'high': 'Peil boven maximum',
+    'unreadable': 'Peil niet goed afleesbaar',
+    'recheck': 'Controle herhalen',
+    'other': 'Overige opmerking',
+}
+
+
 def list_checks(con: sqlite3.Connection) -> list[dict[str, Any]]:
     """Independent checks: a peilcontrole is NOT a top-up or an oil change."""
     return [_row(row) for row in con.execute(
-        "SELECT id, checked_on, odometer, note, created_at "
+        "SELECT id, checked_on, odometer, note, level_status, created_at "
         "FROM oil_level_checks WHERE vehicle_key='primary' ORDER BY checked_on DESC, id DESC"
     )]
 
@@ -226,11 +240,14 @@ def add_check(con: sqlite3.Connection, payload: dict[str, Any], stamp: str,
     note = payload.get('note', '')
     if not isinstance(note, str) or len(note) > 500 or any(ord(c) < 32 and c not in '\n\r\t' for c in note):
         raise ValueError('Opmerking maximaal 500 tekens.')
+    level_status = payload.get('level_status')
+    if level_status not in OIL_LEVEL_CHOICES:
+        raise ValueError('Kies eerst de uitkomst van de oliepeilcontrole.')
     cur = con.execute(
-        "INSERT INTO oil_level_checks (checked_on, odometer, note, created_at) VALUES (?, ?, ?, ?)",
-        (raw_date, odo, note.strip(), stamp),
+        "INSERT INTO oil_level_checks (checked_on, odometer, note, level_status, created_at) VALUES (?, ?, ?, ?, ?)",
+        (raw_date, odo, note.strip(), level_status, stamp),
     )
     return dict(con.execute(
-        "SELECT id, checked_on, odometer, note, created_at FROM oil_level_checks WHERE id=?",
+        "SELECT id, checked_on, odometer, note, level_status, created_at FROM oil_level_checks WHERE id=?",
         (cur.lastrowid,),
     ).fetchone())
