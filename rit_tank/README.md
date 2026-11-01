@@ -15,7 +15,6 @@
 - Onderhoud staat in een aparte toevoegende SQLite-tabel `oil_maintenance` en verandert geen ritten, tankbeurten, fysieke tellerstand, kilometervergoeding, bonnen of PDF/CSV-ritrapportages.
 - **34.04 is een conceptversie in Draft PR #55.** De huidige Home Assistant-installatie is 34.03; publicatie en installatie vereisen afzonderlijke toestemming.
 - Voor installatie: controleer een volledige Home Assistant-back-up inclusief lokale apps-map, Rit & Tank-gegevens, externe back-upkopie en herstelsleutel. Gebruik vervolgens de bestaande lokale Home Assistant-add-onupdate; GitHub-publicatie alleen werkt de lokale add-on niet bij.
-- Automatische tankstops (Draft PR #55) zijn **niet** inbegrepen; daarvoor is een latere afzonderlijke release voorzien.
 
 ## iPhone-toetsenbordnavigatie tankformulier (34.02)
 

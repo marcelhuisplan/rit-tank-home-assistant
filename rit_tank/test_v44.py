@@ -130,7 +130,7 @@ class AutonomyTests(unittest.TestCase):
         self.assertTrue((root / 'CHANGELOG.md').read_text(encoding='utf-8').startswith(f'# Changelog\n\n## {version}'))
         self.assertTrue((root / 'DOCS.md').read_text(encoding='utf-8').startswith(f'# Rit & Tank {version}'))
         readme = (root / 'README.md').read_text(encoding='utf-8')
-        self.assertIn('Huidige release: **34.04**.', readme)
+        self.assertIn('Releasekandidaat: **34.04**', readme)
         self.assertIn('Volgende release: **nog niet vastgesteld**.', readme)
         ci = (root.parent / '.github' / 'workflows' / 'ci.yml').read_text(encoding='utf-8')
         self.assertEqual(ci.count("app.APP_VERSION == '34.04'"), 2)
