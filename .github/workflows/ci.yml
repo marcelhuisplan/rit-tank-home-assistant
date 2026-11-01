@@ -265,7 +265,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APPROVED=b33cdab97b0ed616ffd6d6276578a3b95ea96778
+          APPROVED=a7b715341e73a501851cf119a036d7ed4f9d3485
           OLD_MAIN=9e35491beb93b122c2fd160c0b1d4278ed389436
           test "$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')" = "$OLD_MAIN"
           git merge-base --is-ancestor "$APPROVED" HEAD
