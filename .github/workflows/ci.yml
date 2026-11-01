@@ -189,9 +189,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')" = 7819dba210db88a048a8dba9b50cb14a17f517c2
-          git merge-base --is-ancestor a8108456b8663314cd9bba1fc0d47a7b8df129db HEAD
-          test "$(git rev-parse a8108456b8663314cd9bba1fc0d47a7b8df129db:rit_tank)" = "$(git rev-parse HEAD:rit_tank)"
-          git diff --name-only a8108456b8663314cd9bba1fc0d47a7b8df129db HEAD > release-diff.txt
+          git merge-base --is-ancestor 47734d8eced6f072418896255c6b6faf1e7d1fb4 HEAD
+          test "$(git rev-parse 47734d8eced6f072418896255c6b6faf1e7d1fb4:rit_tank)" = "$(git rev-parse HEAD:rit_tank)"
+          git diff --name-only 47734d8eced6f072418896255c6b6faf1e7d1fb4 HEAD > release-diff.txt
           if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3404[.]yml)|tools/release_3404[.]py)$' release-diff.txt; then
             echo 'Source change after approved 34.04 candidate'; exit 1
           fi
