@@ -50,7 +50,7 @@ def check_archive(content):
 
 def main():
     if len(sys.argv) != 2 or sys.argv[1] not in ("--verify-only", "--package"):
-        raise SystemExit("Usage: release_3403.py --verify-only|--package")
+        raise SystemExit("Usage: release_3404.py --verify-only|--package")
     data = subprocess.run(["git", "archive", "--format=zip", "HEAD", "rit_tank"],
                           check=True, stdout=subprocess.PIPE).stdout
     count, sha256 = check_archive(data)

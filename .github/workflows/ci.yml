@@ -192,7 +192,7 @@ jobs:
           git merge-base --is-ancestor 47734d8eced6f072418896255c6b6faf1e7d1fb4 HEAD
           test "$(git rev-parse 47734d8eced6f072418896255c6b6faf1e7d1fb4:rit_tank)" = "$(git rev-parse HEAD:rit_tank)"
           git diff --name-only 47734d8eced6f072418896255c6b6faf1e7d1fb4 HEAD > release-diff.txt
-          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3404[.]yml)|tools/release_3404[.]py)$' release-diff.txt; then
+          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3404[.]yml)|tools/(release_3404[.]py|test_browser_v3316[.]cjs))$' release-diff.txt; then
             echo 'Source change after approved 34.04 candidate'; exit 1
           fi
       - name: Verify 34.04 ZIP without publishing or modifying Home Assistant

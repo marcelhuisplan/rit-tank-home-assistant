@@ -90,7 +90,7 @@ async function fuelFailureDiagnostics(page,scenario){
        if(!g.visible){console.error('33.16 focus geometry '+scenario+' '+JSON.stringify(g));await fuelFailureDiagnostics(page,scenario)}
        assert.equal(g.visible,true,id+' focused above the keyboard in '+scenario);
      };
-     for(const [id,hint] of [['fuelOdo','next'],['fuelLitersInput','next'],['fuelPriceInput','next'],['fuelStation','next'],['fuelNote','next']])
+     for(const [id,hint] of [['fuelOdo','next'],['fuelLitersInput','next'],['fuelPriceInput','next'],['fuelStation','next'],['fuelAddress','next'],['fuelNote','next']])
        assert.equal(await page.locator('#'+id).getAttribute('enterkeyhint'),hint,id+' keyboard hint');
      assert.equal(await page.locator('#fuelKeyboardNav').isHidden(),true,'navigation hidden before editing');
      await odo.click();
@@ -117,9 +117,12 @@ async function fuelFailureDiagnostics(page,scenario){
      assert.equal(await odo.inputValue(),'26200');
      assert.equal(await liters.inputValue(),'43,00');
      assert.equal(await price.inputValue(),'2,400');
-     const station=page.locator('#fuelStation'),note=page.locator('#fuelNote');
+     const station=page.locator('#fuelStation'),address=page.locator('#fuelAddress'),note=page.locator('#fuelNote');
      await station.fill('Testpomp');
      await station.press('Enter');
+     await visibleFocused('fuelAddress');
+     await address.fill('Stationsstraat 12, 7461 AA Rijssen');
+     await address.press('Enter');
      await visibleFocused('fuelNote');
      await note.fill('Notitie test');
      await note.press('Enter');
@@ -127,14 +130,14 @@ async function fuelFailureDiagnostics(page,scenario){
      assert.equal(await page.locator('#fuelKeyboardNext').isDisabled(),true,'last field cannot focus save');
      // Actual visible controls: reverse and advance through every field with a simulated iOS keyboard.
      // Native Safari accessory-bar buttons cannot be operated through Playwright.
-     for(const id of ['fuelNote','fuelStation','fuelPriceInput','fuelLitersInput','fuelOdo']){
+     for(const id of ['fuelNote','fuelAddress','fuelStation','fuelPriceInput','fuelLitersInput','fuelOdo']){
        await page.locator('#fuelKeyboardPrev').click();
        await visibleFocused(id);
      }
      assert.equal(await page.locator('#fuelKeyboardPrev').isDisabled(),true);
      const selected=await page.evaluate(()=>{const x=document.getElementById('fuelOdo');return x.selectionStart===0&&x.selectionEnd===x.value.length});
      assert.equal(selected,true,'existing numeric value selected when navigating backwards');
-     for(const id of ['fuelLitersInput','fuelPriceInput','fuelStation','fuelNote','fuelDate']){
+     for(const id of ['fuelLitersInput','fuelPriceInput','fuelStation','fuelAddress','fuelNote','fuelDate']){
        await page.locator('#fuelKeyboardNext').click();
        await visibleFocused(id);
      }
@@ -147,17 +150,16 @@ async function fuelFailureDiagnostics(page,scenario){
      assert.notEqual(await page.evaluate(()=>document.activeElement?.id),'fuelSaveButton','Return never focuses save');
      assert.equal(sent.length,0,'Return never saves fuel');
      const pressed=await page.evaluate(()=>window.__fuelReturnKeys);
-     assert.deepEqual(pressed.map(x=>x.id),['fuelOdo','fuelLitersInput','fuelPriceInput','fuelStation','fuelNote','fuelDate']);
+     assert.deepEqual(pressed.map(x=>x.id),['fuelOdo','fuelLitersInput','fuelPriceInput','fuelStation','fuelAddress','fuelNote','fuelDate']);
      assert.equal(pressed.every(x=>x.trusted),true,'the actual keyboard Return events must be trusted');
      assert.equal(await page.locator('#fuelDate').inputValue(),'2026-10-10T15:30');
-     assert.equal(await station.inputValue(),'Testpomp');assert.equal(await note.inputValue(),'Notitie test');
+     assert.equal(await station.inputValue(),'Testpomp');assert.equal(await address.inputValue(),'Stationsstraat 12, 7461 AA Rijssen');assert.equal(await note.inputValue(),'Notitie test');
      await page.evaluate(()=>window.__keyboard(window.innerHeight,0));
-     await page.locator('#fuelAddress').fill('Stationsstraat 12, 7461 AA Rijssen');
-      await page.locator('#fuelSaveButton').click();
+     await page.locator('#fuelSaveButton').click();
      await page.waitForFunction(()=>!document.querySelector('#fuelModal').classList.contains('show'));
      assert.equal(sent.length,1);assert.equal(sent[0].odometer,26200);
      assert.equal(sent[0].liters,43);assert.equal(sent[0].price_per_liter,2.4);
-     assert.equal(sent[0].station,'Testpomp');assert.equal(sent[0].note,'Notitie test');
+     assert.equal(sent[0].station,'Testpomp');assert.equal(sent[0].fuel_address,'Stationsstraat 12, 7461 AA Rijssen');assert.equal(sent[0].note,'Notitie test');
      assert.deepEqual(errors,[],engineName+' '+device.name+' JS errors');
      console.log('33.16 '+engineName+' '+device.name+' '+(pwa?'PWA':'Safari')+' PASS');
     }finally{await ctx.close()}

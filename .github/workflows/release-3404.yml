@@ -52,8 +52,8 @@ jobs:
           git merge-base --is-ancestor "$APPROVED" "$parent2"
           test "$(git rev-parse "$APPROVED:rit_tank")" = "$(git rev-parse HEAD:rit_tank)"
           git diff --name-only "$APPROVED" "$parent2" > supplementary-files.txt
-          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3404[.]yml)|tools/release_3404[.]py)$' supplementary-files.txt; then
-            echo 'Unexpected changes since the approved oil-maintenance candidate'; exit 1
+          if grep -Ev '^([.]github/workflows/(ci[.]yml|release-3404[.]yml)|tools/(release_3404[.]py|test_browser_v3316[.]cjs))$' supplementary-files.txt; then
+            echo 'Unexpected changes since the approved 34.04 tankstop candidate'; exit 1
           fi
           grep -Fqx "APP_VERSION = '34.04'" <(grep '^APP_VERSION =' rit_tank/app.py)
           grep -Fqx "version: '34.04'" <(grep '^version:' rit_tank/config.yaml)
@@ -65,7 +65,7 @@ jobs:
           fi
 
       - name: Build and validate release ZIP from tested merged code
-        run: python3 tools/release_3403.py --package
+        run: python3 tools/release_3404.py --package
 
       - name: Publish 34.04 on GitHub only (never Home Assistant)
         env:
@@ -75,7 +75,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > release-notes-3403.md <<'NOTES'
+          cat > release-notes-3404.md <<'NOTES'
           Rit & Tank 34.04 — Automatische tankstops
 
           Wanneer een nieuwe tankbeurt tijdens een actieve rit wordt vastgelegd,
@@ -100,7 +100,7 @@ jobs:
             'rit-tank-34.04-local-addon.zip#Rit & Tank 34.04 — lokale Home Assistant-add-on' \
             --target "$TESTED_SHA" \
             --title 'Rit & Tank 34.04 — Automatische tankstops' \
-            --notes-file release-notes-3403.md \
+            --notes-file release-notes-3404.md \
             --latest
 
       - name: Confirm official release and asset are available and identical
