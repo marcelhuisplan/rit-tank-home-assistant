@@ -209,7 +209,7 @@ def list_checks(con: sqlite3.Connection) -> list[dict[str, Any]]:
 def add_check(con: sqlite3.Connection, payload: dict[str, Any], stamp: str,
               registered_odometer: float | None = None) -> dict[str, Any]:
     raw_date = payload.get('checked_on')
-    if not isinstance(raw_date, str) or not re.fullmatch(r'\\d{4}-\\d{2}-\\d{2}', raw_date):
+    if not isinstance(raw_date, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', raw_date):
         raise ValueError('Vul een geldige controledatum in.')
     try:
         checked_on = date.fromisoformat(raw_date)
@@ -224,7 +224,7 @@ def add_check(con: sqlite3.Connection, payload: dict[str, Any], stamp: str,
             'Controleer de werkelijke kilometerstand. De voertuigstand wordt niet gewijzigd.'
         )
     note = payload.get('note', '')
-    if not isinstance(note, str) or len(note) > 500 or any(ord(c) < 32 and c not in '\\n\\r\\t' for c in note):
+    if not isinstance(note, str) or len(note) > 500 or any(ord(c) < 32 and c not in '\n\r\t' for c in note):
         raise ValueError('Opmerking maximaal 500 tekens.')
     cur = con.execute(
         "INSERT INTO oil_level_checks (checked_on, odometer, note, created_at) VALUES (?, ?, ?, ?)",
