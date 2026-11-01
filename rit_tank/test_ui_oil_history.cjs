@@ -10,7 +10,7 @@ assert.ok(app.includes('oil_history.init_schema(con)'), 'additive migration');
 assert.ok(app.includes("if path == '/api/maintenance/oil':"), 'authenticated list');
 assert.ok(app.includes("if path == '/api/maintenance/oil' or oil_match:"), 'create/update route');
 assert.ok(app.includes("oil_history.delete_entry(con,"), 'isolated deletion');
-assert.ok(app.includes('id="oilHistoryList"'), 'history in existing vehicle overview');
+assert.ok(app.includes('id="oilHistoryList"'), 'history in dedicated oil view');
 assert.ok(app.includes('id="oilHistoryKind"'), 'kind selector');
 assert.ok(app.includes('id="oilHistoryAmount"'), 'quantity in ml');
 assert.ok(app.includes('id="oilHistoryOdometer"'), 'maintenance-only odometer');
@@ -19,3 +19,4 @@ assert.ok(app.includes('id="oilHistoryType"'), 'oil viscosity/custom text');
 assert.ok(app.includes('<script src="oil-history.js"></script>'), 'frontend script bundled');
 assert.ok(!app.includes("INSERT INTO events(created_at,type,odometer,note) VALUES(?,?,?,?)',\n        (oil_history"), 'never add oil as mileage event');
 console.log('Oil history UI and isolated routes PASS');
+

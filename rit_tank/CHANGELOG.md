@@ -1,5 +1,13 @@
 # Changelog
 
+## 34.05 — eigen tabblad Olie (releasekandidaat)
+- Vijf navigatieknoppen: Overzicht, Ritten, Tanken, Olie en Meer.
+- Eigen motoroliescherm met toevoegen, historie, bekijken/wijzigen en bevestigd verwijderen.
+- Optionele opmerking in de bestaande oil_maintenance-tabel via een herhaalbare, additieve migratie.
+- Geen invloed op tanken, actieve ritten, tussenstops, tellerstand of vergoeding.
+- Bestaande 34.03/34.04-functies, gegevens en Home Assistant-updatekanaal behouden.
+- Nog geen merge, officiële release of installatie.
+
 ## 34.04 — automatische tankstop (concept PR #55)
 - Nieuwe tankbeurten tijdens een actieve rit krijgen één gekoppelde ⛽-tussenstop met de daadwerkelijk ingevoerde kilometerstand, tijd, stationnaam en bekend adres.
 - Rittenoverzicht en ritrapportage (PDF/CSV) markeren de tankstop; ontbrekende gegevens worden niet verzonnen.
@@ -524,3 +532,4 @@ Release 25.00 voegt **🏠 Thuis** toe aan Nieuwe rit: altijd Verenlandweg 4, 74
 - Slim voorstel Zakelijk/Privé op basis van bestemming, vertrekplek en geleerde routes.
 - Terugkerende routes worden onthouden na bevestiging.
 - CSV en fiscale PDF bevatten ritsoort per etappe.
+

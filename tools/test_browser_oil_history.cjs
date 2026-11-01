@@ -1,4 +1,4 @@
-// PR #56: oil-maintenance user flows in actual Chromium/WebKit mobile DOM.
+// 34.05: oil-maintenance user flows in actual Chromium/WebKit mobile DOM.
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -22,9 +22,12 @@ const oilJs = fs.readFileSync(path.join(root,'rit_tank/oil_history.js'),'utf8');
   for (const [engineName,engine] of Object.entries({chromium,webkit})) {
     const browser = await engine.launch({headless:true});
     try {
-      for (const [device,viewport] of [['iPhone',{width:375,height:667}],['iPad',{width:768,height:1024}]]) {
+      for (const [device,viewport] of [['iPhone',{width:375,height:667}],['iPad',{width:768,height:1024}]]) for (const pwa of [false,true]) {
         const ctx = await browser.newContext({viewport,isMobile:true,hasTouch:true,serviceWorkers:'block'});
-        const page = await ctx.newPage(), errors = [];
+        await ctx.addInitScript(standalone => {
+          Object.defineProperty(navigator, 'standalone', {get:()=>standalone});
+        }, pwa);
+        const page = await ctx.newPage(), errors = [], writes = [];
         const entries = [];
         const saves = [];
         let nextId = 1;
@@ -32,6 +35,7 @@ const oilJs = fs.readFileSync(path.join(root,'rit_tank/oil_history.js'),'utf8');
         await page.route('**/*', route => {
           const pathname = new URL(route.request().url()).pathname;
           const method = route.request().method();
+          if (method!=='GET') writes.push(pathname);
           if(pathname==='/') return route.fulfill({contentType:'text/html',body:html});
           if(pathname==='/oil-history.js') return route.fulfill({contentType:'text/javascript',body:oilJs});
           if(pathname==='/receipt-scanner.js' || pathname==='/receipt-archive.js')
@@ -62,10 +66,30 @@ const oilJs = fs.readFileSync(path.join(root,'rit_tank/oil_history.js'),'utf8');
         });
         try {
           await page.goto('https://rit-tank.test/', {waitUntil:'domcontentloaded'});
+          await page.locator('.bottom-nav').waitFor({state:'visible'});
+          assert.deepEqual(await page.locator('.bottom-nav .nav-item span').allTextContents(),
+            ['Overzicht','Ritten','Tanken','Olie','Meer']);
+          for (const width of [320,viewport.width]) {
+            await page.setViewportSize({width,height:viewport.height});
+            const rects=await page.locator('.bottom-nav .nav-item').evaluateAll(items=>items.map(el=>{
+              const r=el.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width,height:r.height};
+            }));
+            assert.equal(rects.length,5);
+            rects.forEach((r,i)=>{
+              assert.ok(r.left>=0 && r.right<=width+1 && r.width>=44 && r.height>=44,'navigation touch target');
+              if(i)assert.ok(r.left>=rects[i-1].right-1,'no overlapping tabs');
+            });
+          }
+          await page.locator('.bottom-nav [data-view="oil"]').click();
           await page.locator('#oilHistoryList .empty').waitFor({state:'visible'});
-          const title=page.locator('#oilHistoryCard h3');
-          assert.match(await title.textContent(),/Onderhoud/);
-          await page.locator('#oilHistoryCard .cardhead button').click();
+          assert.equal(await page.locator('.bottom-nav [data-view="oil"]').getAttribute('aria-current'),'page');
+          assert.equal(await page.locator('.dashboard-actions').isVisible(),false);
+          assert.equal(await page.locator('.app>.tabs').isVisible(),false);
+          await page.reload({waitUntil:'domcontentloaded'});
+          await page.locator('#view-oil.active').waitFor({state:'visible'});
+          const title=page.locator('#oilPageTitle');
+          assert.match(await title.textContent(),/Motorolie/);
+          await page.locator('#oilAddButton').click();
           const modal=page.locator('#oilHistoryModal');
           await modal.waitFor({state:'visible'});
           const close = await page.locator('#oilHistoryModal .close').evaluate(el => {
@@ -77,6 +101,7 @@ const oilJs = fs.readFileSync(path.join(root,'rit_tank/oil_history.js'),'utf8');
           await page.locator('#oilHistoryKind').selectOption('top_up');
           await page.locator('#oilHistoryDate').fill('2026-10-29');
           await page.locator('#oilHistoryType').fill('0W-20');
+          await page.locator('#oilHistoryNote').fill('Thuis <b>bijgevuld</b>');
           await page.locator('#oilHistoryAmount').fill('300');
           await page.locator('#oilHistoryOdometer').fill('64603');
           await page.locator('#oilHistorySave').click();
@@ -85,10 +110,13 @@ const oilJs = fs.readFileSync(path.join(root,'rit_tank/oil_history.js'),'utf8');
           assert.equal(entries.length,1);
           assert.equal(entries[0].amount_ml,300);
           assert.equal(entries[0].kind,'top_up');
+          assert.equal(entries[0].note,'Thuis <b>bijgevuld</b>');
+          assert.equal(await page.locator('#oilHistoryList .oil-note b').count(),0,'note is plain text');
+          assert.match(await page.locator('#oilHistoryList .oil-note').textContent(),/Thuis <b>/);
           assert.match(await page.locator('#oilHistoryList').textContent(),/0W-20/);
 
           // Earlier, full change is listed second.
-          await page.locator('#oilHistoryCard .cardhead button').click();
+          await page.locator('#oilAddButton').click();
           await page.locator('#oilHistoryKind').selectOption('change');
           await page.locator('#oilHistoryDate').fill('2026-02-14');
           await page.locator('#oilHistoryType').fill('5W-30');
@@ -102,10 +130,13 @@ const oilJs = fs.readFileSync(path.join(root,'rit_tank/oil_history.js'),'utf8');
           // Edit just one entry.
           await page.locator('#oilHistoryList .event').first().locator('button.editbtn').click();
           assert.equal(await page.locator('#oilHistoryAmount').inputValue(),'300');
+          assert.equal(await page.locator('#oilHistoryNote').inputValue(),'Thuis <b>bijgevuld</b>');
+          await page.locator('#oilHistoryNote').fill('Gecorrigeerde opmerking');
           await page.locator('#oilHistoryAmount').fill('350');
           await page.locator('#oilHistorySave').click();
           await modal.waitFor({state:'hidden'});
           assert.equal(entries.find(e=>e.id===1).amount_ml,350);
+          assert.equal(entries.find(e=>e.id===1).note,'Gecorrigeerde opmerking');
           assert.equal(entries.find(e=>e.id===2).amount_ml,4400);
 
           // Server rejects anomalous oil mileage until explicit opt-in.
@@ -130,10 +161,29 @@ const oilJs = fs.readFileSync(path.join(root,'rit_tank/oil_history.js'),'utf8');
           await page.locator('#oilHistoryList .event').first().locator('button.trash').click();
           await page.waitForFunction(()=>document.querySelectorAll('#oilHistoryList .event').length===1);
           assert.equal(entries[0].id,2,'deleting first keeps second');
+          // Return from other sections; existing oil data remains accessible after reload.
+          await page.locator('.bottom-nav [data-view="business"]').click();
+          await page.locator('#view-business.active').waitFor({state:'visible'});
+          await page.locator('.bottom-nav [data-view="auto"]').click();
+          assert.equal(await page.locator('.dashboard-actions').isVisible(),true);
+          await page.locator('.bottom-nav button').filter({hasText:'Tanken'}).click();
+          await page.locator('#fuelModal.show').waitFor({state:'visible'});
+          await page.locator('#fuelModal .close').click();
+          await page.locator('.bottom-nav [data-view="oil"]').click();
+          await page.reload({waitUntil:'domcontentloaded'});
+          await page.locator('#oilHistoryList .event').waitFor({state:'visible'});
+          assert.equal(await page.locator('#oilHistoryList .event').count(),1);
+          assert.match(await page.locator('#oilHistoryList').textContent(),/5W-30/);
+          assert.ok(writes.every(p=>p.startsWith('/api/maintenance/oil')),'only oil API writes');
+          const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);
+          assert.equal(overflow,false,'no horizontal overflow');
+          fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
+          await page.screenshot({path:path.join(root,'test-results',`oil-3405-${engineName}-${device}-${pwa?'pwa':'safari'}.png`),fullPage:true});
           assert.deepEqual(errors,[],engineName+' '+device+' page errors');
-          console.log('Oil maintenance '+engineName+' '+device+' view/add/edit/warn/delete PASS');
+          console.log('Oil maintenance '+engineName+' '+device+' '+(pwa?'PWA':'Safari')+' navigation/view/add/edit/note/warn/delete PASS');
         } finally {await ctx.close();}
       }
     } finally {await browser.close();}
   }
 })().catch(error=>{console.error(error);process.exitCode=1});
+

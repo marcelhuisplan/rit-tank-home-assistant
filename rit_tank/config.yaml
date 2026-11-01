@@ -1,5 +1,5 @@
 name: Rit & Tank
-version: '34.04'
+version: '34.05'
 slug: rit_tank
 description: Zelfstandige beveiligde Rit & Tank-PWA met eigen database, HTTPS-login,
   GPS-afstandsschatting, Home Assistant-koppeling, fiscale PDF en tankbon-foto.
@@ -63,3 +63,4 @@ schema:
   backup_encryption_password: password
   backup_hour: int(0,23)
   backup_retention_days: int(0,365)
+

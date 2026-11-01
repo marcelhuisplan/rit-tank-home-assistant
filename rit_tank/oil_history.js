@@ -29,18 +29,25 @@ function renderOilHistory() {
     icon.className = 'event-icon';
     icon.textContent = '🛢️';
     const details = document.createElement('div');
+    details.className = 'oil-details';
     const label = document.createElement('strong');
     label.textContent = entry.kind === 'top_up' ? 'Olie bijgevuld' : 'Olie ververst';
     const small = document.createElement('small');
     small.textContent = [entry.performed_on.split('-').reverse().join('-'),
       entry.oil_type, entry.amount_ml + ' ml', entry.odometer.toLocaleString('nl-NL') + ' km'].join(' · ');
     details.append(label, small);
+    if (entry.note) {
+      const note = document.createElement('small');
+      note.className = 'oil-note';
+      note.textContent = entry.note;
+      details.appendChild(note);
+    }
     const actions = document.createElement('div');
     actions.className = 'event-actions';
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.className = 'editbtn';
-    edit.textContent = '✏️';
+    edit.textContent = 'Bekijken / wijzigen';
     edit.setAttribute('aria-label', 'Oliebeurt wijzigen');
     edit.onclick = () => openOilEntry(entry.id);
     const remove = document.createElement('button');
@@ -66,6 +73,7 @@ function openOilEntry(id) {
   el('oilHistoryKind').value = entry?.kind || 'top_up';
   el('oilHistoryDate').value = entry?.performed_on || new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   el('oilHistoryType').value = entry?.oil_type || '';
+  el('oilHistoryNote').value = entry?.note || '';
   el('oilHistoryAmount').value = entry?.amount_ml ?? '';
   el('oilHistoryOdometer').value = entry?.odometer ?? (Number.isInteger(Number(DATA?.current_odometer)) ? DATA.current_odometer : '');
   el('oilHistoryError').textContent = '';
@@ -81,7 +89,8 @@ async function saveOilEntry(event) {
     performed_on: el('oilHistoryDate').value,
     oil_type: el('oilHistoryType').value.trim(),
     amount_ml: el('oilHistoryAmount').value,
-    odometer: el('oilHistoryOdometer').value
+    odometer: el('oilHistoryOdometer').value,
+    note: el('oilHistoryNote').value.trim()
   };
   el('oilHistorySave').disabled = true;
   el('oilHistoryError').textContent = '';
@@ -123,3 +132,4 @@ async function removeOilEntry(id) {
   }
 }
 document.addEventListener('DOMContentLoaded', loadOilHistory);
+
