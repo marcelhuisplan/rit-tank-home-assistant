@@ -291,6 +291,11 @@ def report_stop_address(stop: dict[str, Any], *, dependencies: Mapping[str, Call
     address = _full_address(stop.get('manual_label'))
     if address:
         return address
+    # Fuel address entered by the user may have no postcode; never invent one.
+    if stop.get('fuel_event_id'):
+        raw = ' '.join(str(stop.get('manual_label') or '').split())
+        if raw and raw != 'Adres tankstop nog niet bevestigd':
+            return raw
     address = _full_address(stop.get('location_address'))
     if address:
         return address
@@ -751,7 +756,8 @@ def business_pdf(period: str = 'month', year: str | None = None, month: str | No
         ):
             baseline = y_top - offset
             if stop.get('fuel_event_id'):
-                page.text('Tankbeurt', ADDRESS_X, baseline + 9, 7.2, bold=True, rgb=palette['muted'])
+                page.text(str(stop.get('note') or 'Tankbeurt')[:40], ADDRESS_X, baseline + 9,
+                          7.2, bold=True, rgb=palette['muted'])
             page.circle(147, baseline + 3, 4.3, rgb=color)
             for idx, line in enumerate(lines):
                 page.text(line, ADDRESS_X, baseline - idx * 12, 9.5, rgb=palette['text'])

@@ -1150,9 +1150,9 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
         lon = None
     note = str(payload.get('note') or '').strip()[:200]
     full_tank = 1 if bool(payload.get('full_tank', True)) else 0
-    fuel_address = pdf_report._full_address(payload.get('fuel_address'))
-    if not fuel_address:
-        raise ValueError('Vul het volledige tankstationadres in: straat, huisnummer, postcode en plaats.')
+    # Preserve the user's address exactly; unknown details remain unknown.
+    # Missing address must not block a normal fuel registration.
+    fuel_address = ' '.join(str(payload.get('fuel_address') or '').split())[:220]
 
     with DB_LOCK, db() as con:
         hard_error = _fuel_odometer_hard_error(created, odo)
@@ -1211,7 +1211,9 @@ def add_fuel(payload: dict[str, Any]) -> dict[str, Any]:
                     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (active['id'], int(previous['sequence_no']) + 1, created, odo,
                      lat, lon, accuracy, location_source or None, place_id or None,
-                     fuel_address, 'Tankbeurt', rid, rid, segment, 'fuel-stop'),
+                     fuel_address or 'Adres tankstop nog niet bevestigd',
+                     ('Tankbeurt bij ' + (station or 'onbekend tankstation'))[:200],
+                     rid, rid, segment, 'fuel-stop'),
                 )
         receipt_name = save_receipt_data(str(payload.get('receipt_data_url') or ''), rid)
         if receipt_name:
@@ -2973,7 +2975,7 @@ html{background:#050b0a}body{background:radial-gradient(circle at 50% -12%,rgba(
   <div class="fuel-total-card" aria-live="polite"><span>Berekend totaalbedrag</span><strong id="fuelTotal">€ 0,00</strong><small>Alleen eindbedrag afgerond op centen</small></div>
   <p id="fuelInputError" class="fuel-input-error" role="alert"></p>
   <div class="guide-section" id="fuelStepLocation"><div class="guide-head"><span class="step-badge">4</span><b>Tankstation / locatie</b><small>GPS of handmatig</small></div><div class="station-input"><input id="fuelStation" list="stations" enterkeyhint="next" onkeydown="fuelAdvance(event,'fuelNote')" placeholder="Typ handmatig of gebruik 📍"><button class="locate" type="button" onclick="findStations()" aria-label="Gebruik huidige locatie">📍</button></div><datalist id="stations"></datalist><div class="location-status" id="locationStatus">Tik op 📍 om tankstations in de buurt te zoeken.</div><div class="station-results" id="stationResults"></div><div class="google-attrib" id="googleAttrib" style="display:none">Resultaten via <b translate="no">Google Maps</b></div></div>
-  <div class="field"><label for="fuelAddress">Tankstationadres (straat, huisnummer, postcode, plaats)</label><input id="fuelAddress" maxlength="220" placeholder="Straat 12, 1234 AB Plaats" autocomplete="street-address"><small>Controleer het huisnummer. Vul een ontbrekend adres zelf aan.</small></div>
+  <div class="field"><label for="fuelAddress">Tankstationadres (straat, huisnummer, postcode, plaats)</label><input id="fuelAddress" maxlength="220" placeholder="Straat 12, 1234 AB Plaats" autocomplete="street-address"><small>Controleer straat, huisnummer en plaats. Onbekende gegevens worden niet ingevuld; corrigeer zo nodig bij de rit.</small></div>
   <div class="guide-section" id="fuelStepFinish"><div class="guide-head"><span class="step-badge">5</span><b>Afronden</b><small>Controleer en sla op</small></div><div class="toggle" style="margin-top:0"><div><b>Volgetankt</b><div style="color:var(--muted);font-size:11px">Nodig voor betrouwbaar werkelijk verbruik</div></div><label class="switch"><input id="fuelFull" type="checkbox" checked><span class="slider"></span></label></div><div class="field"><label>Notitie (optioneel)</label><input id="fuelNote" maxlength="200" enterkeyhint="next" onkeydown="fuelAdvance(event,'fuelDate')" placeholder="Bijv. snelweg, vakantie..."></div></div>
   <div class="guide-section guide-date" id="fuelStepDate"><div class="guide-head"><span class="step-badge">6</span><b>Datum & tijd</b><small>Staat standaard op nu; wijzig zo nodig</small></div><div class="field" style="margin-top:0"><label for="fuelDate">Datum & tijd van deze tankbeurt</label><input id="fuelDate" type="datetime-local" enterkeyhint="done" onkeydown="fuelAdvance(event)"></div></div>
   <button class="save" type="button" id="fuelSaveButton" onclick="saveFuel()">Tankbeurt opslaan</button><div id="fuelConflictWarning" hidden role="alert" style="margin-top:14px;padding:14px;border:2px solid #b97517;border-radius:12px;background:#fff4db;color:#37260b"><strong>⚠️ Kilometerconflict — historische tankbon</strong><p>De ingevoerde kilometerstand botst met de volgende registratie(s):</p><ul id="fuelConflictDetails" style="padding-left:22px"></ul><p>Je kunt deze tankbon bewust opslaan. Hij wordt gemarkeerd als kilometerconflict; onbetrouwbare afstanden en verbruikscycli worden niet meegerekend. De actuele tellerstand verandert niet.</p><button class="save" type="button" onclick="saveFuelConfirmed()">Ja, ondanks kilometerconflict opslaan</button><button class="linkbtn" type="button" onclick="clearFuelConflictWarning()">Terug naar tankbon</button></div>
@@ -3816,7 +3818,6 @@ async function saveFuel(){
  else if(!lc||lc>25000)error='Vul een geldig aantal liters in (0,01 t/m 250,00).';
  else if(!pm||pm>10000)error='Vul een geldige literprijs in (0,001 t/m 10,000).';
  else if(!date||Number.isNaN(new Date(date).getTime()))error='Kies een geldige datum en tijd.';
- else if(!$('fuelAddress').value.trim())error='Controleer en vul het volledige tankstationadres inclusief huisnummer in.';
  if(error){$('fuelInputError').textContent=error;toast(error,true);return}
  $('fuelInputError').textContent='';
  const v=fuelValues(),payload={
